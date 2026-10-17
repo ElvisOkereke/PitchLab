@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Db } from '../db/client';
 import { ideas, lenses, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { wrapUntrusted } from '../llm/untrusted';
+import { capField, wrapUntrusted } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_SIGNALS = 40;
@@ -80,6 +80,8 @@ export async function ideate(
   const prompt = loadPrompt('ideate');
   const pending: IdeaInsert[] = [];
   for (const lens of chosen) {
+    // Titles from earlier lenses in this run, so each lens steers away from buyers/problems already covered.
+    const priorTitles = pending.map((v) => `- ${capField(v.title, 200)}`).join('\n');
     const out = await router.structured(
       'ideate',
       {
@@ -89,7 +91,9 @@ export async function ideate(
           lensPattern: lens.pattern,
           lensHint: lens.promptHint,
           signals: wrapUntrusted('signals', signalsText),
+          priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
           count: String(count),
+          minSignals: String(cfg.minSignals),
         }),
         schema: lensIdeasSchema,
         schemaName: 'ideate_ideas',
