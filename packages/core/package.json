@@ -9,10 +9,18 @@
     "db:migrate": "tsx src/db/migrate.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.10",
+    "@electric-sql/pglite-pgvector": "^0.0.11",
     "@types/node": "^26.6.5",
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11"
   }
 }
