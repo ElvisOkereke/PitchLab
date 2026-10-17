@@ -46,6 +46,37 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
   };
 }
 
+/**
+ * Build Messages API params. Structured output uses a single tool with `tool_choice: auto` plus a system
+ * instruction naming it: claude-opus-5-5 / claude-sonnet-5-5 reject forced `tool`/`any` tool_choice (400).
+ * A reply without the tool call is caught by the router's re-ask loop.
+ */
+export function buildAnthropicParams(r: AdapterRequest): Anthropic.MessageCreateParamsNonStreaming {
+  const tools: Anthropic.ToolUnion[] = [];
+  let system = r.system;
+  const params: Anthropic.MessageCreateParamsNonStreaming = {
+    model: r.model,
+    max_tokens: r.maxTokens,
+    messages: r.messages,
+  };
+  if (r.jsonSchema) {
+    tools.push({
+      name: r.jsonSchema.name,
+      description: `Return the ${r.jsonSchema.name} result as structured data.`,
+      input_schema: r.jsonSchema.schema as Anthropic.Tool.InputSchema,
+    });
+    params.tool_choice = { type: 'auto', disable_parallel_tool_use: true };
+    const instruction = `Give your final answer by calling the \`${r.jsonSchema.name}\` tool exactly once with the complete result. Do not answer in plain text.`;
+    system = system ? `${system}\n\n${instruction}` : instruction;
+  }
+  if (r.webSearch) {
+    tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: r.webSearch.maxUses });
+  }
+  if (tools.length) params.tools = tools;
+  if (system) params.system = system;
+  return params;
+}
+
 export function createAnthropicAdapter(opts: { baseURL: string; key: string }): ProviderAdapter {
   // apiKey: null stops the SDK picking up ANTHROPIC_API_KEY (which would win over the bearer token).
   const client = new Anthropic({
@@ -58,27 +89,7 @@ export function createAnthropicAdapter(opts: { baseURL: string; key: string }): 
 
   return {
     async complete(r: AdapterRequest): Promise<AdapterResponse> {
-      const tools: Anthropic.ToolUnion[] = [];
-      const params: Anthropic.MessageCreateParamsNonStreaming = {
-        model: r.model,
-        max_tokens: r.maxTokens,
-        messages: r.messages,
-        ...(r.system ? { system: r.system } : {}),
-      };
-      if (r.jsonSchema) {
-        tools.push({
-          name: r.jsonSchema.name,
-          description: `Return the ${r.jsonSchema.name} result as structured data.`,
-          input_schema: r.jsonSchema.schema as Anthropic.Tool.InputSchema,
-        });
-        params.tool_choice = { type: 'tool', name: r.jsonSchema.name };
-      }
-      if (r.webSearch) {
-        tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: r.webSearch.maxUses });
-      }
-      if (tools.length) params.tools = tools;
-
-      const msg = await client.messages.stream(params).finalMessage();
+      const msg = await client.messages.stream(buildAnthropicParams(r)).finalMessage();
       return mapAnthropicMessage(msg, r.jsonSchema?.name);
     },
 

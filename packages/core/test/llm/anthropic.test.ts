@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { mapAnthropicMessage } from '../../src/llm/anthropic';
+import { buildAnthropicParams, mapAnthropicMessage } from '../../src/llm/anthropic';
 
 const fixture = JSON.parse(
   readFileSync(new URL('../helpers/fixtures/anthropic-websearch.json', import.meta.url), 'utf8'),
@@ -39,5 +39,47 @@ describe('mapAnthropicMessage', () => {
     expect(res.json).toEqual({ pass: true });
     expect(res.sources).toEqual([]);
     expect(res.usage).toEqual({ inputTokens: 5, outputTokens: 7, searchRequests: 0 });
+  });
+});
+
+describe('buildAnthropicParams', () => {
+  const schema = { type: 'object', properties: { pass: { type: 'boolean' } }, required: ['pass'] };
+
+  // Live run 2026-10-17: claude-opus-5-5 and claude-sonnet-5-5 return 400
+  // 'tool_choice: type "tool" and "any" are not supported for this model.'
+  it('never forces tool_choice for structured output; uses auto with one call and names the tool in the system prompt', () => {
+    const params = buildAnthropicParams({
+      model: 'claude-opus-5-5',
+      system: 'You are a judge.',
+      messages: [{ role: 'user', content: 'Judge it.' }],
+      maxTokens: 8000,
+      jsonSchema: { name: 'verdict', schema },
+    });
+    expect(params.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    expect(params.tools).toEqual([expect.objectContaining({ name: 'verdict', input_schema: schema })]);
+    expect(params.system).toContain('You are a judge.');
+    expect(params.system).toContain('`verdict` tool');
+  });
+
+  it('adds the tool instruction as the system prompt when none was given', () => {
+    const params = buildAnthropicParams({
+      model: 'claude-haiku-5-5',
+      messages: [{ role: 'user', content: 'Judge it.' }],
+      maxTokens: 8000,
+      jsonSchema: { name: 'verdict', schema },
+    });
+    expect(params.system).toContain('`verdict` tool');
+  });
+
+  it('leaves plain and research requests without tool_choice', () => {
+    const plain = buildAnthropicParams({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
+    expect(plain.tool_choice).toBeUndefined();
+    expect(plain.tools).toBeUndefined();
+    expect(plain.system).toBeUndefined();
+    const research = buildAnthropicParams({
+      model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'find' }], maxTokens: 100, webSearch: { maxUses: 2 },
+    });
+    expect(research.tool_choice).toBeUndefined();
+    expect(research.tools).toEqual([expect.objectContaining({ name: 'web_search', max_uses: 2 })]);
   });
 });
