@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchPage as fetchPageReal } from '../../src/tools/fetch-page';
+import { fetchPage as fetchPageReal, makeGuardedLookup } from '../../src/tools/fetch-page';
 import { logDataCall } from '../../src/tools/data-calls';
 import { dataCalls } from '../../src/db/schema';
 import { testDb } from '../helpers/db';
@@ -111,6 +111,34 @@ describe('fetchPage SSRF guards', () => {
   it('blocks https to http downgrade on redirect', async () => {
     const f = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://b.test/' } }));
     expect((await fetchPage('https://a.test', { fetchImpl: f })).reason).toBe('blocked_scheme');
+  });
+});
+
+describe('fetchPage allow-list and pinning', () => {
+  it('blocks reserved/special addresses', async () => {
+    for (const u of ['http://198.18.0.1/', 'http://224.0.0.1/', 'http://255.255.255.255/', 'http://192.0.2.1/', 'http://[64:ff9b::7f00:1]/', 'http://[2002:7f00:1::]/']) {
+      const f = vi.fn(async () => respond('<p>x</p>'));
+      expect((await fetchPage(u, { fetchImpl: f })).reason, u).toBe('blocked_host');
+      expect(f).not.toHaveBeenCalled();
+    }
+  });
+  it('blocks when any resolved address is private', async () => {
+    const lookup = async () => [{ address: '93.184.216.34', family: 4 }, { address: '10.0.0.1', family: 4 }];
+    expect((await fetchPage('https://mixed.test', { fetchImpl: htmlFetch('x'), lookup })).reason).toBe('blocked_host');
+  });
+  it('times out a hanging DNS lookup', async () => {
+    const lookup = () => new Promise<never>(() => {});
+    expect((await fetchPage('https://slow.test', { timeoutMs: 20, fetchImpl: htmlFetch('x'), lookup })).reason).toBe('timeout');
+  });
+  it('guardedLookup rejects private addresses with EBLOCKED and returns public ones', async () => {
+    const bad = makeGuardedLookup(async () => [{ address: '10.0.0.5', family: 4 }]);
+    const err: any = await new Promise((res) => bad('x.test', {}, (e) => res(e)));
+    expect(err.code).toBe('EBLOCKED');
+    const mixed = makeGuardedLookup(async () => [{ address: '93.184.216.34', family: 4 }, { address: '127.0.0.1', family: 4 }]);
+    expect(((await new Promise((res) => mixed('x.test', {}, (e) => res(e)))) as any).code).toBe('EBLOCKED');
+    const good = makeGuardedLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
+    const out: any = await new Promise((res) => good('x.test', {}, (e, a, f) => res({ e, a, f })));
+    expect(out).toEqual({ e: null, a: '93.184.216.34', f: 4 });
   });
 });
 

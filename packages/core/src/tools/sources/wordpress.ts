@@ -33,7 +33,7 @@ export function createWordpressSource(opts: { slugs?: string[] } = {}): SignalSo
       const body = await getBody('wordpress', url, fetchImpl, { Accept: 'application/rss+xml, application/xml' });
       if (body === null) return [];
       try {
-        const doc = new XMLParser({ ignoreAttributes: true, parseTagValue: false }).parse(body) as {
+        const doc = new XMLParser({ ignoreAttributes: true, parseTagValue: false, processEntities: false }).parse(body) as {
           rss?: { channel?: { item?: RssItem | RssItem[] } };
         };
         if (!doc.rss) throw new Error('no rss element');

@@ -10,7 +10,7 @@ import {
   createWordpressSource,
   DEFAULT_WP_SLUGS,
 } from '../../src/tools/sources';
-import { cleanText } from '../../src/tools/sources/types';
+import { cleanText, getBody } from '../../src/tools/sources/types';
 
 const fx = (name: string) =>
   readFileSync(new URL(`../helpers/fixtures/sources/${name}`, import.meta.url), 'utf8');
@@ -31,8 +31,37 @@ beforeEach(() => {
 afterEach(() => warn.mockRestore());
 
 describe('cleanText', () => {
-  it('strips tags and decodes entities', () => {
-    expect(cleanText('<p>a &amp; b &lt;c&gt; &quot;d&quot; &#x27;e&#39;</p>')).toBe(`a & b <c> "d" 'e'`);
+  it('decodes entities, then strips tags, then drops stray brackets', () => {
+    expect(cleanText('<p>a &amp; b &lt;c&gt; &quot;d&quot; &#x27;e&#39;</p>')).toBe(`a & b "d" 'e'`);
+    expect(cleanText('x&#x2F;y&#47;z&nbsp;q&#160;r &#38; s')).toBe('x/y/z q r & s');
+  });
+  it('does not let encoded tags survive', () => {
+    expect(cleanText('&lt;script&gt;alert(1)&lt;/script&gt; hi')).toBe('alert(1) hi');
+    expect(cleanText('a < b')).toBe('a b');
+  });
+});
+
+describe('getBody hardening', () => {
+  it('times out a hanging request and warns', async () => {
+    const hang = vi.fn(
+      (_u: any, init?: any) =>
+        new Promise<Response>((_r, rej) => {
+          init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
+        }),
+    );
+    expect(await getBody('t', 'https://a.test', hang as any, {}, { timeoutMs: 10 })).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('timed out'));
+  });
+  it('rejects oversize bodies and warns', async () => {
+    const big = vi.fn(async () => new Response('x'.repeat(100)));
+    expect(await getBody('t', 'https://a.test', big as any, {}, { maxBytes: 10 })).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('too large'));
+  });
+  it('treats redirects as failures and uses manual redirect mode', async () => {
+    const redir = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/' } }));
+    expect(await getBody('t', 'https://a.test', redir as any)).toBeNull();
+    expect((redir.mock.calls[0] as any)[1].redirect).toBe('manual');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('redirect'));
   });
 });
 
@@ -104,7 +133,7 @@ describe('github', () => {
     const items = await createGithubSource({ token: 'tok' }).search('manual invoicing', { limit: 5, fetchImpl: impl });
     expect(items).toHaveLength(2);
     expect(items[0].url).toBe('https://github.com/acme/billing/issues/12');
-    expect(items[0].text).toBe('We waste <hours> each week reconciling invoices manually.');
+    expect(items[0].text).toBe('We waste each week reconciling invoices manually.');
     expect(items[1].text).toBe('No export for leads');
     expect(calls[0].url).toContain('q=manual%20invoicing+is:issue');
     expect((calls[0].init?.headers as Record<string, string>).Authorization).toBe('Bearer tok');
