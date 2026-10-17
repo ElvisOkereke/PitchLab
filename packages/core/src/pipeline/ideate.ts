@@ -2,6 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { ideas, lenses, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
+import { wrapUntrusted } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_SIGNALS = 40;
@@ -33,7 +34,7 @@ export async function ideate(
     const prompt = loadPrompt('owner-idea');
     const out = await router.structured(
       'ideate',
-      { prompt: prompt.render({ idea: ideaText }), schema: ownerIdeaSchema, schemaName: 'owner_idea' },
+      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaText) }), schema: ownerIdeaSchema, schemaName: 'owner_idea' },
       { runId: run.id, promptVersion: prompt.version },
     );
     const [row] = await db.insert(ideas).values({
@@ -71,7 +72,7 @@ export async function ideate(
           lensName: lens.name,
           lensPattern: lens.pattern,
           lensHint: lens.promptHint,
-          signals: signalsText,
+          signals: wrapUntrusted('signals', signalsText),
           count: String(count),
         }),
         schema: lensIdeasSchema,

@@ -85,7 +85,7 @@ describe('fetchPage', () => {
 describe('fetchPage SSRF guards', () => {
   const never = () => vi.fn(async () => respond('<p>x</p>'));
   it('blocks metadata IP, localhost, userinfo and mapped IPv6 without fetching', async () => {
-    for (const u of ['http://169.254.169.254/', 'http://localhost:3000/', 'http://user:pass@example.com/', 'http://[::ffff:127.0.0.1]/', 'http://[::1]/', 'http://2130706433/', 'http://foo.internal/']) {
+    for (const u of ['http://169.254.169.254/', 'http://localhost:3000/', 'http://user:pass@example.com/', 'http://[::ffff:127.0.0.1]/', 'http://[::1]/', 'http://[::7f00:1]/', 'http://[::a00:1]/', 'http://[64:ff9b:1::7f00:1]/', 'http://2130706433/', 'http://foo.internal/']) {
       const f = never();
       const r = await fetchPage(u, { fetchImpl: f });
       expect(r.reason, u).toBe('blocked_host');
@@ -139,6 +139,8 @@ describe('fetchPage allow-list and pinning', () => {
     const good = makeGuardedLookup(async () => [{ address: '93.184.216.34', family: 4 }]);
     const out: any = await new Promise((res) => good('x.test', {}, (e, a, f) => res({ e, a, f })));
     expect(out).toEqual({ e: null, a: '93.184.216.34', f: 4 });
+    const all: any = await new Promise((res) => good('x.test', { all: true }, (e, a) => res({ e, a })));
+    expect(all).toEqual({ e: null, a: [{ address: '93.184.216.34', family: 4 }] });
   });
 });
 

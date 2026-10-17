@@ -4,7 +4,7 @@ import { loadPrompt } from '../../src/llm/prompts';
 describe('loadPrompt', () => {
   it('loads latest version and renders vars', () => {
     const p = loadPrompt('extract-signals');
-    expect(p.version).toBe('extract-signals.v1');
+    expect(p.version).toBe('extract-signals.v2');
     expect(() => p.render({})).toThrow(/items/);
     expect(p.render({ countries: 'CA, US', items: 'X' })).toContain('CA, US');
   });

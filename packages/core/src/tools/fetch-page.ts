@@ -54,9 +54,13 @@ export function isAllowedIp(ip: string): boolean {
   if (range === 'ipv4Mapped') return ipv4Allowed(v6.toIPv4Address());
   const p = v6.parts;
   const embedded = (hi: number, lo: number) => ipaddr.IPv4.parse([hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'));
-  if (range === 'rfc6052') return ipv4Allowed(embedded(p[6], p[7])); // 64:ff9b::/96
+  if (range === 'rfc6052') {
+    // Only the well-known 64:ff9b::/96 form; local-use 64:ff9b:1::/48 etc. are blocked.
+    const wellKnown = p[0] === 0x64 && p[1] === 0xff9b && p.slice(2, 6).every((x) => x === 0);
+    return wellKnown && ipv4Allowed(embedded(p[6], p[7]));
+  }
   if (range === '6to4') return ipv4Allowed(embedded(p[1], p[2])); // 2002::/16
-  return range === 'unicast';
+  return range === 'unicast' && v6.match(ipaddr.parse('2000::'), 3);
 }
 
 class BlockedHost extends Error {
