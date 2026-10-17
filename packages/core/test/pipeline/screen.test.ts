@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CRITERIA } from '../../src/case/schema';
 import { screen } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
-import { getIdea, insertIdea, insertRun, testDb } from '../helpers/db';
+import { getIdea, insertIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
 const scores = (v: number) => Object.fromEntries(CRITERIA.map((c) => [c, { value: v, note: 'n' }]));
@@ -21,6 +21,21 @@ describe('screen', () => {
     expect((await getIdea(db, c.id)).status).toBe('screened_out');
     expect((await getIdea(db, b.id)).screenTotal).toBe(5);
     expect((await getIdea(db, b.id)).screenScores).toEqual(scores(5));
+  });
+
+  it('skips a winner too similar (cosine > 0.8) to an already-advanced idea', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+    const nearA = unit(0);
+    nearA[1] = 0.1; // cosine with unit(0) ≈ 0.995
+    const a = await insertIdea(db, run.id, { embedding: unit(0) });
+    const b = await insertIdea(db, run.id, { embedding: nearA });
+    const c = await insertIdea(db, run.id, { embedding: unit(1) });
+    const router = fakeRouter({ structured: { screen: [scores(5), scores(4), scores(3)] } });
+    const out = await screen(deps(db, router), run, { ideaIds: [a.id, b.id, c.id] });
+    expect(out.ideaIds).toEqual([a.id, c.id]);
+    expect((await getIdea(db, b.id)).status).toBe('screened_out');
+    expect((await getIdea(db, c.id)).status).toBe('advanced');
   });
 
   it('caps idea fields and collapses newlines before they reach the prompt', async () => {

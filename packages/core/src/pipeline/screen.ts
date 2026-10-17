@@ -3,7 +3,10 @@ import { AiScoresSchema, CRITERIA } from '../case/schema';
 import { ideas } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { cosine } from './dedupe';
 import type { RunConfig, StageDeps } from './types';
+
+const MAX_WINNER_SIMILARITY = 0.8;
 
 export async function screen(
   { db, router, log }: StageDeps,
@@ -26,7 +29,7 @@ export async function screen(
   for (const i of owner) await db.update(ideas).set({ status: 'advanced' }).where(eq(ideas.id, i.id));
 
   const prompt = loadPrompt('screen');
-  const scored: { id: string; total: number; index: number }[] = [];
+  const scored: { id: string; total: number; index: number; embedding: number[] | null }[] = [];
   for (const [index, idea] of generated.entries()) {
     const text = `Title: ${capField(idea.title, 200)}\nOne-liner: ${capField(idea.oneLiner, 2000)}\nBuyer: ${capField(idea.buyer, 2000)}\nProblem: ${capField(idea.problem, 2000)}\nSolution: ${capField(idea.solution, 2000)}`;
     const scores = await router.structured(
@@ -36,12 +39,24 @@ export async function screen(
     );
     const total = CRITERIA.reduce((s, c) => s + scores[c].value, 0) / CRITERIA.length;
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
-    scored.push({ id: idea.id, total, index });
+    scored.push({ id: idea.id, total, index, embedding: idea.embedding });
   }
 
+  // Top advanceCount by score, skipping a candidate that is a near-twin (cosine > 0.8, embeddings from dedupe)
+  // of an idea already advanced in this run. An idea without an embedding is never skipped.
   scored.sort((a, b) => b.total - a.total || a.index - b.index);
-  const winners = scored.slice(0, run.config.advanceCount);
-  const losers = scored.slice(run.config.advanceCount);
+  const advancedVecs = owner.flatMap((i) => (i.embedding ? [i.embedding] : []));
+  const winners: typeof scored = [];
+  const losers: typeof scored = [];
+  for (const s of scored) {
+    const twin = s.embedding !== null && advancedVecs.some((v) => cosine(s.embedding!, v) > MAX_WINNER_SIMILARITY);
+    if (winners.length < run.config.advanceCount && !twin) {
+      winners.push(s);
+      if (s.embedding) advancedVecs.push(s.embedding);
+    } else {
+      losers.push(s);
+    }
+  }
   if (winners.length) await db.update(ideas).set({ status: 'advanced' }).where(inArray(ideas.id, winners.map((w) => w.id)));
   if (losers.length) await db.update(ideas).set({ status: 'screened_out' }).where(inArray(ideas.id, losers.map((w) => w.id)));
 
