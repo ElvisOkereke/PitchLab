@@ -10,8 +10,8 @@ const render = () =>
   });
 
 describe('ideate prompt', () => {
-  it('is v4 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v4');
+  it('is v5 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v5');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -22,6 +22,13 @@ describe('ideate prompt', () => {
     expect('An AGENCY owner').toMatch(banned('agency'));
     expect('uptime monitor').toMatch(banned('uptime'));
     expect('misleading').not.toMatch(banned('lead'));
+  });
+  it('asks each idea to declare a mechanism from the fixed list and a buyer type', () => {
+    const text = render();
+    for (const m of ['monitoring', 'money_recovery', 'workflow_automation', 'data_product', 'integration', 'compliance', 'marketplace', 'other']) {
+      expect(text).toContain(`\`${m}\``);
+    }
+    expect(text).toContain('buyerType');
   });
   it('asks for variety of industry, buyer and mechanism', () => {
     expect(render()).toContain('Ideas must vary in industry, buyer and mechanism. Monitoring/alerting is only one of many possible mechanisms.');

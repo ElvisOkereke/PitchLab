@@ -87,6 +87,10 @@ export const ideas = pgTable('ideas', {
   buyer: text('buyer').notNull(),
   problem: text('problem').notNull(),
   solution: text('solution').notNull(),
+  /** Declared by ideate (one of IDEA_MECHANISMS); null for ideas from before tuning-2. Screen caps entrants per mechanism. */
+  mechanism: text('mechanism'),
+  /** Short noun phrase for the buyer, e.g. "property manager"; null for ideas from before tuning-2. */
+  buyerType: text('buyer_type'),
   signalIds: uuid('signal_ids').array().notNull(),
   embedding: vector('embedding', { dimensions: 1536 }),
   screenScores: jsonb('screen_scores').$type<unknown>(),

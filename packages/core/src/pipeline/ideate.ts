@@ -8,12 +8,19 @@ import type { RunConfig, StageDeps } from './types';
 
 const MAX_SIGNALS = 40;
 
+/** How an idea delivers value; screen lets at most 2 generated ideas per mechanism reach the gate. */
+export const IDEA_MECHANISMS = [
+  'monitoring', 'money_recovery', 'workflow_automation', 'data_product', 'integration', 'compliance', 'marketplace', 'other',
+] as const;
+
 const ideaFields = {
   title: z.string(),
   oneLiner: z.string(),
   buyer: z.string(),
   problem: z.string(),
   solution: z.string(),
+  mechanism: z.enum(IDEA_MECHANISMS),
+  buyerType: z.string(),
 };
 const lensIdeasSchema = z.object({
   ideas: z.array(z.object({ ...ideaFields, signalUrls: z.array(z.string()) })),

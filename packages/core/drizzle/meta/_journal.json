@@ -15,6 +15,13 @@
       "when": 1792259497729,
       "tag": "0001_claim_needs_review",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792260111837,
+      "tag": "0002_idea_mechanism",
+      "breakpoints": true
     }
   ]
 }
