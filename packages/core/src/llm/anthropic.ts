@@ -39,7 +39,9 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
     ...(json !== undefined ? { json } : {}),
     sources: [...sources.values()],
     usage: {
-      inputTokens: msg.usage.input_tokens,
+      // Cached prompt tokens are reported separately; count them so cost/usage logs don't drop them.
+      inputTokens: msg.usage.input_tokens
+        + (msg.usage.cache_creation_input_tokens ?? 0) + (msg.usage.cache_read_input_tokens ?? 0),
       outputTokens: msg.usage.output_tokens,
       searchRequests: msg.usage.server_tool_use?.web_search_requests ?? 0,
     },
@@ -50,14 +52,19 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
  * Build Messages API params. Structured output uses a single tool with `tool_choice: auto` plus a system
  * instruction naming it: claude-opus-5-5 / claude-sonnet-5-5 reject forced `tool`/`any` tool_choice (400).
  * A reply without the tool call is caught by the router's re-ask loop.
+ * The first user message carries a cache_control breakpoint: Fuelix rejects claude-opus-5-5 prompts of
+ * 1024+ tokens without one, and it lets re-asks reuse the cached tools + system + prompt prefix.
  */
 export function buildAnthropicParams(r: AdapterRequest): Anthropic.MessageCreateParamsNonStreaming {
   const tools: Anthropic.ToolUnion[] = [];
   let system = r.system;
+  const messages: Anthropic.MessageParam[] = r.messages.map((m, i) => (i === 0
+    ? { role: m.role, content: [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }] }
+    : m));
   const params: Anthropic.MessageCreateParamsNonStreaming = {
     model: r.model,
     max_tokens: r.maxTokens,
-    messages: r.messages,
+    messages,
   };
   if (r.jsonSchema) {
     tools.push({

@@ -40,6 +40,17 @@ describe('mapAnthropicMessage', () => {
     expect(res.sources).toEqual([]);
     expect(res.usage).toEqual({ inputTokens: 5, outputTokens: 7, searchRequests: 0 });
   });
+
+  it('counts cache-write and cache-read tokens as input tokens', () => {
+    const msg = {
+      content: [{ type: 'text', text: 'ok', citations: null }],
+      usage: {
+        input_tokens: 10, output_tokens: 3, server_tool_use: null,
+        cache_creation_input_tokens: 2000, cache_read_input_tokens: 500,
+      },
+    };
+    expect(mapAnthropicMessage(msg as never).usage).toEqual({ inputTokens: 2510, outputTokens: 3, searchRequests: 0 });
+  });
 });
 
 describe('buildAnthropicParams', () => {
@@ -69,6 +80,27 @@ describe('buildAnthropicParams', () => {
       jsonSchema: { name: 'verdict', schema },
     });
     expect(params.system).toContain('`verdict` tool');
+  });
+
+  // Live run 2026-10-17: Fuelix returns 400 "Model 'claude-opus-5-5' requires a cache_control breakpoint
+  // on prompts of 1024 tokens or more."
+  it('puts a cache_control breakpoint on the first user message and leaves later messages as plain text', () => {
+    const params = buildAnthropicParams({
+      model: 'claude-opus-5-5',
+      messages: [
+        { role: 'user', content: 'Long stable prompt' },
+        { role: 'assistant', content: '{}' },
+        { role: 'user', content: 'Your output was invalid' },
+      ],
+      maxTokens: 8000,
+      jsonSchema: { name: 'verdict', schema },
+    });
+    expect(params.messages[0]).toEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'Long stable prompt', cache_control: { type: 'ephemeral' } }],
+    });
+    expect(params.messages[1]).toEqual({ role: 'assistant', content: '{}' });
+    expect(params.messages[2]).toEqual({ role: 'user', content: 'Your output was invalid' });
   });
 
   it('leaves plain and research requests without tool_choice', () => {
