@@ -76,6 +76,18 @@ describe('harvest', () => {
     expect((await db.select().from(signals)).map((s) => s.url)).toEqual(['https://x.test/a']);
   });
 
+  it('logs a failed source search as ok:false and carries on', async () => {
+    const db = await testDb();
+    const broken: SignalSource = { id: 'stackexchange', search: async () => { throw new Error('HTTP 503'); } };
+    const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [extract] } });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const out = await harvest({ db, router, sources: [broken, hn()], fetchPage, log: () => {} }, run);
+    expect(out.signalIds).toHaveLength(1);
+    const calls = await db.select().from(dataCalls);
+    expect(calls.filter((c) => c.provider === 'stackexchange').map((c) => c.ok)).toEqual([false, false]);
+    expect(calls.filter((c) => c.provider === 'hn').map((c) => c.ok)).toEqual([true, true]);
+  });
+
   it('drops banned-domain items from free sources', async () => {
     const db = await testDb();
     const src: SignalSource = {

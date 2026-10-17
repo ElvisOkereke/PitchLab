@@ -99,7 +99,15 @@ ${wrapUntrusted('idea', idea)}`;
       else if (source.id === 'wordpress') queries = pick(DEFAULT_WP_SLUGS, QUERIES_PER_SOURCE, random);
       else continue; // appstore skipped in Plan 1 (R12)
       for (const q of queries) {
-        const found = await source.search(q, { limit: 10 });
+        let found: RawItem[];
+        try {
+          found = await source.search(q, { limit: 10 });
+        } catch (err) {
+          // One failing free source must not sink the harvest: record it and move on.
+          await logDataCall(db, { runId: run.id, provider: source.id, endpoint: q, costUsd: 0, ok: false });
+          log(`harvest: ${source.id} search failed: ${err instanceof Error ? err.message : String(err)}`);
+          continue;
+        }
         await logDataCall(db, { runId: run.id, provider: source.id, endpoint: q, costUsd: 0, ok: true });
         items.push(...found.filter((it) => !isBannedSource(it.url)).map(sanitizeItem));
       }

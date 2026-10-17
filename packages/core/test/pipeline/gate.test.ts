@@ -64,6 +64,19 @@ describe('gate', () => {
     expect((await getIdea(db, idea.id)).status).toBe('advanced');
   });
 
+  it('caps idea fields and collapses newlines before they reach the prompts', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await insertIdea(db, run.id, { title: 'Line one\nLine two', problem: `${'p'.repeat(2000)}TAIL` });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    for (const { prompt } of router.calls) {
+      expect(prompt).toContain('Title: Line one Line two\n');
+      expect(prompt).toContain('p'.repeat(2000));
+      expect(prompt).not.toContain('TAIL');
+    }
+  });
+
   it('tells the competitor researcher never to cite banned domains', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));

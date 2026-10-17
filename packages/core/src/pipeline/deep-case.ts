@@ -8,6 +8,7 @@ import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/sche
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { isBannedSource } from '../tools/banned-sources';
+import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
@@ -90,11 +91,7 @@ export async function deepCase(
     const model = router.modelFor('case');
 
     for (const idea of ordered) {
-      const wrappedIdea = wrapUntrusted(
-        'idea',
-        `Title: ${capField(idea.title, 200)}\nOne-liner: ${capField(idea.oneLiner, 2000)}\nBuyer: ${capField(idea.buyer, 2000)}\n` +
-          `Problem: ${capField(idea.problem, 2000)}\nSolution: ${capField(idea.solution, 2000)}`,
-      );
+      const wrappedIdea = wrapUntrusted('idea', ideaBlock(idea));
 
       const sigFound = idea.signalIds.length
         ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
@@ -108,7 +105,6 @@ export async function deepCase(
           .join('\n') || '(none)',
       );
 
-      // Latest verdict per check (a resumed gate may have written more than one).
       const verdicts = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id)).orderBy(asc(gateVerdicts.createdAt));
       const latest = new Map(verdicts.map((v) => [v.check, v]));
       const wrappedGate = wrapUntrusted(

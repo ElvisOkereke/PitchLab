@@ -36,7 +36,7 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
   }
 
   return {
-    text: texts.join(''),
+    text: texts.join('\n'),
     ...(json !== undefined ? { json } : {}),
     sources: [...sources.values()],
     usage: {

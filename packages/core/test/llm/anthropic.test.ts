@@ -13,8 +13,8 @@ describe('mapAnthropicMessage', () => {
   it('maps a web-search message to text, deduped sources and usage', () => {
     const res = mapAnthropicMessage(fixture);
     expect(res.text).toBe(
-      "I'll search for recent complaints about invoice reconciliation." +
-        'Owners report spending hours each week matching invoices' +
+      "I'll search for recent complaints about invoice reconciliation.\n" +
+        'Owners report spending hours each week matching invoices\n' +
         ', and tools built for enterprises are a poor fit.',
     );
     expect(res.sources).toEqual([

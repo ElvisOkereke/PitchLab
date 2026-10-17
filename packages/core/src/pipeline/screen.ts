@@ -2,8 +2,9 @@ import { eq, inArray } from 'drizzle-orm';
 import { AiScoresSchema, CRITERIA } from '../case/schema';
 import { ideas } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { capField, wrapUntrusted } from '../llm/untrusted';
+import { wrapUntrusted } from '../llm/untrusted';
 import { cosine } from './dedupe';
+import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_WINNER_SIMILARITY = 0.8;
@@ -31,10 +32,9 @@ export async function screen(
   const prompt = loadPrompt('screen');
   const scored: { id: string; total: number; index: number; embedding: number[] | null }[] = [];
   for (const [index, idea] of generated.entries()) {
-    const text = `Title: ${capField(idea.title, 200)}\nOne-liner: ${capField(idea.oneLiner, 2000)}\nBuyer: ${capField(idea.buyer, 2000)}\nProblem: ${capField(idea.problem, 2000)}\nSolution: ${capField(idea.solution, 2000)}`;
     const scores = await router.structured(
       'screen',
-      { prompt: prompt.render({ idea: wrapUntrusted('idea', text) }), schema: AiScoresSchema, schemaName: 'screen_scores' },
+      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaBlock(idea)) }), schema: AiScoresSchema, schemaName: 'screen_scores' },
       { runId: run.id, promptVersion: prompt.version },
     );
     const total = CRITERIA.reduce((s, c) => s + scores[c].value, 0) / CRITERIA.length;

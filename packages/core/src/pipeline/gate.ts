@@ -5,6 +5,7 @@ import { gateVerdicts, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
+import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
@@ -62,8 +63,7 @@ export async function gate(
   let killed = 0;
 
   for (const idea of ordered) {
-    const ideaText = `Title: ${idea.title}\nOne-liner: ${idea.oneLiner}\nBuyer: ${idea.buyer}\nProblem: ${idea.problem}\nSolution: ${idea.solution}`;
-    const wrappedIdea = wrapUntrusted('idea', ideaText);
+    const wrappedIdea = wrapUntrusted('idea', ideaBlock(idea));
 
     const research = await router.research(
       'competitors',
