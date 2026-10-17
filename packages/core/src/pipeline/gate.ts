@@ -40,6 +40,8 @@ function parseSource(url: string): { domain: string; thread: string } | null {
     const r = parse(u.hostname.toLowerCase());
     if (r.isIp || !r.domain) return null;
     u.hash = '';
+    u.protocol = 'https:';
+    if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '');
     return { domain: r.domain.toLowerCase(), thread: u.href };
   } catch {
     return null;

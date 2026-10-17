@@ -171,6 +171,10 @@ describe('gate', () => {
       const ev = await evidence([HN(1, '#a'), HN(1, '#b'), HN(1)]);
       expect(ev.reasoning).toBe('1 independent sources: ycombinator.com');
     });
+    it('normalises scheme and trailing slash in thread keys', async () => {
+      const ev = await evidence(['https://github.com/o/r/issues/9', 'http://github.com/o/r/issues/9/', 'https://github.com/o/r/issues/9#c1']);
+      expect(ev.reasoning).toBe('1 independent sources: github.com');
+    });
     it('counts 3 distinct non-community domains as 3', async () => {
       const ev = await evidence(['https://a.com/1', 'https://b.com/1', 'https://c.com/1']);
       expect(ev.pass).toBe(true);
