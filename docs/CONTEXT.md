@@ -10,6 +10,7 @@
   export) and added idea-diversity changes (ideate.v3, diversity-aware screen) — both **unvalidated live until the next run**.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
+- **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
 - **Last updated:** 2026-10-17
 
 ## The Goal (in the user's words, summarised)
@@ -158,3 +159,4 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   1 duplicate, 10 screened out, 5 at gate, 1 passed ("Lead-Line Canary", ROI 0.72×); $6.64. **Owner to review both cases.**
   Open points for owner: ideation anchors on the benchmark pattern (only 1/5 passed the gate); verify covers claims but
   not harvested-signal/competitor URLs. Details in `docs/runs/2026-10-17-benchmark.md`.
+- **2026-10-17:** Final-review fix wave landed (evidence integrity, idempotent ideate, banned sources in code, ideate.v3 diversity). Merged to main and pushed to GitHub (PitchLab). Owner asked for detail on the 3 tuning questions (see docs/plan-1-followups.md).
