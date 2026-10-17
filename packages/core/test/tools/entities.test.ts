@@ -20,6 +20,13 @@ describe('decodeEntities', () => {
     expect(decodeEntities('&amp;lt;b&amp;gt;')).toBe('&lt;b&gt;');
   });
 
+  it('never produces control or invisible format characters (tab and newline excepted)', () => {
+    for (const s of ['&#x202E;', '&#27;', '&#x1B;', '&#x200B;', '&#127;', '&#x85;', '&#xFEFF;', '&#x2066;', '&#xE0041;', '&#13;']) {
+      expect(decodeEntities(s)).toBe(s);
+    }
+    expect(decodeEntities('a&#9;b&#10;c')).toBe('a\tb\nc');
+  });
+
   it('leaves invalid code points and unknown names literal', () => {
     for (const s of ['&#0;', '&#xD800;', '&#xDFFF;', '&#1114112;', '&#x110000;', '&#99999999999999999999;', '&bogus;', '&#;', '&#x;']) {
       expect(decodeEntities(s)).toBe(s);

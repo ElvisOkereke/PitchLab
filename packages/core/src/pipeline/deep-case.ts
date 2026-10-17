@@ -15,6 +15,8 @@ const SLUG_MAX = 60;
 const WRITE_MAX_TOKENS = 16000;
 /** Per case, at most this many signals and this many competitors are stored, each with its verification claim(s). */
 const LINK_CLAIMS_MAX = 15;
+/** How many unused signal urls the per-case log line names. */
+const UNUSED_LOG_MAX = 3;
 
 const cut = (s: string, n: number) => s.slice(0, n).replace(/-+$/, '');
 
@@ -157,6 +159,15 @@ export async function deepCase(
       // Only the first LINK_CLAIMS_MAX signals/competitors are stored, so every displayed link has a verification claim.
       const used = new Set(draft.usedSignalUrls.map((u) => u.trim()));
       const sigRows = allSigRows.filter((s) => used.has(s.url)).slice(0, LINK_CLAIMS_MAX);
+      // Nothing is dropped silently: report the provided signals the writer left out.
+      const unused = allSigRows.filter((s) => !used.has(s.url));
+      if (unused.length) {
+        const sample = unused.slice(0, UNUSED_LOG_MAX).map((s) => capField(s.url, 200)).join(', ');
+        log(
+          `deep-case: "${capField(draft.title, 120)}": ${unused.length} of ${allSigRows.length} provided signals not used by the writer: ` +
+            `${sample}${unused.length > UNUSED_LOG_MAX ? ', …' : ''}`,
+        );
+      }
       const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url)).slice(0, LINK_CLAIMS_MAX);
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const sections: CaseSections = {

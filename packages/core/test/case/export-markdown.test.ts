@@ -261,6 +261,37 @@ describe('caseToMarkdown', () => {
     expect(md).not.toMatch(/<b>/);
   });
 
+  it('keeps control and invisible characters (encoded or raw) out of rendered quotes', () => {
+    const quote = 'evil &#x202E;txt.exe &#27;[31m zero&#x200B;width raw‮bidi​zw\u0007bell';
+    const kase = caseFixture({ mutate: (s) => { s.evidence.signals = [{ quote, url: 'https://news.example/item/9', sourceName: 'HN' }]; } });
+    const md = caseToMarkdown(kase, [
+      claim('unreachable', { section: 'signal', text: quote, sourceUrl: 'https://news.example/item/9', quote }),
+      claim('verified', { text: 'c', quote }),
+    ], []);
+    expect(md).not.toMatch(/[‮​\u001B\u0007]/u);
+    expect(md).toContain('rawbidizwbell');
+  });
+
+  it('uses an existing competitor-pricing claim even when the pricing text does not look like a price', () => {
+    const pricing = 'Not published (first 150 testers)';
+    const kase = caseFixture({ mutate: (s) => { s.competitors.list[0]!.pricing = pricing; } });
+    const url = kase.sections.competitors.list[0]!.url;
+    const md = caseToMarkdown(kase, [
+      ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === url)),
+      claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
+      claim('verified', { section: 'competitor-pricing', text: `Generic uptime monitor pricing: ${pricing}`, sourceUrl: url, quote: null }),
+    ], []);
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| ✅ verified \| ✅ verified \|/);
+    expect(md).not.toContain('not published — check');
+    expect(md).toContain('Nothing — every displayed source was confirmed or flagged.');
+  });
+
+  it('escapes an unknown claim section used as a label', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('unverified', { section: '<b>odd</b>', text: 'x' })], []);
+    expect(md).toContain('**&lt;b&gt;odd&lt;/b&gt;:**');
+    expect(md).not.toMatch(/<b>/);
+  });
+
   it('percent-encodes parentheses in link targets', () => {
     const md = caseToMarkdown(caseFixture(), [claim('verified', { sourceUrl: 'https://x.example/a_(b) c' })], []);
     expect(md).toContain('[x.example](https://x.example/a_%28b%29%20c)');

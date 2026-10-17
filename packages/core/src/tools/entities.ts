@@ -1,3 +1,5 @@
+import { isInvisibleChar } from '../llm/untrusted';
+
 const NAMED: Record<string, string> = {
   rsquo: '’',
   lsquo: '‘',
@@ -16,8 +18,13 @@ const NAMED: Record<string, string> = {
 
 const ENTITY = /&(?:#(\d{1,10})|#[xX]([0-9a-fA-F]{1,8})|([a-zA-Z]+));/g;
 
-/** A code point String.fromCodePoint can emit as a real character: not NUL, not a surrogate, within Unicode. */
-const validCodePoint = (cp: number) => Number.isInteger(cp) && cp > 0 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff);
+/**
+ * A code point that decodes to a real, visible character: within Unicode, not a surrogate, and not in the
+ * invisible/control set (C0/C1 controls other than tab and newline, \p{Cf} format chars such as U+200B and U+202E,
+ * and other invisible fillers). Anything else stays as the literal entity text.
+ */
+const validCodePoint = (cp: number) =>
+  Number.isInteger(cp) && cp > 0 && cp <= 0x10ffff && !(cp >= 0xd800 && cp <= 0xdfff) && !isInvisibleChar(String.fromCodePoint(cp));
 
 /**
  * Decode HTML entities in one pass: every numeric entity (`&#8217;`, `&#x2019;`) and a small named set (curly quotes,

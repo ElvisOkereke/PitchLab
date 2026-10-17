@@ -167,6 +167,8 @@ describe('deepCase', () => {
       { name: 'Hidden Co', url: 'https://hidden.example/', pricing: 'Not published', gap: 'g' },
       { name: 'Sales Co', url: 'https://sales.example/', pricing: 'Contact sales', gap: 'g' },
       { name: 'Priced Co', url: 'https://priced.example/', pricing: '$49/mo', gap: 'g' },
+      { name: 'Seats Co', url: 'https://seats.example/', pricing: 'Contact sales for 10+ seats', gap: 'g' },
+      { name: 'Free Co', url: 'https://free.example/', pricing: 'Free', gap: 'g' },
     ];
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
@@ -177,8 +179,13 @@ describe('deepCase', () => {
       { text: 'Hidden Co', sourceUrl: 'https://hidden.example/' },
       { text: 'Sales Co', sourceUrl: 'https://sales.example/' },
       { text: 'Priced Co', sourceUrl: 'https://priced.example/' },
+      { text: 'Seats Co', sourceUrl: 'https://seats.example/' },
+      { text: 'Free Co', sourceUrl: 'https://free.example/' },
     ]);
-    expect(pick('competitor-pricing')).toEqual([{ text: 'Priced Co pricing: $49/mo', sourceUrl: 'https://priced.example/' }]);
+    expect(pick('competitor-pricing')).toEqual([
+      { text: 'Priced Co pricing: $49/mo', sourceUrl: 'https://priced.example/' },
+      { text: 'Free Co pricing: Free', sourceUrl: 'https://free.example/' },
+    ]);
   });
 
   it('stores a case with zero claims when everything is banned or unparseable', async () => {
@@ -330,6 +337,25 @@ describe('deepCase', () => {
     expect(rows.filter((c) => c.section === 'signal').map((c) => c.sourceUrl).sort()).toEqual([sigs[0]!.url, sigs[2]!.url].sort());
   });
 
+  it('logs how many provided signals the writer did not use, with the first few urls', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const sigs = await db.insert(signals).values(['a', 'b', 'c', 'd', 'e'].map((k) => ({
+      marketId: 'ca-us', source: 'hn', url: `https://news.example/unused/${k}`, title: 't', quote: `quote ${k}`, quoteHash: `unused${k}`,
+    }))).returning({ id: signals.id, url: signals.url });
+    const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id), status: 'advanced' });
+    const d = draft();
+    d.usedSignalUrls = [sigs[1]!.url];
+    const logs: string[] = [];
+    await deepCase({ db, router: recordingRouter([d]), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { passed: [idea.id], advisory: [] });
+    const line = logs.find((l) => l.includes('not used by the writer'));
+    expect(line).toBeDefined();
+    expect(line).toContain('4 of 5 provided signals not used by the writer');
+    for (const k of ['a', 'c', 'd']) expect(line).toContain(`https://news.example/unused/${k}`);
+    expect(line).not.toContain('https://news.example/unused/e');
+    expect(line).not.toContain('https://news.example/unused/b');
+  });
+
   it('stores no signals and no signal claims when the writer used none', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
@@ -425,6 +451,12 @@ describe('CaseDraftSchema', () => {
   it('requires all four CASL placeholders in every email and follow-up body', () => {
     expect(fails((d) => { d.pitch.followUps[0].body = d.pitch.followUps[0].body.replace('[Phone or website]', ''); })).toBe(true);
     expect(fails((d) => { d.pitch.emails[2].body = d.pitch.emails[2].body.replace('[Unsubscribe line]', ''); })).toBe(true);
+  });
+
+  it('bounds usedSignalUrls: at most 30 urls of at most 2000 chars', () => {
+    expect(fails((d) => { d.usedSignalUrls = Array.from({ length: 30 }, (_, i) => `https://x.example/${i}`); })).toBe(false);
+    expect(fails((d) => { d.usedSignalUrls = Array.from({ length: 31 }, (_, i) => `https://x.example/${i}`); })).toBe(true);
+    expect(fails((d) => { d.usedSignalUrls = [`https://x.example/${'a'.repeat(2000)}`]; })).toBe(true);
   });
 
   it('requires the headline price to match the price number input', () => {

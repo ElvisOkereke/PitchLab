@@ -49,8 +49,25 @@ const CompetitorsSchema = z.object({
   levels: z.array(z.object({ level: z.string(), whatItChecks: z.string(), limitation: z.string() })).min(2),
 });
 
-/** True when a competitor's pricing text quotes a concrete figure ("$49/mo"), so a pricing claim can be checked. */
-export const hasPriceFigure = (pricing: string) => /\d/.test(pricing);
+const NUM = String.raw`\d+(?:[.,]\d+)*`;
+const CURRENCY_CODE = String.raw`(?:USD|CAD|EUR|GBP|AUD|NZD)`;
+const BILLING_UNIT = String.raw`(?:mo|mos|month|months|yr|yrs|year|years|user|seat|site|location)`;
+const PRICE_PATTERNS = [
+  new RegExp(String.raw`[$€£¥]\s?${NUM}`), // $49, CA$29, US$35.00, €10, £5
+  new RegExp(String.raw`${NUM}\s?[$€£¥]`), // 10 €
+  new RegExp(String.raw`\b${CURRENCY_CODE}\s?${NUM}`, 'i'), // USD 15
+  new RegExp(String.raw`${NUM}\s?${CURRENCY_CODE}\b`, 'i'), // 49 USD
+  new RegExp(String.raw`${NUM}\s*(?:\/\s*${BILLING_UNIT}\b|per\s+${BILLING_UNIT}\b)`, 'i'), // 29/mo, 29 per month, 5 per seat
+  // "Free" / "free tier" / "free plan" is a published price; a free trial, demo or consultation is not.
+  /\bfree\b(?!\s+(?:trial|demo|consultation|quote|estimate|audit|assessment)s?\b)/i,
+];
+
+/**
+ * True when a competitor's pricing text states a concrete published price, so a `competitor-pricing` claim can be
+ * checked: a currency symbol or code next to a number ("$49", "49 USD", "CA$29", "€10"), a number with a billing unit
+ * ("29/mo", "5 per seat"), or a free plan ("Free", "free tier"). Bare numbers ("first 150 testers", "10+ seats") are not.
+ */
+export const hasPriceFigure = (pricing: string) => PRICE_PATTERNS.some((re) => re.test(pricing));
 
 /** The `competitor-pricing` claim text; deep-case stores it and the export looks it up by the same string. */
 export const competitorPricingText = (c: { name: string; pricing: string }) => `${c.name} pricing: ${c.pricing}`;
@@ -99,7 +116,7 @@ export const CaseDraftSchema = z
     summary: z.object(summaryShape),
     evidence: EvidenceDraftSchema,
     /** URLs of the provided signals the writer actually relied on; code keeps only real, provided signal rows. */
-    usedSignalUrls: z.array(z.string()),
+    usedSignalUrls: z.array(z.string().max(2000)).max(30),
     numbers: z.object({ inputs: NumberInputsSchema }),
     competitors: CompetitorsSchema,
     pitch: PitchSchema,

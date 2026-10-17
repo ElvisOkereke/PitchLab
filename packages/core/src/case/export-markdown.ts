@@ -1,5 +1,6 @@
 import { listInputs } from '../calc/inputs';
 import type { Sourced } from '../calc/schema';
+import { stripInvisible } from '../llm/untrusted';
 import { decodeEntities } from '../tools/entities';
 import { competitorPricingText, hasPriceFigure } from './schema';
 import type { cases, claims, scores } from '../db/schema';
@@ -27,9 +28,11 @@ const line = (s: string) => esc(s.replace(/\s+/g, ' ').trim());
 /** A table cell: single line, pipes escaped. */
 const cell = (s: string) => line(s).replace(/\|/g, '\\|');
 
-// Quotes stored before entity decoding landed (legacy rows) may still hold `&#8217;` etc.: decode first, then escape.
-const quoteLine = (s: string) => line(decodeEntities(s));
-const quoteCell = (s: string) => cell(decodeEntities(s));
+// Quotes stored before entity decoding landed (legacy rows) may still hold `&#8217;` etc.: decode first, strip
+// control and invisible/bidi characters (decoded or stored raw), then escape (R13).
+const cleanQuote = (s: string) => stripInvisible(decodeEntities(s));
+const quoteLine = (s: string) => line(cleanQuote(s));
+const quoteCell = (s: string) => cell(cleanQuote(s));
 
 /** Multi-line text: each line escaped and trimmed, line breaks kept as hard breaks, blank lines as paragraph breaks. */
 function block(s: string): string {
@@ -145,7 +148,7 @@ function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[
   const item = (label: string, text: string, url: string, reason: string) => `- **${label}:** ${quoteLine(text)} (${link(url)}): ${line(reason)}`;
   const items = claimRows
     .filter((r) => FOR_OWNER.has(r.verified))
-    .map((r) => item(SECTION_LABEL[r.section] ?? r.section, r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified));
+    .map((r) => item(SECTION_LABEL[r.section] ?? line(r.section), r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified));
   for (const s of c.sections.evidence.signals) {
     if (!flags.signal.has(linkKey(s.url, s.quote))) items.push(item('Signal', s.quote, s.url, NOT_CHECKED_REASON));
   }
@@ -156,10 +159,10 @@ function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[
   }
   for (const x of c.sections.competitors.list) {
     if (!flags.competitor.has(linkKey(x.url, x.name))) items.push(item('Competitor', x.name, x.url, NOT_CHECKED_REASON));
+    // An existing pricing claim always wins (its own status is listed above when unsettled); otherwise the predicate.
+    if (flags.competitorPricing.has(linkKey(x.url, competitorPricingText(x)))) continue;
     if (!hasPriceFigure(x.pricing)) items.push(item('Competitor pricing', x.name, x.url, UNPUBLISHED_PRICE_REASON));
-    else if (!flags.competitorPricing.has(linkKey(x.url, competitorPricingText(x)))) {
-      items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
-    }
+    else items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
   }
   const out = ['## For you to check', ''];
   if (claimRows.length === 0) out.push('This case has no checked sources — verify everything yourself.', ...(items.length ? [''] : []));
@@ -261,8 +264,12 @@ function competitors(c: CaseRow, flags: Flags): string[] {
   const { list, levels } = c.sections.competitors;
   const shown = (s: Status | undefined) => (s ? CLAIM_STATUS[s] : 'not checked');
   const product = (x: { url: string; name: string }) => shown(flags.competitor.get(linkKey(x.url, x.name)));
-  const pricing = (x: { url: string; name: string; pricing: string }) =>
-    hasPriceFigure(x.pricing) ? shown(flags.competitorPricing.get(linkKey(x.url, competitorPricingText(x)))) : '🔍 not published — check';
+  // A stored pricing claim always decides the cell, so a checked price never shows "not published".
+  const pricing = (x: { url: string; name: string; pricing: string }) => {
+    const s = flags.competitorPricing.get(linkKey(x.url, competitorPricingText(x)));
+    if (s) return CLAIM_STATUS[s];
+    return hasPriceFigure(x.pricing) ? 'not checked' : '🔍 not published — check';
+  };
   return [
     '## Competitors',
     '',
