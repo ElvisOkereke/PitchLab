@@ -160,3 +160,8 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   Open points for owner: ideation anchors on the benchmark pattern (only 1/5 passed the gate); verify covers claims but
   not harvested-signal/competitor URLs. Details in `docs/runs/2026-10-17-benchmark.md`.
 - **2026-10-17:** Final-review fix wave landed (evidence integrity, idempotent ideate, banned sources in code, ideate.v3 diversity). Merged to main and pushed to GitHub (PitchLab). Owner asked for detail on the 3 tuning questions (see docs/plan-1-followups.md).
+- **2026-10-17:** Owner decisions on §12.2 tuning: (1) **remove** the lead-form benchmark example from idea generation
+  (keep the five principles in abstract form; the lead-flow idea stays as the benchmark *test*); (2) **broaden** harvest:
+  per-sector pain-phrase banks for the market's sectors + wider WordPress plugin list; (3) **hybrid** evidence counting:
+  community platforms (HN, Stack Exchange, GitHub, WordPress.org) count distinct threads, max 2 per platform; other sites
+  count once per registrable domain. Work on branch `tuning-1`, then live re-run.
