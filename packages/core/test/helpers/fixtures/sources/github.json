@@ -1,0 +1,4 @@
+{"total_count":2,"items":[
+{"html_url":"https://github.com/acme/billing/issues/12","title":"Invoices take hours to reconcile","body":"We waste &lt;hours&gt; each week reconciling invoices manually.","created_at":"2026-02-10T08:00:00Z"},
+{"html_url":"https://github.com/acme/crm/issues/7","title":"No export for leads","body":null,"created_at":"2026-02-11T09:00:00Z"}
+]}

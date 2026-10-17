@@ -1,0 +1,6 @@
+{"feed":{"entry":[
+{"id":{"label":"https://apps.apple.com/us/app/example/id555"},"im:name":{"label":"Example"}},
+{"author":{"uri":{"label":"https://itunes.apple.com/us/reviews/id1"}},"im:rating":{"label":"1"},"id":{"label":"9001"},"title":{"label":"Wastes my time"},"content":{"label":"Syncing fails and I lose hours of work"},"updated":{"label":"2026-03-01T10:00:00-07:00"}},
+{"author":{"uri":{"label":"https://itunes.apple.com/us/reviews/id2"}},"im:rating":{"label":"3"},"id":{"label":"9002"},"title":{"label":"Meh"},"content":{"label":"Invoices are clunky"},"updated":{"label":"2026-03-02T10:00:00-07:00"}},
+{"author":{"uri":{"label":"https://itunes.apple.com/us/reviews/id3"}},"im:rating":{"label":"5"},"id":{"label":"9003"},"title":{"label":"Great"},"content":{"label":"Love it"},"updated":{"label":"2026-03-03T10:00:00-07:00"}}
+]}}

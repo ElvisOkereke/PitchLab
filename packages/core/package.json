@@ -15,6 +15,7 @@
     "@mozilla/readability": "^0.6.0",
     "@types/node": "^26.6.5",
     "drizzle-orm": "^0.45.4",
+    "fast-xml-parser": "^5.11.2",
     "linkedom": "^0.18.13",
     "openai": "^7.36.0",
     "p-limit": "^7.3.3",
