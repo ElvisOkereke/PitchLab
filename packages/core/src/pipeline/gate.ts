@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { gateVerdicts, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
-import { BANNED_DOMAINS } from '../tools/banned-sources';
+import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
@@ -26,17 +26,44 @@ const judgeSchema = z
     message: `verdicts must contain each of ${CHECKS.join(', ')} exactly once`,
   });
 
-/** Registrable domain of an http(s) URL, or null (fail closed) when unparseable or not http(s). */
-function hostOf(url: string): string | null {
+/** Community platforms: several distinct threads on one of these count as separate evidence, up to the cap. */
+export const COMMUNITY_PLATFORMS = ['ycombinator.com', 'stackexchange.com', 'stackoverflow.com', 'github.com', 'wordpress.org'] as const;
+const COMMUNITY = new Set<string>(COMMUNITY_PLATFORMS);
+const THREADS_PER_PLATFORM = 2;
+
+/** Registrable domain and thread key (URL without fragment) of an http(s) URL, or null (fail closed). */
+function parseSource(url: string): { domain: string; thread: string } | null {
   try {
+    if (isBannedSource(url)) return null;
     const u = new URL(url);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
     const r = parse(u.hostname.toLowerCase());
     if (r.isIp || !r.domain) return null;
-    return r.domain.toLowerCase();
+    u.hash = '';
+    return { domain: r.domain.toLowerCase(), thread: u.href };
   } catch {
     return null;
   }
+}
+
+/** Hybrid evidence units: community platforms count distinct threads (max 2 each), every other domain once. */
+export function countEvidence(urls: string[]): { units: number; breakdown: string } {
+  const byDomain = new Map<string, Set<string>>();
+  for (const url of urls) {
+    const s = parseSource(url);
+    if (!s) continue;
+    const set = byDomain.get(s.domain) ?? new Set<string>();
+    set.add(s.thread);
+    byDomain.set(s.domain, set);
+  }
+  let units = 0;
+  const parts: string[] = [];
+  for (const [domain, threads] of byDomain) {
+    const n = COMMUNITY.has(domain) ? Math.min(threads.size, THREADS_PER_PLATFORM) : 1;
+    units += n;
+    parts.push(n > 1 ? `${domain} ×${n} threads` : domain);
+  }
+  return { units, breakdown: parts.join(', ') };
 }
 
 export async function gate(
@@ -78,8 +105,8 @@ export async function gate(
       ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
       : [];
     const urls = sigRows.map((s) => s.url);
-    const hosts = [...new Set(urls.map(hostOf).filter((h): h is string => h !== null))];
-    const evidencePass = hosts.length >= run.config.minSignals;
+    const evidence = countEvidence(urls);
+    const evidencePass = evidence.units >= run.config.minSignals;
 
     const sourceUrls = research.sources.map((s) => s.url);
     const judged = await router.structured(
@@ -108,7 +135,7 @@ export async function gate(
     results.set('evidence', evidencePass);
     values.push({
       ideaId: idea.id, check: 'evidence', pass: evidencePass,
-      reasoning: `${hosts.length} independent sources: ${hosts.join(', ')}`,
+      reasoning: `${evidence.units} independent sources: ${evidence.breakdown}`,
       sources: urls, model: 'rule', promptVersion: 'evidence-rule.v1',
     });
     const failed = ORDER.filter((c) => !results.get(c));

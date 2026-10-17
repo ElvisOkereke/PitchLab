@@ -142,4 +142,47 @@ describe('gate', () => {
     expect(await gate(deps(db, router), run, { ideaIds: [] })).toEqual({ passed: [], advisory: [] });
     expect(router.calls).toHaveLength(0);
   });
+
+  describe('hybrid evidence counting', () => {
+    const HN = (n: number | string, frag = '') => `https://news.ycombinator.com/item?id=${n}${frag}`;
+    async function evidence(urls: string[], minSignals = 3) {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals }));
+      const sigs = await db.insert(signals).values(urls.map((url, i) => ({
+        marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hh${i}`,
+      }))).returning({ id: signals.id });
+      const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
+      const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+      await gate(deps(db, router), run, { ideaIds: [idea.id] });
+      return (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
+    }
+
+    it('caps a community platform at 2 threads', async () => {
+      const ev = await evidence([1, 2, 3, 4, 5].map((n) => HN(n)));
+      expect(ev.pass).toBe(false);
+      expect(ev.reasoning).toBe('2 independent sources: ycombinator.com ×2 threads');
+    });
+    it('counts 2 HN threads + 1 GitHub issue as 3 units', async () => {
+      const ev = await evidence([HN(1), HN(2), 'https://github.com/o/r/issues/9']);
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('3 independent sources: ycombinator.com ×2 threads, github.com');
+    });
+    it('treats fragments as the same thread but keeps the query string', async () => {
+      const ev = await evidence([HN(1, '#a'), HN(1, '#b'), HN(1)]);
+      expect(ev.reasoning).toBe('1 independent sources: ycombinator.com');
+    });
+    it('counts 3 distinct non-community domains as 3', async () => {
+      const ev = await evidence(['https://a.com/1', 'https://b.com/1', 'https://c.com/1']);
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com');
+    });
+    it('counts a non-community domain once even with many pages', async () => {
+      const ev = await evidence(['https://a.com/1', 'https://a.com/2', 'https://a.com/3']);
+      expect(ev.reasoning).toBe('1 independent sources: a.com');
+    });
+    it('excludes banned urls', async () => {
+      const ev = await evidence(['https://www.reddit.com/r/x/1', 'https://a.com/1'], 1);
+      expect(ev.reasoning).toBe('1 independent sources: a.com');
+    });
+  });
 });
