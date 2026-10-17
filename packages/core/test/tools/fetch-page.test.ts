@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchPage } from '../../src/tools/fetch-page';
+import { fetchPage as fetchPageReal } from '../../src/tools/fetch-page';
 import { logDataCall } from '../../src/tools/data-calls';
 import { dataCalls } from '../../src/db/schema';
 import { testDb } from '../helpers/db';
@@ -17,6 +17,10 @@ const hangingFetch = () =>
         init?.signal?.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')));
       }),
   );
+
+const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }];
+const real = fetchPageReal;
+const fetchPage = ((url: string, opts: any = {}) => real(url, { lookup: publicLookup, ...opts })) as typeof real;
 
 describe('fetchPage', () => {
   it('extracts readable text and title', async () => {
@@ -75,6 +79,38 @@ describe('fetchPage', () => {
     const f = vi.fn(async () => { throw new Error('boom'); });
     const r = await fetchPage('https://a.test', { fetchImpl: f });
     expect(r).toMatchObject({ ok: false, status: 0, reason: 'network', text: '', title: '' });
+  });
+});
+
+describe('fetchPage SSRF guards', () => {
+  const never = () => vi.fn(async () => respond('<p>x</p>'));
+  it('blocks metadata IP, localhost, userinfo and mapped IPv6 without fetching', async () => {
+    for (const u of ['http://169.254.169.254/', 'http://localhost:3000/', 'http://user:pass@example.com/', 'http://[::ffff:127.0.0.1]/', 'http://[::1]/', 'http://2130706433/', 'http://foo.internal/']) {
+      const f = never();
+      const r = await fetchPage(u, { fetchImpl: f });
+      expect(r.reason, u).toBe('blocked_host');
+      expect(r.ok).toBe(false);
+      expect(f).not.toHaveBeenCalled();
+    }
+  });
+  it('blocks hostnames resolving to private addresses, and maps lookup failure to network', async () => {
+    const f = never();
+    const r = await fetchPage('https://sneaky.test', { fetchImpl: f, lookup: async () => [{ address: '10.0.0.5', family: 4 }] });
+    expect(r.reason).toBe('blocked_host');
+    expect(f).not.toHaveBeenCalled();
+    const r2 = await fetchPage('https://nx.test', { fetchImpl: f, lookup: async () => { throw new Error('ENOTFOUND'); } });
+    expect(r2.reason).toBe('network');
+  });
+  it('blocks a redirect to an internal address', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/' } }));
+    const r = await fetchPage('https://a.test', { fetchImpl: f });
+    expect(r.reason).toBe('blocked_host');
+    expect(r.ok).toBe(false);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+  it('blocks https to http downgrade on redirect', async () => {
+    const f = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'http://b.test/' } }));
+    expect((await fetchPage('https://a.test', { fetchImpl: f })).reason).toBe('blocked_scheme');
   });
 });
 
