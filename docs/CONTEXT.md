@@ -4,12 +4,13 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
-- **Phase:** **Plan 1 complete; tuning-1 (branch `tuning-1`) run live 2026-10-17, results in `docs/runs/2026-10-17-run-2.md`.**
-  Open run: 5 reached the gate, **1 passed** (§12.2 still not met); evidence no longer kills, `generic` does. Ideation is
-  broader in mechanism (6/14 non-monitoring) but 6/14 still lead-capture or web-agency, and the screen sends mostly
-  those to the gate. Benchmark: §12.1 case criteria 4/4 pass (every displayed link now shows a status), but ROI 0.24×.
-  Two defects fixed (verify on JS-rendered pages, formula rounding). Open points for owner in the run-2 doc
-  (competitor-flag semantics, screen diversity). Next: owner review, then Plan 2 (Dashboard).
+- **Phase:** **Plan 1 complete; tuning-2 (branch `tuning-2`) run live 2026-10-17, results in `docs/runs/2026-10-17-run-3.md`.**
+  Open run: 5 reached the gate, **0 passed** (§12.2 not met; run 2: 1); `generic` killed 4 of 5. Lead-capture gate
+  entrants fell from 3/5 to 1/5, but repeat ideas (benchmark idea, a run-2 gate kill) still reach the gate: the
+  case-similarity rule (0.82) never fired, real copies sit at 0.68–0.86. No new case, so the new-case checks
+  (`needs_review`, pricing split, GitHub via API) are untested live. One export defect fixed (legacy competitor claims).
+  Next: owner decision on the run-3 "next improvement" (skip near past gate kills, feed `generic` kills to ideate),
+  then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -181,3 +182,9 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   via GitHub's API; (3) ideas declare mechanism + buyer type, max 2 per mechanism reach the gate, and ideas too close to
   an idea that already has a case are screened out; (4) cases show only signals the writer actually used; HTML entities
   decoded. Branch `tuning-2`.
+- **2026-10-17:** Run 3 on `tuning-2` (`docs/runs/2026-10-17-run-3.md`). Open run: 10 ideas, 0 duplicates, 5 screened
+  out (1 by the mechanism cap, 0 near-twin, 0 close to a case), 5 at gate, **0 passed** (generic 4, autonomy 2,
+  control 1); no case; $3.39, 0 × 429, 0 GitHub rate-limit hits. Gate entrants 1/5 lead capture (run 2: 3/5).
+  Fixed: export ignored pre-tuning-2 `"name: pricing"` competitor claims, so old cases listed every competitor as
+  "not checked yet" (`78885c1`). Owner decision needed: how to stop repeat ideas reaching the gate (similarity to past
+  gate kills, lower threshold) and whether to feed `generic` kills back into ideate.
