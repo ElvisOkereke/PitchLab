@@ -182,6 +182,56 @@ describe('verify', () => {
     }
   });
 
+  describe('GitHub issues via the API', () => {
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    const ISSUE = 'https://github.com/acme/forms/issues/12';
+    const QUOTE = 'Contact form submissions silently vanish after the update';
+
+    it('verifies a quote found in the issue comments through the fast path, without fetching the page or the judge', async () => {
+      const { db, run, kase } = await setup();
+      const [a, b] = await mk(db, kase.id, [
+        { text: 'A', sourceUrl: ISSUE, quote: QUOTE },
+        { text: 'B', sourceUrl: ISSUE, quote: 'Forms broke on 6.4' },
+      ]);
+      const githubFetch = vi.fn(async (url: string, _init?: RequestInit) =>
+        url.includes('/comments') ? json([{ body: `Same here. ${QUOTE}!` }]) : json({ title: 'Forms broke on 6.4', body: 'Short.' }));
+      const fetchPage = vi.fn(async () => page('page chrome only'));
+      const router = fakeRouter({ structured: { verify: [{ supported: true, confidence: 0.9 }] } });
+      const deps = { db, router, fetchPage, githubToken: 'tok', log: () => {} } as unknown as StageDeps;
+      await verify(deps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
+      expect(fetchPage).not.toHaveBeenCalled();
+      expect(githubFetch).toHaveBeenCalledTimes(2); // issue + comments, once per url
+      expect((githubFetch.mock.calls[0]![1] as unknown as { headers: Record<string, string> }).headers.Authorization).toBe('Bearer tok');
+      const rows = new Map((await db.select().from(claims).where(eq(claims.caseId, kase.id))).map((r) => [r.id, r]));
+      expect(rows.get(a!.id)).toMatchObject({ verified: 'verified', confidence: 1 });
+      // Short API text is real content, not an unreadable shell: it goes to the judge.
+      expect(rows.get(b!.id)).toMatchObject({ verified: 'verified', confidence: 0.9 });
+      expect(router.calls[0]!.prompt).toContain('Forms broke on 6.4');
+    });
+
+    it('falls back to the page fetch when the API refuses (403)', async () => {
+      const { db, run, kase } = await setup();
+      const [a] = await mk(db, kase.id, [{ text: 'A', sourceUrl: ISSUE, quote: QUOTE }]);
+      const githubFetch = vi.fn(async () => json({ message: 'API rate limit exceeded' }, 403));
+      const fetchPage = vi.fn(async () => page(`x ${QUOTE} y`));
+      await verify({ db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
+      expect(githubFetch).toHaveBeenCalledTimes(1);
+      expect(fetchPage).toHaveBeenCalledWith(ISSUE);
+      const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+      expect(row).toMatchObject({ verified: 'verified', confidence: 1 });
+    });
+
+    it('leaves a non-GitHub url on the page path', async () => {
+      const { db, run, kase } = await setup();
+      await mk(db, kase.id, [{ text: 'A', sourceUrl: 'https://github.com/acme/forms', quote: QUOTE }, { text: 'B', sourceUrl: 'https://a.com/issues/1', quote: QUOTE }]);
+      const githubFetch = vi.fn(async () => json({}));
+      const fetchPage = vi.fn(async () => page(`x ${QUOTE} y`));
+      await verify({ db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
+      expect(githubFetch).not.toHaveBeenCalled();
+      expect(fetchPage).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('tells the judge what a competitor or competitor-pricing claim must show (verify-claim.v2)', async () => {
     const { db, run, kase } = await setup();
     await db.insert(claims).values([

@@ -4,6 +4,7 @@ import { claims } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { isBannedSource } from '../tools/banned-sources';
+import { fetchGithubIssueText, parseGithubIssueUrl } from '../tools/github-issue';
 import type { PageResult } from '../tools/fetch-page';
 import type { RunConfig, StageDeps } from './types';
 
@@ -57,25 +58,38 @@ export const MIN_READABLE_CHARS = 200;
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 
+/** A fetched source: `viaApi` when the text came from GitHub's API (real content, never a client-side shell). */
+type CheckedPage = PageResult & { viaApi?: boolean };
+
 export async function verify(
-  { db, router, fetchPage, log }: StageDeps,
+  { db, router, fetchPage, githubToken, log }: StageDeps,
   run: { id: string; config: RunConfig },
   input: { caseIds: string[] },
+  opts: { githubFetch?: typeof fetch } = {},
 ): Promise<{ caseIds: string[] }> {
   if (input.caseIds.length === 0) return { caseIds: input.caseIds };
 
   const prompt = loadPrompt('verify-claim');
   const rows = await db.select().from(claims).where(inArray(claims.caseId, input.caseIds));
-  const cache = new Map<string, Promise<PageResult>>();
+  const cache = new Map<string, Promise<CheckedPage>>();
   const normCache = new Map<string, string>();
   const normPage = (url: string, text: string) => {
     let n = normCache.get(url);
     if (n === undefined) normCache.set(url, (n = ` ${normalize(text)} `));
     return n;
   };
+  // GitHub issue/PR links are read through the API; on any API failure, the normal page fetch.
+  const load = async (url: string): Promise<CheckedPage> => {
+    if (parseGithubIssueUrl(url)) {
+      const text = await fetchGithubIssueText(url, { token: githubToken, fetchImpl: opts.githubFetch });
+      if (text !== null) return { ok: true, status: 200, finalUrl: url, title: '', text, viaApi: true };
+      log(`verify: GitHub API unavailable for ${url}, falling back to the page`);
+    }
+    return fetchPage(url);
+  };
   const getPage = (url: string) => {
     let p = cache.get(url);
-    if (!p) cache.set(url, (p = fetchPage(url)));
+    if (!p) cache.set(url, (p = load(url)));
     return p;
   };
 
@@ -110,7 +124,7 @@ export async function verify(
       if (substantive && normPage(claim.sourceUrl, page.text).includes(` ${quote} `)) {
         verified = 'verified';
         confidence = 1;
-      } else if (page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS) {
+      } else if (!page.viaApi && page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS) {
         verified = 'unreachable';
         confidence = null;
         reviewNote = UNREACHABLE_NOTE;
