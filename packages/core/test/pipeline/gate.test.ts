@@ -53,6 +53,17 @@ describe('gate', () => {
     expect((await getIdea(db, idea.id)).status).toBe('advanced');
   });
 
+  it('resets a previously gated-out idea to advanced when a re-run passes every check', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    await db.update(ideas).set({ status: 'gated_out' }).where(eq(ideas.id, idea.id));
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(out.passed).toEqual([idea.id]);
+    expect((await getIdea(db, idea.id)).status).toBe('advanced');
+  });
+
   it('propagates StructuredOutputError when the judge omits a check', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

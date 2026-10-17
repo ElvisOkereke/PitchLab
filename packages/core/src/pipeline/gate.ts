@@ -110,13 +110,13 @@ export async function gate(
       reasoning: `${hosts.length} independent sources: ${hosts.join(', ')}`,
       sources: urls, model: 'rule', promptVersion: 'evidence-rule.v1',
     });
-        const failed = ORDER.filter((c) => !results.get(c));
+    const failed = ORDER.filter((c) => !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';
-    // One transaction per idea: replace verdicts (idempotent on re-run) and update status together.
+    // One transaction per idea: replace verdicts and set status together (idempotent on re-run, R20).
     await db.transaction(async (tx) => {
       await tx.delete(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
       await tx.insert(gateVerdicts).values(values);
-      if (kill) await tx.update(ideas).set({ status: 'gated_out' }).where(eq(ideas.id, idea.id));
+      await tx.update(ideas).set({ status: kill ? 'gated_out' : 'advanced' }).where(eq(ideas.id, idea.id));
     });
     if (failed.length === 0) {
       passed.push(idea.id);
