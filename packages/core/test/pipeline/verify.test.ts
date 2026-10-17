@@ -7,7 +7,7 @@ import type { PageResult } from '../../src/tools/fetch-page';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
-const page = (text: string, ok = true): PageResult => ({ ok, status: ok ? 200 : 404, finalUrl: 'u', title: 't', text, ...(ok ? {} : { reason: 'http' as never }) });
+const page = (text: string, ok = true): PageResult => ({ ok, status: ok ? 200 : 404, finalUrl: 'u', title: 't', text, ...(ok ? {} : { reason: 'http_error' as const }) });
 
 async function setup() {
   const db = await testDb();
@@ -24,12 +24,12 @@ describe('verify', () => {
   it('classifies verified / unsupported / unreachable', async () => {
     const { db, run, kase } = await setup();
     const [a, b, c] = await mk(db, kase.id, [
-      { text: 'A', sourceUrl: 'https://a.com', quote: 'Teams spend $40/hour on this' },
+      { text: 'A', sourceUrl: 'https://a.com', quote: 'Small teams spend $40/hour on this manual task' },
       { text: 'B', sourceUrl: 'https://b.com', quote: 'a quote that is absent' },
       { text: 'C', sourceUrl: 'https://c.com', quote: 'whatever' },
     ]);
     const fetchPage = vi.fn(async (url: string) =>
-      url.includes('c.com') ? page('', false) : url.includes('a.com') ? page('Intro. TEAMS spend  $40 / hour, on this!! Outro') : page('Unrelated text'));
+      url.includes('c.com') ? page('', false) : url.includes('a.com') ? page('Intro. SMALL teams spend  $40 / hour, on this manual task!! Outro') : page('Unrelated text'));
     const router = fakeRouter({ structured: { verify: [{ supported: false, confidence: 0.9 }] } });
     const deps = { db, router, fetchPage, log: () => {} } as unknown as StageDeps;
     const out = await verify(deps, run, { caseIds: [kase.id] });
@@ -45,10 +45,10 @@ describe('verify', () => {
   it('fetches each URL once', async () => {
     const { db, run, kase } = await setup();
     await mk(db, kase.id, [
-      { text: 'A', sourceUrl: 'https://a.com', quote: 'alpha beta' },
-      { text: 'B', sourceUrl: 'https://a.com', quote: 'gamma delta' },
+      { text: 'A', sourceUrl: 'https://a.com', quote: 'alpha beta gamma delta epsilon zeta eta theta' },
+      { text: 'B', sourceUrl: 'https://a.com', quote: 'beta gamma delta epsilon zeta eta theta iota' },
     ]);
-    const fetchPage = vi.fn(async () => page('alpha beta gamma delta'));
+    const fetchPage = vi.fn(async () => page('alpha beta gamma delta epsilon zeta eta theta iota'));
     const deps = { db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps;
     await verify(deps, run, { caseIds: [kase.id] });
     expect(fetchPage).toHaveBeenCalledTimes(1);
@@ -77,5 +77,39 @@ describe('verify', () => {
     expect(fetchPage).not.toHaveBeenCalled();
     const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
     expect(row!.verified).toBe('unverified');
+  });
+
+  async function judged(quote: string, pageText: string, verdict: { supported: boolean; confidence: number }) {
+    const { db, run, kase } = await setup();
+    const [a] = await mk(db, kase.id, [{ text: 'claim text', sourceUrl: 'https://a.com', quote }]);
+    const router = fakeRouter({ structured: { verify: [verdict] } });
+    const deps = { db, router, fetchPage: async () => page(pageText), log: () => {} } as unknown as StageDeps;
+    await verify(deps, run, { caseIds: [kase.id] });
+    const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+    return { row: row!, calls: router.calls.length };
+  }
+
+  it('does not fast-path a short quote', async () => {
+    const r = await judged('ai', 'we use ai daily', { supported: true, confidence: 0.9 });
+    expect(r.calls).toBe(1);
+  });
+
+  it('does not fast-path a quote matching inside a word', async () => {
+    const r = await judged('ai', 'we maintain things', { supported: false, confidence: 0.9 });
+    expect(r.calls).toBe(1);
+    expect(r.row.verified).toBe('unsupported');
+  });
+
+  it('fast-paths a six-word quote present in the page without the judge', async () => {
+    const r = await judged('one two three four five six seven', 'x one two three four five six seven y', { supported: false, confidence: 1 });
+    expect(r.calls).toBe(0);
+    expect(r.row).toMatchObject({ verified: 'verified', confidence: 1 });
+  });
+
+  it('requires judge confidence >= 0.6', async () => {
+    const low = await judged('short', 'page', { supported: true, confidence: 0.5 });
+    expect(low.row).toMatchObject({ verified: 'unsupported', confidence: 0.5 });
+    const ok = await judged('short', 'page', { supported: true, confidence: 0.6 });
+    expect(ok.row.verified).toBe('verified');
   });
 });

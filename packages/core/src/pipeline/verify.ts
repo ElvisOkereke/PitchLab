@@ -37,6 +37,10 @@ export function bestWindow(text: string, needle: string): string {
   return text.slice(best, best + WINDOW);
 }
 
+export const MIN_JUDGE_CONFIDENCE = 0.6;
+const MIN_QUOTE_WORDS = 6;
+const MIN_QUOTE_CHARS = 30;
+
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 
 export async function verify(
@@ -49,6 +53,12 @@ export async function verify(
   const prompt = loadPrompt('verify-claim');
   const rows = await db.select().from(claims).where(inArray(claims.caseId, input.caseIds));
   const cache = new Map<string, Promise<PageResult>>();
+  const normCache = new Map<string, string>();
+  const normPage = (url: string, text: string) => {
+    let n = normCache.get(url);
+    if (n === undefined) normCache.set(url, (n = ` ${normalize(text)} `));
+    return n;
+  };
   const getPage = (url: string) => {
     let p = cache.get(url);
     if (!p) cache.set(url, (p = fetchPage(url)));
@@ -70,7 +80,8 @@ export async function verify(
       confidence = null;
     } else {
       const quote = normalize(claim.quote ?? '');
-      if (quote && normalize(page.text).includes(quote)) {
+      const substantive = quote.split(' ').length >= MIN_QUOTE_WORDS && quote.length >= MIN_QUOTE_CHARS;
+      if (substantive && normPage(claim.sourceUrl, page.text).includes(` ${quote} `)) {
         verified = 'verified';
         confidence = 1;
       } else {
@@ -81,15 +92,15 @@ export async function verify(
             prompt: prompt.render({
               claim: wrapUntrusted('claim', capField(claim.text, 2000)),
               quote: wrapUntrusted('quote', capField(claim.quote, 2000) || '(none given)'),
-              page: wrapUntrusted('page-excerpt', excerpt),
+              page: wrapUntrusted('page-excerpt', excerpt.slice(0, WINDOW)),
             }),
             schema: VerdictSchema,
             schemaName: 'claim_verdict',
           },
           { runId: run.id, promptVersion: prompt.version },
         );
-        verified = verdict.supported ? 'verified' : 'unsupported';
         confidence = clamp01(verdict.confidence);
+        verified = verdict.supported && confidence >= MIN_JUDGE_CONFIDENCE ? 'verified' : 'unsupported';
       }
     }
     tally[verified]++;
