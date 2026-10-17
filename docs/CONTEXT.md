@@ -4,9 +4,11 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
-- **Phase:** **Plan 1 complete; next: Plan 2 (Dashboard).** Live benchmark + first open run done 2026-10-17, results in
-  `docs/runs/2026-10-17-benchmark.md` (benchmark: 3 of 4 §12.1 case criteria pass; evidence integrity not met by construction, because signal and
-  competitor links are unverified and the inputs table lacks claim flags; open run produced 1 case, owner to judge).
+- **Phase:** **Plan 1 complete (branch `plan-1-core-pipeline`, 213 tests green); next: Plan 2 (Dashboard).** Live benchmark + first
+  open run done 2026-10-17, results in `docs/runs/2026-10-17-benchmark.md` (benchmark: 3 of 4 §12.1 case criteria passed at run time; open run
+  produced 1 case). The final-review fix wave then closed the evidence-integrity gap (signal/competitor links now verified + flagged, input flags in
+  export) and added idea-diversity changes (ideate.v3, diversity-aware screen) — both **unvalidated live until the next run**.
+  Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Last updated:** 2026-10-17
 
