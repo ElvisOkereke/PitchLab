@@ -41,6 +41,12 @@ export function bestWindow(text: string, needle: string): string {
 export const MIN_JUDGE_CONFIDENCE = 0.6;
 const MIN_QUOTE_WORDS = 6;
 const MIN_QUOTE_CHARS = 30;
+/**
+ * A page that fetched fine but yields less readable text than this is treated as unreadable (typically rendered
+ * client-side by JavaScript, so the fetcher sees an empty shell). Its claims are `unreachable`, not judged:
+ * asking the judge about an empty page would wrongly flag a real source as `unsupported`.
+ */
+export const MIN_READABLE_CHARS = 200;
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 
@@ -95,6 +101,9 @@ export async function verify(
       if (substantive && normPage(claim.sourceUrl, page.text).includes(` ${quote} `)) {
         verified = 'verified';
         confidence = 1;
+      } else if (page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS) {
+        verified = 'unreachable';
+        confidence = null;
       } else {
         const excerpt = bestWindow(page.text, quote ? (claim.quote ?? '') : claim.text);
         const verdict = await router.structured(

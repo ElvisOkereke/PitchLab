@@ -29,7 +29,7 @@ describe('verify', () => {
       { text: 'C', sourceUrl: 'https://c.com', quote: 'whatever' },
     ]);
     const fetchPage = vi.fn(async (url: string) =>
-      url.includes('c.com') ? page('', false) : url.includes('a.com') ? page('Intro. SMALL teams spend  $40 / hour, on this manual task!! Outro') : page('Unrelated text'));
+      url.includes('c.com') ? page('', false) : url.includes('a.com') ? page('Intro. SMALL teams spend  $40 / hour, on this manual task!! Outro') : page(`Unrelated text. ${'Lorem ipsum dolor sit amet. '.repeat(10)}`));
     const router = fakeRouter({ structured: { verify: [{ supported: false, confidence: 0.9 }] } });
     const deps = { db, router, fetchPage, log: () => {} } as unknown as StageDeps;
     const out = await verify(deps, run, { caseIds: [kase.id] });
@@ -120,7 +120,9 @@ describe('verify', () => {
     const { db, run, kase } = await setup();
     const [a] = await mk(db, kase.id, [{ text: 'claim text', sourceUrl: 'https://a.com', quote }]);
     const router = fakeRouter({ structured: { verify: [verdict] } });
-    const deps = { db, router, fetchPage: async () => page(pageText), log: () => {} } as unknown as StageDeps;
+    // Padded past MIN_READABLE_CHARS so the judge path is exercised.
+    const padded = `${pageText} ${'lorem ipsum dolor sit amet '.repeat(10)}`;
+    const deps = { db, router, fetchPage: async () => page(padded), log: () => {} } as unknown as StageDeps;
     await verify(deps, run, { caseIds: [kase.id] });
     const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
     return { row: row!, calls: router.calls.length };
@@ -148,5 +150,20 @@ describe('verify', () => {
     expect(low.row).toMatchObject({ verified: 'unsupported', confidence: 0.5 });
     const ok = await judged('short', 'page', { supported: true, confidence: 0.6 });
     expect(ok.row.verified).toBe('verified');
+  });
+
+  it('marks a fetched page with almost no readable text unreachable without the judge (client-side rendered)', async () => {
+    const { db, run, kase } = await setup();
+    const [a, b] = await mk(db, kase.id, [
+      { text: 'CallRail: Starting at $45/month', sourceUrl: 'https://empty.example', quote: null },
+      { text: 'Most practices have no call tracking', sourceUrl: 'https://shell.example', quote: 'Most practices have no call tracking in place at all' },
+    ]);
+    const fetchPage = vi.fn(async (url: string) => page(url.includes('empty') ? '' : 'Loading... Please enable JavaScript to view this site.'));
+    const router = fakeRouter({});
+    await verify({ db, router, fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    expect(router.calls).toHaveLength(0);
+    const rows = new Map((await db.select().from(claims).where(eq(claims.caseId, kase.id))).map((r) => [r.id, r]));
+    expect(rows.get(a!.id)).toMatchObject({ verified: 'unreachable', confidence: null });
+    expect(rows.get(b!.id)).toMatchObject({ verified: 'unreachable', confidence: null });
   });
 });
