@@ -3,12 +3,17 @@ import { cleanText, getBody, toDate, type RawItem, type SignalSource } from './t
 
 export const DEFAULT_WP_SLUGS = [
   'contact-form-7',
-  'wpforms-lite',
-  'ninja-forms',
-  'gravityforms',
   'wp-mail-smtp',
-  'fluentform',
-  'formidable',
+  'woocommerce',
+  'bookly-responsive-appointment-booking-tool',
+  'simply-schedule-appointments',
+  'paid-memberships-pro',
+  'updraftplus',
+  'wordpress-seo',
+  'the-events-calendar',
+  'easy-digital-downloads',
+  'mailpoet',
+  'sliced-invoices',
 ];
 
 interface RssItem {

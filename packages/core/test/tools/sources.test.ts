@@ -170,7 +170,7 @@ describe('wordpress', () => {
   });
   it('exports default slugs', () => {
     expect(DEFAULT_WP_SLUGS).toContain('contact-form-7');
-    expect(DEFAULT_WP_SLUGS).toHaveLength(7);
+    expect(DEFAULT_WP_SLUGS).toHaveLength(12);
   });
   it('returns [] on 500 and on non-RSS body', async () => {
     expect(await createWordpressSource().search('s', { limit: 5, fetchImpl: fakeFetch('', 500).impl })).toEqual([]);

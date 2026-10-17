@@ -1,7 +1,7 @@
 import type { Db } from './client';
 import { lenses, markets } from './schema';
 
-const CA_US = {
+export const CA_US = {
   id: 'ca-us',
   name: 'Canada + US',
   countries: ['CA', 'US'],

@@ -8,12 +8,8 @@ import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
 import type { RawItem } from '../tools/sources/types';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { logDataCall } from '../tools/data-calls';
+import { phrasesFor } from './pain-phrases';
 import type { RunConfig, StageDeps } from './types';
-
-export const PAIN_PHRASES = [
-  'stopped working', 'lost leads', 'manual every week', 'spreadsheet nightmare',
-  'keeps breaking', 'wasting hours', 'no way to know if', 'silently failing',
-];
 
 const BATCH = 25;
 const QUERIES_PER_SOURCE = 2;
@@ -72,11 +68,11 @@ export async function harvest(
   let phraseQueries: string[] = [];
   let focus: string;
   if (cfg.seedType === 'open') {
-    phraseQueries = pick(market.sectors, 6, random).flatMap((s) => PAIN_PHRASES.map((p) => `${s} ${p}`));
+    phraseQueries = pick(market.sectors, 6, random).flatMap((s) => phrasesFor(s, random).map((p) => `${s} ${p}`));
     focus = `Pain across these sectors: ${market.sectors.join(', ')}.`;
   } else if (cfg.seedType === 'sector') {
     const sectors = cfg.sectors ?? [];
-    phraseQueries = sectors.flatMap((s) => PAIN_PHRASES.map((p) => `${s} ${p}`));
+    phraseQueries = sectors.flatMap((s) => phrasesFor(s, random).map((p) => `${s} ${p}`));
     focus = `Pain in these sectors: ${sectors.join(', ')}.`;
   } else if (cfg.seedType === 'lens') {
     const rows = await db.select().from(lenses).where(inArray(lenses.id, cfg.lensIds ?? []));
@@ -96,7 +92,7 @@ ${wrapUntrusted('idea', idea)}`;
     for (const source of sources) {
       let queries: string[];
       if (PHRASE_SOURCES.has(source.id)) queries = pick(phraseQueries, QUERIES_PER_SOURCE, random);
-      else if (source.id === 'wordpress') queries = pick(DEFAULT_WP_SLUGS, QUERIES_PER_SOURCE, random);
+      else if (source.id === 'wordpress') queries = pick((source as { slugs?: string[] }).slugs ?? DEFAULT_WP_SLUGS, QUERIES_PER_SOURCE, random);
       else continue; // appstore skipped in Plan 1 (R12)
       for (const q of queries) {
         let found: RawItem[];

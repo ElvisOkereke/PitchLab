@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { signals, dataCalls } from '../../src/db/schema';
 import { harvest } from '../../src/pipeline/harvest';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { DEFAULT_WP_SLUGS } from '../../src/tools/sources/wordpress';
 import { fetchPage } from '../../src/tools/fetch-page';
 import type { SignalSource } from '../../src/tools/sources/types';
 import { insertRun, testDb } from '../helpers/db';
@@ -121,5 +122,29 @@ describe('harvest', () => {
     expect(prompt.match(/<\/items>/g)).toHaveLength(1);
     expect(prompt).toContain('a'.repeat(4000));
     expect(prompt).not.toContain('a'.repeat(4001));
+  });
+
+  it('builds sector queries from sector-specific phrases', async () => {
+    const db = await testDb();
+    const queries: string[] = [];
+    const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] } });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['dental clinics'] }));
+    await harvest({ db, router, sources: [hn(queries)], fetchPage, log: () => {} }, run, { random: () => 0.99 });
+    expect(queries).toHaveLength(2);
+    for (const q of queries) expect(q).toMatch(/^dental clinics (no-show patients|insurance claim denied)$/);
+  });
+
+  it('uses the wordpress source slugs when present, else the defaults', async () => {
+    const db = await testDb();
+    const router = () => fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] } });
+    const seen: string[] = [];
+    const wp = (slugs?: string[]) => ({ id: 'wordpress', ...(slugs ? { slugs } : {}), search: async (q: string) => { seen.push(q); return []; } }) as SignalSource;
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['dental clinics'] }));
+    await harvest({ db, router: router(), sources: [wp(['custom-a', 'custom-b'])], fetchPage, log: () => {} }, run);
+    expect(seen.sort()).toEqual(['custom-a', 'custom-b']);
+    seen.length = 0;
+    await harvest({ db, router: router(), sources: [wp()], fetchPage, log: () => {} }, run);
+    expect(seen).toHaveLength(2);
+    for (const s of seen) expect(DEFAULT_WP_SLUGS).toContain(s);
   });
 });
