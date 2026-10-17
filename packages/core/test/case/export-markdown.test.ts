@@ -99,6 +99,23 @@ describe('caseToMarkdown', () => {
     expect(md).not.toContain('- ✅ verified: Generic uptime monitor');
   });
 
+  it('keys competitor flags by url and text, so two competitors on one site keep their own status', () => {
+    const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.url = s.competitors.list[0]!.url; } });
+    const url = kase.sections.competitors.list[0]!.url;
+    const md = caseToMarkdown(kase, [
+      claim('verified', { section: 'competitor', text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: url, quote: null }),
+      claim('unsupported', { section: 'competitor', text: 'Synthetic browser testing platform: From $99/month', sourceUrl: url, quote: null }),
+    ], []);
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| ✅ verified \|/);
+    expect(md).toMatch(/\| Synthetic browser testing platform \|.*\| ❌ unsupported \|/);
+  });
+
+  it('shows the worst status when two claims share a url and text', () => {
+    const sig = { section: 'signal', text: 'Our forms die after plugin updates', sourceUrl: 'https://news.example/item/1', quote: 'Our forms die after plugin updates' };
+    const md = caseToMarkdown(caseFixture(), [claim('unsupported', sig), claim('verified', sig)], []);
+    expect(md).toContain('(Hacker News, [news.example](https://news.example/item/1)) ❌');
+  });
+
   it('flags each sourced number input in its source cell', () => {
     const input = claim('unreachable', {
       section: 'numbers', text: 'price.unitsPerBuyer: 40', sourceUrl: 'https://agency-benchmarks.example/2026-small-agency-report',

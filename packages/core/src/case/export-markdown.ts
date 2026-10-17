@@ -84,15 +84,24 @@ const LISTED_SECTIONS = new Set(['evidence', 'numbers']);
 /** Verification status of every displayed link, looked up the way deep-case keyed its claim rows. */
 type Flags = { signal: Map<string, Status>; competitor: Map<string, Status>; input: Map<string, Status> };
 
-// A url can carry several harvested quotes, so a signal is identified by url + quote.
-const signalKey = (url: string, quote: string) => `${url}\n${quote}`;
+// One url can carry several items (quotes, competitors), so links are keyed by url + identifying text:
+// a signal by its quote, a competitor by the `${name}: ${pricing}` text deep-case stored as the claim.
+const linkKey = (url: string, text: string) => `${url}\n${text}`;
+
+/** Worst first: on a key collision the flag never looks better than its weakest claim. */
+const SEVERITY: Record<Status, number> = { unsupported: 3, unreachable: 2, unverified: 1, verified: 0 };
+
+function setWorst(map: Map<string, Status>, key: string, status: Status) {
+  const prev = map.get(key);
+  if (prev === undefined || SEVERITY[status] > SEVERITY[prev]) map.set(key, status);
+}
 
 function flagsOf(claimRows: ClaimRow[]): Flags {
   const f: Flags = { signal: new Map(), competitor: new Map(), input: new Map() };
   for (const r of claimRows) {
-    if (r.section === 'signal') f.signal.set(signalKey(r.sourceUrl, r.quote ?? ''), r.verified);
-    else if (r.section === 'competitor') f.competitor.set(r.sourceUrl, r.verified);
-    else if (r.section === 'numbers') f.input.set(r.text, r.verified);
+    if (r.section === 'signal') setWorst(f.signal, linkKey(r.sourceUrl, r.quote ?? ''), r.verified);
+    else if (r.section === 'competitor') setWorst(f.competitor, linkKey(r.sourceUrl, r.text), r.verified);
+    else if (r.section === 'numbers') setWorst(f.input, r.text, r.verified);
   }
   return f;
 }
@@ -133,7 +142,7 @@ function evidence(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
   const out = ['## Evidence', '', '### Signals', ''];
   if (signals.length === 0) out.push('_No harvested signals._');
   for (const s of signals) {
-    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})${emoji(flags.signal.get(signalKey(s.url, s.quote)))}`);
+    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})${emoji(flags.signal.get(linkKey(s.url, s.quote)))}`);
   }
   out.push('', '### Claims', '');
   const listed = claimRows.filter((cl) => LISTED_SECTIONS.has(cl.section));
@@ -188,8 +197,8 @@ function numbers(c: CaseRow, flags: Flags): string[] {
 
 function competitors(c: CaseRow, flags: Flags): string[] {
   const { list, levels } = c.sections.competitors;
-  const status = (url: string) => {
-    const s = flags.competitor.get(url);
+  const status = (x: { url: string; name: string; pricing: string }) => {
+    const s = flags.competitor.get(linkKey(x.url, `${x.name}: ${x.pricing}`));
     return s ? CLAIM_STATUS[s] : 'not checked';
   };
   return [
@@ -197,7 +206,7 @@ function competitors(c: CaseRow, flags: Flags): string[] {
     '',
     table(
       ['Name', 'Link', 'Pricing', 'Gap', 'Status'],
-      list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap), status(x.url)]),
+      list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap), status(x)]),
     ),
     '',
     '### Levels',
