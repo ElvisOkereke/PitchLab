@@ -1,5 +1,6 @@
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import type { Db } from '../db/client';
 import { ideas, lenses, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { wrapUntrusted } from '../llm/untrusted';
@@ -21,6 +22,21 @@ const ownerIdeaSchema = z.object(ideaFields);
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 
+type IdeaInsert = typeof ideas.$inferInsert;
+
+/**
+ * Idempotent per run (R20): in one transaction, drop any ideas an earlier attempt left for this run and insert
+ * the new set. Safe because no later stage can have run while ideate is not done.
+ */
+async function replaceRunIdeas(db: Db, runId: string, values: IdeaInsert[]): Promise<string[]> {
+  return db.transaction(async (tx) => {
+    await tx.delete(ideas).where(eq(ideas.runId, runId));
+    if (values.length === 0) return [];
+    const inserted = await tx.insert(ideas).values(values).returning({ id: ideas.id });
+    return inserted.map((r) => r.id);
+  });
+}
+
 export async function ideate(
   { db, router, log }: StageDeps,
   run: { id: string; config: RunConfig },
@@ -37,11 +53,11 @@ export async function ideate(
       { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaText) }), schema: ownerIdeaSchema, schemaName: 'owner_idea' },
       { runId: run.id, promptVersion: prompt.version },
     );
-    const [row] = await db.insert(ideas).values({
+    const ideaIds = await replaceRunIdeas(db, run.id, [{
       runId: run.id, lensId: null, origin: 'owner', ...out, signalIds: input.signalIds, status: 'candidate',
-    }).returning({ id: ideas.id });
+    }]);
     log('ideate: 1 owner idea');
-    return { ideaIds: [row!.id] };
+    return { ideaIds };
   }
 
   const [market] = await db.select().from(markets).where(eq(markets.id, cfg.marketId));
@@ -62,7 +78,7 @@ export async function ideate(
 
   const count = Math.ceil(cfg.ideaCount / chosen.length);
   const prompt = loadPrompt('ideate');
-  const ideaIds: string[] = [];
+  const pending: IdeaInsert[] = [];
   for (const lens of chosen) {
     const out = await router.structured(
       'ideate',
@@ -91,10 +107,10 @@ export async function ideate(
         status: 'candidate' as const,
       };
     });
-    if (values.length === 0) continue;
-    const inserted = await db.insert(ideas).values(values).returning({ id: ideas.id });
-    ideaIds.push(...inserted.map((r) => r.id));
+    pending.push(...values);
   }
+  // Written only after every lens call succeeded, so a failed (and resumed) ideate leaves no partial set.
+  const ideaIds = await replaceRunIdeas(db, run.id, pending);
   log(`ideate: ${ideaIds.length} ideas from ${chosen.length} lenses`);
   return { ideaIds };
 }

@@ -49,6 +49,33 @@ describe('ideate', () => {
     expect(stored.find((i) => i.lensId === 'tl1')!.signalIds).toEqual([t.rows[0]!.id]);
   });
 
+  it('writes nothing when a lens call fails, and a re-run stores exactly one set of ideas (R20)', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2', 'tl3'], ideaCount: 3 });
+    // Only one scripted response: the call for lens 2 of 3 throws.
+    const t = await setup(config, { structured: { ideate: [mk(1, [])] } });
+    await t.db.insert(lenses).values(['tl1', 'tl2', 'tl3'].map((id) => ({ id, name: id, pattern: 'p', promptHint: 'h' })));
+    await expect(ideate(t.deps, t.run, { signalIds: [] })).rejects.toThrow(/no scripted structured response/);
+    expect(await t.db.select().from(ideas)).toHaveLength(0);
+
+    const router = fakeRouter({ structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    const out = await ideate({ ...t.deps, router }, t.run, { signalIds: [] });
+    expect(out.ideaIds).toHaveLength(3);
+    expect(await t.db.select().from(ideas)).toHaveLength(3);
+
+    const again = fakeRouter({ structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    await ideate({ ...t.deps, router: again }, t.run, { signalIds: [] });
+    expect(await t.db.select().from(ideas)).toHaveLength(3);
+  });
+
+  it('owner seed re-run replaces the owner idea instead of duplicating it', async () => {
+    const config = defaultRunConfig({ seedType: 'idea', ideaText: 'Lead-flow verification' });
+    const owner = { title: 'Lead-flow', oneLiner: 'o', buyer: 'agencies', problem: 'p', solution: 's' };
+    const t = await setup(config, { structured: { ideate: [owner, owner] } });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    expect(await t.db.select().from(ideas)).toHaveLength(1);
+  });
+
   it('caps signals at 40 in input order', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
     const t = await setup(config, { structured: { ideate: [mk(1, [])] } });
