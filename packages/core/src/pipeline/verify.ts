@@ -58,11 +58,16 @@ export const MIN_READABLE_CHARS = 200;
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 
-/** A fetched source: `viaApi` when the text came from GitHub's API (real content, never a client-side shell). */
-type CheckedPage = PageResult & { viaApi?: boolean };
+export const GITHUB_TOO_SHORT_NOTE = 'GitHub issue has too little text to check — open it yourself';
+
+/**
+ * A fetched source. For a GitHub issue read through the API, `matchText` is the issue's own title + body: only that
+ * may fast-path verify an exact quote (anyone can comment), while `text` (with comments) is what the judge sees.
+ */
+type CheckedPage = PageResult & { viaApi?: boolean; matchText?: string };
 
 export async function verify(
-  { db, router, fetchPage, githubToken, log }: StageDeps,
+  { db, router, fetchPage, log }: StageDeps,
   run: { id: string; config: RunConfig },
   input: { caseIds: string[] },
   opts: { githubFetch?: typeof fetch } = {},
@@ -78,11 +83,12 @@ export async function verify(
     if (n === undefined) normCache.set(url, (n = ` ${normalize(text)} `));
     return n;
   };
-  // GitHub issue/PR links are read through the API; on any API failure, the normal page fetch.
+  // GitHub issue/PR links are read through the API (unauthenticated: the repo comes from untrusted case content);
+  // on any API failure, the normal page fetch.
   const load = async (url: string): Promise<CheckedPage> => {
     if (parseGithubIssueUrl(url)) {
-      const text = await fetchGithubIssueText(url, { token: githubToken, fetchImpl: opts.githubFetch });
-      if (text !== null) return { ok: true, status: 200, finalUrl: url, title: '', text, viaApi: true };
+      const gh = await fetchGithubIssueText(url, { fetchImpl: opts.githubFetch });
+      if (gh !== null) return { ok: true, status: 200, finalUrl: url, title: '', text: gh.fullText, matchText: gh.issueText, viaApi: true };
       log(`verify: GitHub API unavailable for ${url}, falling back to the page`);
     }
     return fetchPage(url);
@@ -121,10 +127,16 @@ export async function verify(
     } else {
       const quote = normalize(claim.quote ?? '');
       const substantive = quote.split(' ').length >= MIN_QUOTE_WORDS && quote.length >= MIN_QUOTE_CHARS;
-      if (substantive && normPage(claim.sourceUrl, page.text).includes(` ${quote} `)) {
+      const tooShort = page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS;
+      if (substantive && normPage(claim.sourceUrl, page.matchText ?? page.text).includes(` ${quote} `)) {
         verified = 'verified';
         confidence = 1;
-      } else if (!page.viaApi && page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS) {
+      } else if (tooShort && page.viaApi) {
+        // Real issue text, just too little of it to judge fairly: the owner looks.
+        verified = 'needs_review';
+        confidence = null;
+        reviewNote = GITHUB_TOO_SHORT_NOTE;
+      } else if (tooShort) {
         verified = 'unreachable';
         confidence = null;
         reviewNote = UNREACHABLE_NOTE;

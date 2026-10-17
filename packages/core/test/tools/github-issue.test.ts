@@ -25,27 +25,27 @@ describe('parseGithubIssueUrl', () => {
 });
 
 describe('fetchGithubIssueText', () => {
-  it('joins title, body and comment bodies from the API, sending the token as a Bearer header', async () => {
+  it('returns the issue\'s own text and, separately, that plus the comments, over unauthenticated GETs', async () => {
     const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) =>
       url.endsWith('/comments?per_page=100')
         ? json([{ body: 'First comment' }, { body: 'Second &amp; <b>last</b>' }])
         : json({ title: 'Forms broke', body: 'Body text' }));
-    const text = await fetchGithubIssueText('https://github.com/acme/forms/issues/12', { token: 'tok', fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(text).toBe('Forms broke\n\nBody text\n\nFirst comment\n\nSecond & last');
+    const text = await fetchGithubIssueText('https://github.com/acme/forms/issues/12', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    expect(text).toEqual({ issueText: 'Forms broke\n\nBody text', fullText: 'Forms broke\n\nBody text\n\nFirst comment\n\nSecond & last' });
     expect(fetchImpl.mock.calls.map((c) => c[0])).toEqual([
       'https://api.github.com/repos/acme/forms/issues/12',
       'https://api.github.com/repos/acme/forms/issues/12/comments?per_page=100',
     ]);
-    const init = fetchImpl.mock.calls[0]![1] as unknown as RequestInit;
-    expect(init.method).toBe('GET');
-    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer tok');
+    for (const [, init] of fetchImpl.mock.calls) {
+      expect(init!.method).toBe('GET');
+      expect(Object.keys(init!.headers as Record<string, string>).map((k) => k.toLowerCase())).not.toContain('authorization');
+    }
   });
 
-  it('sends no Authorization header without a token, and keeps the issue text when only the comments call fails', async () => {
+  it('keeps the issue text when only the comments call fails', async () => {
     const fetchImpl = vi.fn(async (url: string, _init?: RequestInit) => (url.includes('/comments') ? json({ message: 'nope' }, 500) : json({ title: 'T', body: null })));
     const text = await fetchGithubIssueText('https://github.com/acme/forms/pull/3', { fetchImpl: fetchImpl as unknown as typeof fetch });
-    expect(text).toBe('T');
-    expect((fetchImpl.mock.calls[0]![1] as unknown as RequestInit & { headers: Record<string, string> }).headers.Authorization).toBeUndefined();
+    expect(text).toEqual({ issueText: 'T', fullText: 'T' });
   });
 
   it('returns null when the issue call fails (e.g. 403 rate limit) or the url is not an issue', async () => {

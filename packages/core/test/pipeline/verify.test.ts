@@ -187,26 +187,52 @@ describe('verify', () => {
     const ISSUE = 'https://github.com/acme/forms/issues/12';
     const QUOTE = 'Contact form submissions silently vanish after the update';
 
-    it('verifies a quote found in the issue comments through the fast path, without fetching the page or the judge', async () => {
+    const LONG_BODY = `We run forty client sites. ${QUOTE}. ${'Steps to reproduce: update the plugin, submit the form, wait. '.repeat(4)}`;
+
+    it('verifies a quote in the issue body through the fast path, unauthenticated, without the page fetch or the judge', async () => {
       const { db, run, kase } = await setup();
-      const [a, b] = await mk(db, kase.id, [
-        { text: 'A', sourceUrl: ISSUE, quote: QUOTE },
-        { text: 'B', sourceUrl: ISSUE, quote: 'Forms broke on 6.4' },
-      ]);
+      const [a] = await mk(db, kase.id, [{ text: 'A', sourceUrl: ISSUE, quote: QUOTE }, { text: 'A2', sourceUrl: ISSUE, quote: QUOTE }]);
       const githubFetch = vi.fn(async (url: string, _init?: RequestInit) =>
-        url.includes('/comments') ? json([{ body: `Same here. ${QUOTE}!` }]) : json({ title: 'Forms broke on 6.4', body: 'Short.' }));
+        url.includes('/comments') ? json([{ body: 'Same here.' }]) : json({ title: 'Forms broke on 6.4', body: LONG_BODY }));
       const fetchPage = vi.fn(async () => page('page chrome only'));
-      const router = fakeRouter({ structured: { verify: [{ supported: true, confidence: 0.9 }] } });
+      const router = fakeRouter({});
+      // A token present in deps must never be sent: the repo comes from untrusted case content.
       const deps = { db, router, fetchPage, githubToken: 'tok', log: () => {} } as unknown as StageDeps;
       await verify(deps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
       expect(fetchPage).not.toHaveBeenCalled();
+      expect(router.calls).toHaveLength(0);
       expect(githubFetch).toHaveBeenCalledTimes(2); // issue + comments, once per url
-      expect((githubFetch.mock.calls[0]![1] as unknown as { headers: Record<string, string> }).headers.Authorization).toBe('Bearer tok');
-      const rows = new Map((await db.select().from(claims).where(eq(claims.caseId, kase.id))).map((r) => [r.id, r]));
-      expect(rows.get(a!.id)).toMatchObject({ verified: 'verified', confidence: 1 });
-      // Short API text is real content, not an unreadable shell: it goes to the judge.
-      expect(rows.get(b!.id)).toMatchObject({ verified: 'verified', confidence: 0.9 });
-      expect(router.calls[0]!.prompt).toContain('Forms broke on 6.4');
+      for (const [, init] of githubFetch.mock.calls) {
+        expect(Object.keys(init!.headers as Record<string, string>).map((k) => k.toLowerCase())).not.toContain('authorization');
+      }
+      const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+      expect(row).toMatchObject({ verified: 'verified', confidence: 1 });
+    });
+
+    it('does not fast-path a quote found only in a comment: the judge decides, with the comments as context', async () => {
+      const { db, run, kase } = await setup();
+      const [a] = await mk(db, kase.id, [{ text: 'A', sourceUrl: ISSUE, quote: QUOTE }]);
+      const body = 'Forms stopped after the update. '.repeat(8);
+      const githubFetch = vi.fn(async (url: string, _init?: RequestInit) =>
+        url.includes('/comments') ? json([{ body: `Same here. ${QUOTE}!` }]) : json({ title: 'Forms broke on 6.4', body }));
+      const router = fakeRouter({ structured: { verify: [{ supported: true, confidence: 0.8 }] } });
+      await verify({ db, router, fetchPage: vi.fn(), log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
+      expect(router.calls).toHaveLength(1);
+      expect(router.calls[0]!.prompt).toContain('Same here.');
+      const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+      expect(row).toMatchObject({ verified: 'verified', confidence: 0.8 });
+    });
+
+    it('sends an issue with too little text to the owner without the judge', async () => {
+      const { db, run, kase } = await setup();
+      const [a] = await mk(db, kase.id, [{ text: 'Forms break after updates', sourceUrl: ISSUE, quote: 'Forms broke on 6.4' }]);
+      const githubFetch = vi.fn(async (url: string, _init?: RequestInit) =>
+        url.includes('/comments') ? json([{ body: '+1' }]) : json({ title: 'Forms broke on 6.4', body: 'Short.' }));
+      const router = fakeRouter({});
+      await verify({ db, router, fetchPage: vi.fn(), log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] }, { githubFetch: githubFetch as unknown as typeof fetch });
+      expect(router.calls).toHaveLength(0);
+      const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+      expect(row).toMatchObject({ verified: 'needs_review', confidence: null, reviewNote: 'GitHub issue has too little text to check — open it yourself' });
     });
 
     it('falls back to the page fetch when the API refuses (403)', async () => {

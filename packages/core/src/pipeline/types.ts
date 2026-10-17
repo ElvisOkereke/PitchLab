@@ -36,8 +36,6 @@ export type StageDeps = {
   router: ModelRouter;
   sources: SignalSource[];
   fetchPage: typeof fetchPage;
-  /** Optional GitHub token (from env, read by the CLI); verify uses it as a Bearer token for GitHub's API. */
-  githubToken?: string;
   log: (msg: string) => void;
 };
 

@@ -103,7 +103,6 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
       router: buildRouter(env, db),
       sources: buildSources(env, market ? { countries: market.countries } : undefined),
       fetchPage,
-      githubToken: env.GITHUB_TOKEN,
       log: out,
     };
     const status = await executeRun(deps, id);
