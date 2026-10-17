@@ -93,16 +93,25 @@ describe('deepCase', () => {
     expect((await caseFor(db, b.id)).slug).toBe('lead-flow-verification-for-web-agencies-2');
   });
 
-  it('stores one claim per evidence claim plus one per sourced number input', async () => {
+  it('stores one claim per evidence claim, sourced number input, signal used and http(s) competitor', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const idea = await ideaWithSignal(db, run.id);
+    const [sig] = await db.select().from(signals).where(eq(signals.id, idea.signalIds[0]!));
     const d = draft();
+    d.competitors.list.push({ name: 'Offline agency', url: 'not a url', pricing: 'unknown', gap: 'manual' });
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
     const row = await caseFor(db, idea.id);
     const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
-    expect(rows).toHaveLength(d.evidence.claims.length + 3);
+    expect(rows).toHaveLength(d.evidence.claims.length + 3 + 1 + 2);
+    expect(rows.filter((c) => c.section === 'signal').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
+      { text: sig!.quote, sourceUrl: sig!.url, quote: sig!.quote },
+    ]);
+    expect(rows.filter((c) => c.section === 'competitor').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
+      { text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null },
+      { text: 'Synthetic browser testing platform: From $99/month', sourceUrl: 'https://synthetic-tests.example/pricing', quote: null },
+    ]);
     expect(rows.filter((c) => c.section === 'evidence').map((c) => c.text).sort())
       .toEqual(d.evidence.claims.map((c: { text: string }) => c.text).sort());
     const numbers = rows.filter((c) => c.section === 'numbers');

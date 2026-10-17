@@ -69,17 +69,40 @@ function table(headers: string[], rows: string[][]): string {
   ].join('\n');
 }
 
-function sourceOf(s: Sourced): string {
-  if (s.source) return `${cellLink(s.source.url)}: "${cell(s.source.quote)}"`;
-  return `assumption: ${cell(s.assumption ?? '')}`;
-}
+type Status = ClaimRow['verified'];
 
-const CLAIM_STATUS: Record<ClaimRow['verified'], string> = {
+const STATUS_EMOJI: Record<Status, string> = { verified: '✅', unsupported: '❌', unreachable: '⚠️', unverified: '⏳' };
+const CLAIM_STATUS: Record<Status, string> = {
   verified: '✅ verified',
   unsupported: '❌ unsupported',
   unreachable: '⚠️ unreachable',
   unverified: '⏳ unverified',
 };
+/** Claim sections listed under "Claims"; signal and competitor rows are flagged where their link is shown. */
+const LISTED_SECTIONS = new Set(['evidence', 'numbers']);
+
+/** Verification status of every displayed link, looked up the way deep-case keyed its claim rows. */
+type Flags = { signal: Map<string, Status>; competitor: Map<string, Status>; input: Map<string, Status> };
+
+// A url can carry several harvested quotes, so a signal is identified by url + quote.
+const signalKey = (url: string, quote: string) => `${url}\n${quote}`;
+
+function flagsOf(claimRows: ClaimRow[]): Flags {
+  const f: Flags = { signal: new Map(), competitor: new Map(), input: new Map() };
+  for (const r of claimRows) {
+    if (r.section === 'signal') f.signal.set(signalKey(r.sourceUrl, r.quote ?? ''), r.verified);
+    else if (r.section === 'competitor') f.competitor.set(r.sourceUrl, r.verified);
+    else if (r.section === 'numbers') f.input.set(r.text, r.verified);
+  }
+  return f;
+}
+
+const emoji = (s: Status | undefined) => (s ? ` ${STATUS_EMOJI[s]}` : '');
+
+function sourceOf(s: Sourced, status: Status | undefined): string {
+  if (s.source) return `${cellLink(s.source.url)}: "${cell(s.source.quote)}"${emoji(status)}`;
+  return `assumption: ${cell(s.assumption ?? '')}`;
+}
 
 function summary(c: CaseRow): string[] {
   const s = c.sections.summary;
@@ -105,14 +128,17 @@ function summary(c: CaseRow): string[] {
   ];
 }
 
-function evidence(c: CaseRow, claimRows: ClaimRow[]): string[] {
+function evidence(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
   const { signals } = c.sections.evidence;
   const out = ['## Evidence', '', '### Signals', ''];
   if (signals.length === 0) out.push('_No harvested signals._');
-  for (const s of signals) out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})`);
+  for (const s of signals) {
+    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})${emoji(flags.signal.get(signalKey(s.url, s.quote)))}`);
+  }
   out.push('', '### Claims', '');
-  if (claimRows.length === 0) out.push('_No claims recorded._');
-  for (const cl of claimRows) {
+  const listed = claimRows.filter((cl) => LISTED_SECTIONS.has(cl.section));
+  if (listed.length === 0) out.push('_No claims recorded._');
+  for (const cl of listed) {
     out.push(`- ${CLAIM_STATUS[cl.verified]}: ${line(cl.text)}`);
     if (cl.quote) out.push(`  - Quote: "${line(cl.quote)}"`);
     out.push(`  - Source: ${link(cl.sourceUrl)}`);
@@ -120,7 +146,7 @@ function evidence(c: CaseRow, claimRows: ClaimRow[]): string[] {
   return out;
 }
 
-function numbers(c: CaseRow): string[] {
+function numbers(c: CaseRow, flags: Flags): string[] {
   const { inputs, results: r } = c.sections.numbers;
   const pct = (n: number) => `${n}%`;
   return [
@@ -144,7 +170,12 @@ function numbers(c: CaseRow): string[] {
     '',
     '### Inputs',
     '',
-    table(['Input', 'Value', 'Source'], listInputs(inputs).map((i) => [cell(i.label), String(i.sourced.value), sourceOf(i.sourced)])),
+    table(
+      ['Input', 'Value', 'Source'],
+      listInputs(inputs).map((i) => [
+        cell(i.label), String(i.sourced.value), sourceOf(i.sourced, flags.input.get(`${i.label}: ${i.sourced.value}`)),
+      ]),
+    ),
     '',
     '### Scenarios',
     '',
@@ -155,12 +186,19 @@ function numbers(c: CaseRow): string[] {
   ];
 }
 
-function competitors(c: CaseRow): string[] {
+function competitors(c: CaseRow, flags: Flags): string[] {
   const { list, levels } = c.sections.competitors;
+  const status = (url: string) => {
+    const s = flags.competitor.get(url);
+    return s ? CLAIM_STATUS[s] : 'not checked';
+  };
   return [
     '## Competitors',
     '',
-    table(['Name', 'Link', 'Pricing', 'Gap'], list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap)])),
+    table(
+      ['Name', 'Link', 'Pricing', 'Gap', 'Status'],
+      list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap), status(x.url)]),
+    ),
     '',
     '### Levels',
     '',
@@ -215,12 +253,13 @@ export function caseToMarkdown(c: CaseRow, claimRows: ClaimRow[], scoreRows: Sco
   if (flags.length) head.push(`> ⚠️ Gate flags: ${flags.map(line).join(', ')}`, '');
   head.push(`_Stage: ${c.stage} · Model: ${line(c.model)} · Prompt: ${line(c.promptVersion)}_`, '');
   if (c.killReason) head.push(`**Kill reason:** ${line(c.killReason)}`, '');
+  const linkFlags = flagsOf(claimRows);
   return [
     ...head,
     ...summary(c), '',
-    ...evidence(c, claimRows), '',
-    ...numbers(c), '',
-    ...competitors(c), '',
+    ...evidence(c, claimRows, linkFlags), '',
+    ...numbers(c, linkFlags), '',
+    ...competitors(c, linkFlags), '',
     ...pitch(c), '',
     ...scoreSection(scoreRows), '',
   ].join('\n');

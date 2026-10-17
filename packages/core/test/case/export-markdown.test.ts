@@ -80,6 +80,34 @@ describe('caseToMarkdown', () => {
     expect(md).toMatch(/⏳ unverified.*\(unverified\)/);
   });
 
+  it('flags each signal with its verification status and keeps signal rows out of the claims list', () => {
+    const sig = claim('unsupported', {
+      section: 'signal', text: 'Our forms die after plugin updates', sourceUrl: 'https://news.example/item/1', quote: 'Our forms die after plugin updates',
+    });
+    const md = caseToMarkdown(caseFixture(), [sig], []);
+    expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) ❌');
+    expect(md).toContain('_No claims recorded._');
+  });
+
+  it('adds a status column to the competitors table', () => {
+    const comp = claim('verified', {
+      section: 'competitor', text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null,
+    });
+    const md = caseToMarkdown(caseFixture(), [comp], []);
+    expect(md).toContain('| Name | Link | Pricing | Gap | Status |');
+    expect(md).toMatch(/\| Generic uptime monitor \| \[uptime-tool\.example\]\(https:\/\/uptime-tool\.example\/pricing\) \| .* \| ✅ verified \|/);
+    expect(md).not.toContain('- ✅ verified: Generic uptime monitor');
+  });
+
+  it('flags each sourced number input in its source cell', () => {
+    const input = claim('unreachable', {
+      section: 'numbers', text: 'price.unitsPerBuyer: 40', sourceUrl: 'https://agency-benchmarks.example/2026-small-agency-report',
+    });
+    const md = caseToMarkdown(caseFixture(), [input], []);
+    expect(md).toMatch(/\| price\.unitsPerBuyer \| 40 \| \[agency-benchmarks\.example\]\([^)]*\): "[^"]*" ⚠️ \|/);
+    expect(md).toContain('⚠️ unreachable: price.unitsPerBuyer: 40');
+  });
+
   it('renders AI and owner scores as criterion | value | note tables', () => {
     const owner: ScoreRow = { ...aiScores()[0]!, id: 'o1', criterion: 'gut', value: 2, note: 'meh', by: 'owner', model: null, promptVersion: null };
     const md = caseToMarkdown(caseFixture(), [], [...aiScores(), owner]);

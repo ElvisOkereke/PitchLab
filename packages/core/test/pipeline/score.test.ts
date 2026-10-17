@@ -63,6 +63,24 @@ describe('score', () => {
     expect(ev).toMatchObject({ value: 2, note: 'evidence note (capped: 0/0 claims verified)' });
   });
 
+  it('caps evidence on evidence and numbers claims only, and reports signal and competitor checks', async () => {
+    const { db, run, kase } = await setup(['verified', 'verified']);
+    await db.insert(claims).values([
+      { caseId: kase.id, section: 'numbers', text: 'reachableBuyers: 3000', sourceUrl: 'https://n.com', quote: 'q', verified: 'verified' },
+      { caseId: kase.id, section: 'signal', text: 's1', sourceUrl: 'https://s.com/1', quote: 's1', verified: 'unsupported' },
+      { caseId: kase.id, section: 'signal', text: 's2', sourceUrl: 'https://s.com/2', quote: 's2', verified: 'verified' },
+      { caseId: kase.id, section: 'competitor', text: 'Acme: $5', sourceUrl: 'https://acme.com', quote: null, verified: 'unreachable' },
+    ]);
+    const router = fakeRouter({ structured: { score: [aiScores(5)] } });
+    await score(depsOf(db, router), run, { caseIds: [kase.id] });
+    const [ev] = await db.select().from(scores).where(and(eq(scores.caseId, kase.id), eq(scores.criterion, 'evidence')));
+    expect(ev).toMatchObject({ value: 5, note: 'evidence note' });
+    const prompt = router.calls[0]!.prompt;
+    expect(prompt).toContain('3/3 cited claims verified');
+    expect(prompt).toContain('1/2 harvested signal links verified');
+    expect(prompt).toContain('0/1 competitor links verified');
+  });
+
   it('is idempotent and keeps owner scores', async () => {
     const { db, run, kase } = await setup(['verified']);
     await db.insert(scores).values({ caseId: kase.id, criterion: 'gut', value: 3, note: 'n', by: 'owner' });

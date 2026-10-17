@@ -7,6 +7,11 @@ import type { RunConfig, StageDeps } from './types';
 
 const SECTIONS_MAX = 30000;
 
+type ClaimStatus = (typeof claims.$inferSelect)['verified'];
+
+/** The evidence cap counts the case's own claims; signal and competitor link checks are reported but don't move it. */
+const CAP_SECTIONS = ['evidence', 'numbers'];
+
 /** Evidence cap by verified ratio: < 0.5 → at most 2, < 0.8 → at most 3. */
 function evidenceCap(ratio: number): number {
   return ratio < 0.5 ? 2 : ratio < 0.8 ? 3 : 5;
@@ -27,11 +32,16 @@ export async function score(
     if (!kase) throw new Error(`score: unknown case ${caseId}`);
 
     const sourced = (await db.select().from(claims).where(eq(claims.caseId, caseId))).filter((c) => c.sourceUrl?.trim());
-    const total = sourced.length;
-    const verified = sourced.filter((c) => c.verified === 'verified').length;
-    const unreachable = sourced.filter((c) => c.verified === 'unreachable').length;
-    const unsupported = sourced.filter((c) => c.verified === 'unsupported').length;
+    const count = (section: string[], status?: ClaimStatus) =>
+      sourced.filter((c) => section.includes(c.section) && (!status || c.verified === status)).length;
+    const total = count(CAP_SECTIONS);
+    const verified = count(CAP_SECTIONS, 'verified');
+    const unreachable = count(CAP_SECTIONS, 'unreachable');
+    const unsupported = count(CAP_SECTIONS, 'unsupported');
     const ratio = total === 0 ? 0 : verified / total;
+    const linkStats =
+      `${count(['signal'], 'verified')}/${count(['signal'])} harvested signal links verified; ` +
+      `${count(['competitor'], 'verified')}/${count(['competitor'])} competitor links verified.`;
 
     const json = JSON.stringify(kase.sections, null, 1);
     const result = await router.structured(
@@ -39,7 +49,7 @@ export async function score(
       {
         prompt: prompt.render({
           sections: wrapUntrusted('case', json.slice(0, SECTIONS_MAX)),
-          stats: `${verified}/${total} cited claims verified against their source pages; ${unreachable} unreachable; ${unsupported} not supported by the page.`,
+          stats: `${verified}/${total} cited claims verified against their source pages; ${unreachable} unreachable; ${unsupported} not supported by the page. ${linkStats}`,
         }),
         schema: AiScoresSchema,
         schemaName: 'case_scores',
