@@ -2,7 +2,8 @@ import { eq } from 'drizzle-orm';
 import { createDb, type Db } from '../../src/db/client';
 import { runMigrations } from '../../src/db/migrate';
 import { seedDefaults } from '../../src/db/seed';
-import { ideas, runs } from '../../src/db/schema';
+import type { CaseSections } from '../../src/case/schema';
+import { cases, ideas, runs } from '../../src/db/schema';
 import type { RunConfig } from '../../src/pipeline/types';
 
 /** Fresh in-memory PGlite database, migrated and seeded. */
@@ -41,4 +42,16 @@ export async function getIdea(db: Db, id: string): Promise<IdeaRow> {
   const [row] = await db.select().from(ideas).where(eq(ideas.id, id));
   if (!row) throw new Error(`idea not found: ${id}`);
   return row;
+}
+
+type CaseRow = typeof cases.$inferSelect;
+
+/** Inserts a case (minimal sections unless overridden) for an idea. */
+export async function insertCase(db: Db, ideaId: string, overrides: Partial<typeof cases.$inferInsert> = {}): Promise<CaseRow> {
+  const [row] = await db.insert(cases).values({
+    ideaId, slug: `case-${ideaId}`, title: 'Case', stage: 'new',
+    sections: { summary: { oneLiner: 'o' } } as unknown as CaseSections,
+    gateAdvisory: false, model: 'm', promptVersion: 'p', ...overrides,
+  }).returning();
+  return row!;
 }
