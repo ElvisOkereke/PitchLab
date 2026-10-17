@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { APIConnectionError as AnthropicConnectionError } from '@anthropic-ai/sdk';
+import { APIConnectionError as AnthropicConnectionError, APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { APIConnectionError as OpenAIConnectionError } from 'openai';
-import { isRetryable, retryDelayMs, withRetry } from '../../src/llm/retry';
+import { MAX_RETRY_DELAY_MS, isRetryable, retryDelayMs, withRetry } from '../../src/llm/retry';
 
 describe('withRetry', () => {
   afterEach(() => vi.useRealTimers());
@@ -23,6 +23,16 @@ describe('withRetry', () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a mid-stream overload error (no status, SSE error type)', async () => {
+    // Shape thrown by the Anthropic SDK when an SSE `error` event arrives mid-stream.
+    const body = { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } };
+    const overloaded = new AnthropicAPIError(undefined, body, undefined, new Headers(), 'overloaded_error');
+    expect(overloaded.status).toBeUndefined();
+    const fn = vi.fn().mockRejectedValueOnce(overloaded).mockResolvedValue('ok');
+    await expect(withRetry(fn, { attempts: 5, baseMs: 1 })).resolves.toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
   it('returns the first success after transient failures', async () => {
     const fn = vi.fn()
       .mockRejectedValueOnce(Object.assign(new Error('down'), { status: 503 }))
@@ -41,11 +51,17 @@ describe('retry policy', () => {
     expect(isRetryable(new Error('plain'))).toBe(false);
     expect(isRetryable(new AnthropicConnectionError({ message: 'conn' }))).toBe(true);
     expect(isRetryable(new OpenAIConnectionError({ message: 'conn' }))).toBe(true);
+    expect(isRetryable({ error: { type: 'error', error: { type: 'api_error' } } })).toBe(true);
+    expect(isRetryable({ error: { type: 'overloaded_error' } })).toBe(true);
+    expect(isRetryable({ type: 'invalid_request_error' })).toBe(false);
   });
 
   it('reads retry-after from a Headers instance exactly, else backs off with ±20% jitter', () => {
     const headers = new Headers({ 'retry-after': '3' });
     expect(retryDelayMs({ status: 429, headers }, 0, 1000)).toBe(3000);
+    expect(retryDelayMs({ status: 429, headers: { 'retry-after': '3600' } }, 0, 1000)).toBe(MAX_RETRY_DELAY_MS);
+    expect(MAX_RETRY_DELAY_MS).toBe(60_000);
+    expect(retryDelayMs({ status: 503 }, 20, 1000)).toBe(MAX_RETRY_DELAY_MS);
     for (let i = 0; i < 20; i++) {
       const d = retryDelayMs({ status: 503 }, 2, 1000);
       expect(d).toBeGreaterThanOrEqual(3200);
