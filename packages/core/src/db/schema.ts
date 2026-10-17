@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { CaseSections } from '../case/schema';
 import type { RunConfig } from '../pipeline/types';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
@@ -113,7 +114,7 @@ export const cases = pgTable('cases', {
   slug: text('slug').notNull().unique(),
   title: text('title').notNull(),
   stage: caseStage('stage').notNull().default('new'),
-  sections: jsonb('sections').$type<unknown>().notNull(),
+  sections: jsonb('sections').$type<CaseSections>().notNull(),
   killReason: text('kill_reason'),
   gateAdvisory: boolean('gate_advisory').notNull(),
   model: text('model').notNull(),
