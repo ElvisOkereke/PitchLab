@@ -174,3 +174,10 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   JS-rendered pages as unsupported (`07e228f`); formula lines rounded 0.003 to 0 (`7a3cb19`). Cost $7.30 + $4.06,
   0 × 429. Owner decisions needed: what competitor-link checks should assert ("Not published" pricing always fails),
   GitHub issue verification, a diversity rule at screen.
+- **2026-10-17:** Run 2 done (`docs/runs/2026-10-17-run-2.md`): evidence kills fixed, link flags complete, ideas more
+  varied in mechanism but the screen still favours lead capture; no case pitch-worthy yet. Owner decisions for tuning-2:
+  (1) competitor checks confirm as much as possible (product page; pricing when a figure is quoted) and **anything not
+  confirmable goes to a "For you to check" list for the owner**, separate from real failures; (2) verify GitHub signals
+  via GitHub's API; (3) ideas declare mechanism + buyer type, max 2 per mechanism reach the gate, and ideas too close to
+  an idea that already has a case are screened out; (4) cases show only signals the writer actually used; HTML entities
+  decoded. Branch `tuning-2`.
