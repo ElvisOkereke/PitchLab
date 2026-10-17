@@ -31,8 +31,18 @@ describe('isBannedSource', () => {
     }
   });
 
-  it('returns false for unparseable urls', () => {
-    expect(isBannedSource('not a url')).toBe(false);
-    expect(isBannedSource('')).toBe(false);
+  it('fails closed: unparseable, non-http(s) and IP-literal urls count as banned', () => {
+    for (const url of [
+      'not a url',
+      '',
+      'javascript:alert(1)',
+      'ftp://example.com/file',
+      'file:///etc/passwd',
+      'http://1.2.3.4/x',
+      'http://[::1]/x',
+      'https://[2606:4700::1111]/',
+    ]) {
+      expect(isBannedSource(url), url).toBe(true);
+    }
   });
 });

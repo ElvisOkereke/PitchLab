@@ -7,7 +7,7 @@ import type { PageResult } from '../../src/tools/fetch-page';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
-const page = (text: string, ok = true): PageResult => ({ ok, status: ok ? 200 : 404, finalUrl: 'u', title: 't', text, ...(ok ? {} : { reason: 'http_error' as const }) });
+const page = (text: string, ok = true): PageResult => ({ ok, status: ok ? 200 : 404, finalUrl: 'https://page.example/', title: 't', text, ...(ok ? {} : { reason: 'http_error' as const }) });
 
 async function setup() {
   const db = await testDb();
@@ -90,6 +90,30 @@ describe('verify', () => {
     const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
     expect(row!.verified).toBe('unsupported');
     expect(row!.checkedAt).not.toBeNull();
+  });
+
+  it('marks a claim unsupported without judging when the page redirects into a banned domain', async () => {
+    const { db, run, kase } = await setup();
+    const [a] = await mk(db, kase.id, [{ text: 'Owners complain', sourceUrl: 'https://short.example/x', quote: 'short' }]);
+    const fetchPage = vi.fn(async (): Promise<PageResult> => ({
+      ok: true, status: 200, finalUrl: 'https://www.reddit.com/r/smallbusiness/comments/1', title: 't', text: 'short',
+    }));
+    const router = fakeRouter({});
+    await verify({ db, router, fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    expect(fetchPage).toHaveBeenCalledTimes(1);
+    expect(router.calls).toHaveLength(0);
+    const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+    expect(row).toMatchObject({ verified: 'unsupported', confidence: null });
+  });
+
+  it('marks a non-http claim url unsupported without fetching', async () => {
+    const { db, run, kase } = await setup();
+    const [a] = await mk(db, kase.id, [{ text: 'X', sourceUrl: 'javascript:alert(1)', quote: 'x' }]);
+    const fetchPage = vi.fn(async () => page('x'));
+    await verify({ db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    expect(fetchPage).not.toHaveBeenCalled();
+    const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+    expect(row!.verified).toBe('unsupported');
   });
 
   async function judged(quote: string, pageText: string, verdict: { supported: boolean; confidence: number }) {

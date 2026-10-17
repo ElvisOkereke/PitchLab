@@ -73,7 +73,7 @@ export async function verify(
       continue;
     }
     if (isBannedSource(claim.sourceUrl)) {
-      // A banned source never supports a claim: no fetch, no judge.
+      // A banned (or non-http / unparseable / IP) source never supports a claim: no fetch, no judge.
       tally.unsupported++;
       await db.update(claims).set({ verified: 'unsupported', confidence: null, checkedAt: new Date() }).where(eq(claims.id, claim.id));
       continue;
@@ -84,6 +84,10 @@ export async function verify(
 
     if (!page.ok) {
       verified = 'unreachable';
+      confidence = null;
+    } else if (isBannedSource(page.finalUrl)) {
+      // Redirected into a banned domain: the page is not an acceptable source, so no judge.
+      verified = 'unsupported';
       confidence = null;
     } else {
       const quote = normalize(claim.quote ?? '');

@@ -45,15 +45,6 @@ function withoutBannedSources(raw: NumberInputs): NumberInputs {
   return copy;
 }
 
-function isHttpUrl(url: string): boolean {
-  try {
-    const { protocol } = new URL(url);
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
 const urlList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((u): u is string => typeof u === 'string') : []);
 
 /** A readable source name for a signal: its hostname without "www.", else the harvest source id. */
@@ -183,11 +174,9 @@ export async function deepCase(
             ? [{ caseId, section: 'numbers', text: `${label}: ${sourced.value}`, sourceUrl: sourced.source.url, quote: sourced.source.quote }]
             : [],
         ),
-        // Every displayed link is verified too: each signal used, and each competitor with an http(s) url.
+        // Every displayed link is verified too: each signal used and each competitor (all http(s): isBannedSource fails closed).
         ...sigRows.map((s) => ({ caseId, section: 'signal', text: capField(s.quote, 1000), sourceUrl: s.url, quote: s.quote })),
-        ...competitorList
-          .filter((c) => isHttpUrl(c.url))
-          .map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
+        ...competitorList.map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
       ];
 
       // One transaction per case so a crash can never leave a case without its claims.

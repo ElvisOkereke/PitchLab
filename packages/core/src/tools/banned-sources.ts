@@ -1,4 +1,4 @@
-import { getDomain } from 'tldts';
+import { parse } from 'tldts';
 
 /** Registrable domains the pipeline must never use as a source (Global Constraint). */
 export const BANNED_DOMAINS = [
@@ -7,14 +7,19 @@ export const BANNED_DOMAINS = [
 
 const BANNED = new Set<string>(BANNED_DOMAINS);
 
-/** True when the url's registrable domain is banned. Unparseable urls return false (other guards handle them). */
+/**
+ * True when the url must not be used as a source: its registrable domain is banned. Fails closed — an
+ * unparseable url, a non-http(s) protocol or an IP-literal host also counts as banned.
+ */
 export function isBannedSource(url: string): boolean {
-  let host: string;
+  let u: URL;
   try {
-    host = new URL(url).hostname.toLowerCase();
+    u = new URL(url);
   } catch {
-    return false;
+    return true;
   }
-  const domain = getDomain(host);
-  return domain !== null && BANNED.has(domain);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+  const r = parse(u.hostname.toLowerCase());
+  if (r.isIp) return true;
+  return r.domain !== null && BANNED.has(r.domain);
 }

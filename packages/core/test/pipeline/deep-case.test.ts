@@ -103,6 +103,7 @@ describe('deepCase', () => {
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
     const row = await caseFor(db, idea.id);
+    expect(row.sections.competitors.list.map((c) => c.name)).not.toContain('Offline agency'); // non-http url: fails closed
     const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
     expect(rows).toHaveLength(d.evidence.claims.length + 3 + 1 + 2);
     expect(rows.filter((c) => c.section === 'signal').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
