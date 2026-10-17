@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const SourcedSchema = z
   .object({
     value: z.number().min(0),
-    source: z.object({ url: z.string(), quote: z.string() }).optional(),
+    source: z.object({ url: z.string().min(1), quote: z.string().min(1) }).optional(),
     assumption: z.string().optional(),
   })
   .refine(v => v.source !== undefined || (v.assumption !== undefined && v.assumption.length > 0), {

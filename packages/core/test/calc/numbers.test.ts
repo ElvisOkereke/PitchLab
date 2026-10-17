@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { computeNumbers } from '../../src/calc/numbers';
-import { NumberInputsSchema, type NumberInputs } from '../../src/calc/schema';
+import { NumberInputsSchema, SourcedSchema, type NumberInputs } from '../../src/calc/schema';
 
 const s = (value: number) => ({ value, assumption: 'test' });
 const leadFlow: NumberInputs = {
@@ -53,5 +53,10 @@ describe('NumberInputsSchema', () => {
     expect(NumberInputsSchema.safeParse({ ...leadFlow, reachableBuyers: s(-1) }).success).toBe(false);
     expect(NumberInputsSchema.safeParse({ ...leadFlow, captureRate: s(1.5) }).success).toBe(false);
     expect(NumberInputsSchema.safeParse({ ...leadFlow, expectedReduction: s(2) }).success).toBe(false);
+  });
+  it('rejects an empty source url or quote', () => {
+    expect(SourcedSchema.safeParse({ value: 1, source: { url: '', quote: 'x' } }).success).toBe(false);
+    expect(SourcedSchema.safeParse({ value: 1, source: { url: 'https://a.test', quote: '' } }).success).toBe(false);
+    expect(SourcedSchema.safeParse({ value: 1, source: { url: 'https://a.test', quote: 'x' } }).success).toBe(true);
   });
 });
