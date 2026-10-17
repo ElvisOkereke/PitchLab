@@ -93,8 +93,17 @@ export function computeNumbers(i: NumberInputs): NumberResults {
     ),
     `Annual problem cost = ${usd(annualProblemRaw)}`,
     `Annual savings = ${usd(annualProblemRaw)} × ${plain(reduction)} = ${usd(annualSavingsRaw)}`,
+    roi === null
+      ? `ROI multiple: n/a (annual price is ${usd(annualPriceRaw)})`
+      : `ROI multiple = annual savings ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`,
+    payback === null
+      ? `Payback: n/a (annual savings are ${usd(annualSavingsRaw)})`
+      : `Payback = annual price ${usd(annualPriceRaw)} ÷ (annual savings ${usd(annualSavingsRaw)} ÷ 12) = ${payback} months`,
     `Monthly price per buyer = ${usd(annualPriceRaw)} / 12 = ${usd(monthlyPriceRaw)}`,
     `Monthly delivery cost per buyer = ${usd(deliveryRaw)}`,
+    grossMarginPct === null
+      ? `Gross margin: n/a (monthly price is ${usd(monthlyPriceRaw)})`
+      : `Gross margin = (monthly price ${usd(monthlyPriceRaw)} − delivery ${usd(deliveryRaw)}) ÷ ${usd(monthlyPriceRaw)} = ${grossMarginPct}%`,
     `Annual revenue potential = ${plain(reachable)} × ${usd(annualPriceRaw)} = ${usd(potentialRaw)}`,
     `Year 1 revenue = ${usd(potentialRaw)} × ${plain(capture)} = ${usd(year1Raw)}`,
     breakevenBuyers === null

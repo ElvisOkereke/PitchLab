@@ -40,6 +40,18 @@ describe('computeNumbers', () => {
   it('payback is null when savings are zero', () => {
     expect(computeNumbers({ ...leadFlow, expectedReduction: s(0) }).buyer.paybackMonths).toBeNull();
   });
+  it('shows formula lines for ROI, payback and gross margin', () => {
+    const { formulas } = computeNumbers(leadFlow);
+    expect(formulas).toContain('ROI multiple = annual savings $48,000 ÷ annual price $3,840 = 12.5×');
+    expect(formulas).toContain('Payback = annual price $3,840 ÷ (annual savings $48,000 ÷ 12) = 0.96 months');
+    expect(formulas).toContain('Gross margin = (monthly price $320 − delivery $40) ÷ $320 = 87.5%');
+  });
+  it('explains n/a headline numbers in the formulas', () => {
+    const zeroPrice = computeNumbers({ ...leadFlow, price: { ...leadFlow.price, amount: s(0) } }).formulas;
+    expect(zeroPrice).toContain('ROI multiple: n/a (annual price is $0)');
+    expect(zeroPrice).toContain('Gross margin: n/a (monthly price is $0)');
+    expect(computeNumbers({ ...leadFlow, expectedReduction: s(0) }).formulas).toContain('Payback: n/a (annual savings are $0)');
+  });
 });
 
 describe('NumberInputsSchema', () => {
