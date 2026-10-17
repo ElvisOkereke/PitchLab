@@ -81,3 +81,4 @@ Taken from the Plan 1 build ledger (subagent-driven development, 2026-10-17) and
   - Evidence independence is counted by registrable domain.
   - Every stage is idempotent on re-run (R20).
 - **Output:** Markdown export escapes all case text, and secrets come only from env.
+- Gate thread keys: canonicalise per platform (HN item id, SO/SE question id, GitHub issue path) and drop tracking params; optionally make THREADS_PER_PLATFORM configurable.
