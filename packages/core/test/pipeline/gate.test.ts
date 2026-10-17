@@ -72,6 +72,20 @@ describe('gate', () => {
     expect(rows).toHaveLength(6);
   });
 
+  it('excludes IP and dotless hosts from independent sources', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const urls = ['http://1.2.3.4/x', 'http://localhost/y', 'http://[::1]/z', 'https://www.example.com/b'];
+    const sigs = await db.insert(signals).values(urls.map((url, i) => ({
+      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hip${i}`,
+    }))).returning({ id: signals.id });
+    const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const ev = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
+    expect(ev.reasoning).toBe('1 independent sources: example.com');
+  });
+
   it('counts independent sources by registrable domain and excludes bad urls', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));

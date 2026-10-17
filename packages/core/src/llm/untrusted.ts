@@ -1,9 +1,10 @@
 // Invisible / bidi / formatting characters that can hide or reorder text, plus the Unicode tag block.
-const INVISIBLE = /[​-‏‪-‮⁠-⁤⁦-⁩﻿\u{E0000}-\u{E007F}]/gu;
+const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180E\u3164\uFFA0\u{1D173}-\u{1D17A}\p{Cc}]/gu;
+const KEEP = new Set([0x09, 0x0a]);
 
 /** Neutralise untrusted text: every angle bracket becomes a look-alike, invisible/control formatting chars are removed. */
 export function neutralizeUntrusted(content: string): string {
-  return content.replace(INVISIBLE, '').replace(/</g, '‹').replace(/>/g, '›');
+  return content.replace(INVISIBLE, (c) => (KEEP.has(c.codePointAt(0)!) ? c : '')).replace(/</g, '‹').replace(/>/g, '›');
 }
 
 /** Wrap untrusted text in `<tag>…</tag>`; nothing inside it can form or close a tag. */

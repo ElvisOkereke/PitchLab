@@ -28,7 +28,7 @@ export async function screen(
   const prompt = loadPrompt('screen');
   const scored: { id: string; total: number; index: number }[] = [];
   for (const [index, idea] of generated.entries()) {
-    const text = `Title: ${idea.title}\nOne-liner: ${idea.oneLiner}\nBuyer: ${idea.buyer}\nProblem: ${idea.problem}\nSolution: ${idea.solution}`;
+    const text = `Title: ${capField(idea.title, 200)}\nOne-liner: ${capField(idea.oneLiner, 2000)}\nBuyer: ${capField(idea.buyer, 2000)}\nProblem: ${capField(idea.problem, 2000)}\nSolution: ${capField(idea.solution, 2000)}`;
     const scores = await router.structured(
       'screen',
       { prompt: prompt.render({ idea: wrapUntrusted('idea', text) }), schema: AiScoresSchema, schemaName: 'screen_scores' },

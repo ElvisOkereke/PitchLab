@@ -1,5 +1,5 @@
 import { eq, inArray } from 'drizzle-orm';
-import { getDomain } from 'tldts';
+import { parse } from 'tldts';
 import { z } from 'zod';
 import { gateVerdicts, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -29,8 +29,9 @@ function hostOf(url: string): string | null {
   try {
     const u = new URL(url);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    const host = u.hostname.toLowerCase();
-    return (getDomain(host) ?? host).toLowerCase();
+    const r = parse(u.hostname.toLowerCase());
+    if (r.isIp || !r.domain) return null;
+    return r.domain.toLowerCase();
   } catch {
     return null;
   }

@@ -23,6 +23,18 @@ describe('screen', () => {
     expect((await getIdea(db, b.id)).screenScores).toEqual(scores(5));
   });
 
+  it('caps idea fields and collapses newlines before they reach the prompt', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+    const idea = await insertIdea(db, run.id, { title: 'Line one\nLine two', problem: 'p'.repeat(5000) });
+    const router = fakeRouter({ structured: { screen: [scores(3)] } });
+    await screen(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls[0]!.prompt;
+    expect(prompt).toContain('Title: Line one Line two\n');
+    expect(prompt).toContain('p'.repeat(2000));
+    expect(prompt).not.toContain('p'.repeat(2001));
+  });
+
   it('advances owner ideas without scoring or using a slot', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', advanceCount: 1 }));

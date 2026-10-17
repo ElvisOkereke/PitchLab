@@ -26,6 +26,10 @@ describe('neutralizeUntrusted', () => {
     const dirty = 'a\u200Bb\u202Ec\u2066d\uFEFFe\u2060f\u{E0041}g';
     expect(neutralizeUntrusted(dirty)).toBe('abcdefg');
   });
+  it('removes soft hyphen, ALM, Hangul filler and other invisibles but keeps newline and tab', () => {
+    const dirty = 'a\u00ADb\u061Cc\u3164d\u200Be\u202Ef\nrow\tend';
+    expect(neutralizeUntrusted(dirty)).toBe('abcdef\nrow\tend');
+  });
   it('leaves normal text unchanged', () => {
     expect(neutralizeUntrusted('Plain text, with ünïcode & numbers 123.')).toBe('Plain text, with ünïcode & numbers 123.');
   });
