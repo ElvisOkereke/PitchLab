@@ -4,10 +4,12 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
-- **Phase:** **Plan 1 complete (branch `plan-1-core-pipeline`, 213 tests green); next: Plan 2 (Dashboard).** Live benchmark + first
-  open run done 2026-10-17, results in `docs/runs/2026-10-17-benchmark.md` (benchmark: 3 of 4 §12.1 case criteria passed at run time; open run
-  produced 1 case). The final-review fix wave then closed the evidence-integrity gap (signal/competitor links now verified + flagged, input flags in
-  export) and added idea-diversity changes (ideate.v3, diversity-aware screen) — both **unvalidated live until the next run**.
+- **Phase:** **Plan 1 complete; tuning-1 (branch `tuning-1`) run live 2026-10-17, results in `docs/runs/2026-10-17-run-2.md`.**
+  Open run: 5 reached the gate, **1 passed** (§12.2 still not met); evidence no longer kills, `generic` does. Ideation is
+  broader in mechanism (6/14 non-monitoring) but 6/14 still lead-capture or web-agency, and the screen sends mostly
+  those to the gate. Benchmark: §12.1 case criteria 4/4 pass (every displayed link now shows a status), but ROI 0.24×.
+  Two defects fixed (verify on JS-rendered pages, formula rounding). Open points for owner in the run-2 doc
+  (competitor-flag semantics, screen diversity). Next: owner review, then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -165,3 +167,10 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   per-sector pain-phrase banks for the market's sectors + wider WordPress plugin list; (3) **hybrid** evidence counting:
   community platforms (HN, Stack Exchange, GitHub, WordPress.org) count distinct threads, max 2 per platform; other sites
   count once per registrable domain. Work on branch `tuning-1`, then live re-run.
+- **2026-10-17:** Run 2 on `tuning-1` (`docs/runs/2026-10-17-run-2.md`). Open run: 14 ideas, 0 duplicates, 9 screened
+  out, 5 at gate, 1 passed ("Lead leak audits for multi-location HVAC and dental", ROI 3.7× but built on 2 unsupported
+  inputs); kills: generic 3, control 1, autonomy 1, evidence 0. Benchmark: "Lead-arrival checks for agency client
+  sites", §12.1 4/4 (evidence integrity now holds by construction), ROI 0.24×. Fixed: verify judged empty
+  JS-rendered pages as unsupported (`07e228f`); formula lines rounded 0.003 to 0 (`7a3cb19`). Cost $7.30 + $4.06,
+  0 × 429. Owner decisions needed: what competitor-link checks should assert ("Not published" pricing always fails),
+  GitHub issue verification, a diversity rule at screen.
