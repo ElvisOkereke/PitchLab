@@ -13,4 +13,7 @@ describe('loadPrompt', () => {
     expect(() => p.render({ countries: 'a', items: 'b', bogus: 'c' })).toThrow(/bogus/);
     expect(() => loadPrompt('nope')).toThrow(/not found/);
   });
+  it('normalises CRLF line endings (Windows checkouts with core.autocrlf)', () => {
+    expect(loadPrompt('extract-signals').render({ countries: 'CA, US', items: 'X' })).not.toContain('\r');
+  });
 });

@@ -18,7 +18,8 @@ export function loadPrompt(name: string): LoadedPrompt {
   }
   if (best < 0) throw new Error(`Prompt not found: ${name}`);
   const version = `${name}.v${best}`;
-  const template = readFileSync(join(PROMPTS_DIR, `${version}.md`), 'utf8');
+  // Git on Windows (core.autocrlf) may check prompts out with CRLF; prompts are always rendered with LF.
+  const template = readFileSync(join(PROMPTS_DIR, `${version}.md`), 'utf8').replace(/\r\n/g, '\n');
   const declared = new Set([...template.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!));
   return {
     version,
