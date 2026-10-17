@@ -38,3 +38,10 @@ export type StageDeps = {
   fetchPage: typeof fetchPage;
   log: (msg: string) => void;
 };
+
+/**
+ * One pipeline stage as the orchestrator calls it: it receives the previous stage's output
+ * (undefined for harvest) and returns a JSON-serialisable object that is stored in `run_stages.output`.
+ * `input` is `any` because each stage takes a different shape and the orchestrator only chains them.
+ */
+export type StageFn = (deps: StageDeps, run: { id: string; config: RunConfig }, input: any) => Promise<object>;

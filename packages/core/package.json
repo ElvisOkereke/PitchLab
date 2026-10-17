@@ -14,6 +14,7 @@
     "@electric-sql/pglite-pgvector": "^0.0.11",
     "@mozilla/readability": "^0.6.0",
     "@types/node": "^26.6.5",
+    "commander": "^15.0.0",
     "drizzle-orm": "^0.45.4",
     "fast-xml-parser": "^5.11.2",
     "ipaddr.js": "^2.5.0",

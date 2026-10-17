@@ -1,0 +1,117 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { computeNumbers } from '../../src/calc/numbers';
+import { CRITERIA, type CaseSections } from '../../src/case/schema';
+import { caseToMarkdown, type CaseRow, type ClaimRow, type ScoreRow } from '../../src/case/export-markdown';
+
+const FIXTURE = new URL('../helpers/fixtures/case-draft.json', import.meta.url);
+
+function caseFixture(opts: { gateFlags?: string[]; mutate?: (s: CaseSections) => void; title?: string } = {}): CaseRow {
+  const { title, ...draft } = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const sections: CaseSections = {
+    ...draft,
+    summary: { ...draft.summary, gateFlags: opts.gateFlags ?? [] },
+    evidence: {
+      claims: draft.evidence.claims,
+      signals: [{ quote: 'Our forms die after plugin updates', url: 'https://news.example/item/1', sourceName: 'Hacker News' }],
+    },
+    numbers: { inputs: draft.numbers.inputs, results: computeNumbers(draft.numbers.inputs) },
+  };
+  opts.mutate?.(sections);
+  const now = new Date('2026-10-17T00:00:00Z');
+  return {
+    id: 'case-1', ideaId: 'idea-1', slug: 'lead-flow-verification', title: opts.title ?? title, stage: 'new',
+    sections, killReason: null, gateAdvisory: (opts.gateFlags ?? []).length > 0, model: 'claude-x', promptVersion: 'case-write.v1',
+    createdAt: now, updatedAt: now,
+  };
+}
+
+let n = 0;
+function claim(verified: ClaimRow['verified'], overrides: Partial<ClaimRow> = {}): ClaimRow {
+  n += 1;
+  return {
+    id: `claim-${n}`, caseId: 'case-1', section: 'evidence', text: `Claim ${n} (${verified})`, sourceUrl: `https://src.example/${n}`,
+    quote: `quote ${n}`, verified, confidence: null, checkedAt: null, createdAt: new Date(), ...overrides,
+  };
+}
+
+function aiScores(): ScoreRow[] {
+  return CRITERIA.map((c, i) => ({
+    id: `s${i}`, caseId: 'case-1', criterion: c, value: 4, note: `${c} note`, by: 'ai' as const, model: 'gemini-x',
+    promptVersion: 'score.v1', createdAt: new Date(),
+  }));
+}
+
+describe('caseToMarkdown', () => {
+  it('renders markdown with gate flags, formulas and claim statuses', () => {
+    const md = caseToMarkdown(caseFixture({ gateFlags: ['evidence'] }), [claim('verified'), claim('unreachable')], aiScores());
+    expect(md).toMatch(/⚠️ Gate flags: evidence/);
+    expect(md).toContain('$3,840');
+    expect(md).toContain('✅');
+    expect(md).toContain('unreachable');
+  });
+
+  it('puts the gate flag block at the top and the sections in tab order', () => {
+    const md = caseToMarkdown(caseFixture({ gateFlags: ['evidence', 'control'] }), [], aiScores());
+    const lines = md.split('\n');
+    expect(lines[0]).toBe('# Lead-flow verification for web agencies');
+    expect(md.indexOf('> ⚠️ Gate flags: evidence, control')).toBeLessThan(md.indexOf('## Summary'));
+    const order = ['## Summary', '## Evidence', '## Numbers', '## Competitors', '## Pitch', '## Score'].map((h) => md.indexOf(`\n${h}\n`));
+    expect(order.every((i) => i > 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  it('omits the gate flag block when there are no flags', () => {
+    expect(caseToMarkdown(caseFixture(), [], [])).not.toContain('Gate flags');
+  });
+
+  it('shows the formulas list and an inputs table with a source link or assumption per input', () => {
+    const md = caseToMarkdown(caseFixture(), [], []);
+    expect(md).toContain('- Annual price = $8 × 40 × 12 = $3,840');
+    expect(md).toMatch(/\| price\.amount \| 8 \| assumption: Our proposed price per monitored site per month/);
+    expect(md).toMatch(/\| price\.unitsPerBuyer \| 40 \| \[agency-benchmarks\.example\]\(https:\/\/agency-benchmarks\.example\/2026-small-agency-report\)/);
+  });
+
+  it('shows every claim status', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('verified'), claim('unsupported'), claim('unreachable'), claim('unverified')], []);
+    expect(md).toMatch(/✅ verified.*\(verified\)/);
+    expect(md).toMatch(/❌ unsupported.*\(unsupported\)/);
+    expect(md).toMatch(/⚠️ unreachable.*\(unreachable\)/);
+    expect(md).toMatch(/⏳ unverified.*\(unverified\)/);
+  });
+
+  it('renders AI and owner scores as criterion | value | note tables', () => {
+    const owner: ScoreRow = { ...aiScores()[0]!, id: 'o1', criterion: 'gut', value: 2, note: 'meh', by: 'owner', model: null, promptVersion: null };
+    const md = caseToMarkdown(caseFixture(), [], [...aiScores(), owner]);
+    expect(md).toContain('| Criterion | Value | Note |');
+    expect(md).toContain('| pain | 4 | pain note |');
+    expect(md).toContain('### Owner scores');
+    expect(md).toContain('| gut | 2 | meh |');
+  });
+
+  it('escapes untrusted text and only links http(s) urls', () => {
+    const kase = caseFixture({
+      title: 'Evil <script>alert(1)</script> & co',
+      gateFlags: ['<b>x</b>'],
+      mutate: (s) => {
+        s.summary.problem = 'See ![img](https://evil.example/x.png) and [click](javascript:alert(1))';
+        s.competitors.list[0]!.url = 'javascript:alert(1)';
+        s.competitors.list[0]!.gap = 'a | b\nc';
+      },
+    });
+    const md = caseToMarkdown(kase, [claim('verified', { sourceUrl: 'javascript:alert(2)', quote: '<img src=x onerror=alert(3)>' })], []);
+    expect(md).toContain('# Evil &lt;script&gt;alert(1)&lt;/script&gt; &amp; co');
+    expect(md).toContain('Gate flags: &lt;b&gt;x&lt;/b&gt;');
+    expect(md).not.toMatch(/<script|<img|<b>/);
+    expect(md).toContain('!\\[img\\](https://evil.example/x.png)');
+    expect(md).toContain('\\[click\\](javascript:alert(1))');
+    expect(md).not.toMatch(/(^|[^\\])\]\(javascript:/m);
+    expect(md).toContain('javascript:alert(1)');
+    expect(md).toContain('a \\| b c');
+  });
+
+  it('percent-encodes parentheses in link targets', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('verified', { sourceUrl: 'https://x.example/a_(b) c' })], []);
+    expect(md).toContain('[x.example](https://x.example/a_%28b%29%20c)');
+  });
+});
