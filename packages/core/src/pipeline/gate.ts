@@ -1,8 +1,9 @@
 import { eq, inArray } from 'drizzle-orm';
+import { getDomain } from 'tldts';
 import { z } from 'zod';
 import { gateVerdicts, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { wrapUntrusted } from '../llm/untrusted';
+import { capField, wrapUntrusted } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
@@ -23,13 +24,15 @@ const judgeSchema = z
     message: `verdicts must contain each of ${CHECKS.join(', ')} exactly once`,
   });
 
-const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
-
-function hostOf(url: string): string {
+/** Registrable domain of an http(s) URL, or null (fail closed) when unparseable or not http(s). */
+function hostOf(url: string): string | null {
   try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    const host = u.hostname.toLowerCase();
+    return (getDomain(host) ?? host).toLowerCase();
   } catch {
-    return url.toLowerCase();
+    return null;
   }
 }
 
@@ -73,7 +76,7 @@ export async function gate(
       ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
       : [];
     const urls = sigRows.map((s) => s.url);
-    const hosts = [...new Set(urls.map(hostOf))];
+    const hosts = [...new Set(urls.map(hostOf).filter((h): h is string => h !== null))];
     const evidencePass = hosts.length >= run.config.minSignals;
 
     const sourceUrls = research.sources.map((s) => s.url);
@@ -82,7 +85,7 @@ export async function gate(
       {
         prompt: gatePrompt.render({
           idea: wrappedIdea,
-          signals: wrapUntrusted('signals', sigRows.map((s) => `- url: ${s.url}\n  quote: ${oneLine(s.quote)}`).join('\n')),
+          signals: wrapUntrusted('signals', sigRows.map((s) => `- url: ${capField(s.url, 2000)}\n  quote: ${capField(s.quote, 1000)}`).join('\n')),
           competitors: wrapUntrusted('competitors', research.text),
           competitorUrls: wrapUntrusted('competitor-urls', sourceUrls.join('\n')),
         }),
@@ -106,17 +109,21 @@ export async function gate(
       reasoning: `${hosts.length} independent sources: ${hosts.join(', ')}`,
       sources: urls, model: 'rule', promptVersion: 'evidence-rule.v1',
     });
-    await db.insert(gateVerdicts).values(values);
-
-    const failed = ORDER.filter((c) => !results.get(c));
+        const failed = ORDER.filter((c) => !results.get(c));
+    const kill = failed.length > 0 && idea.origin !== 'owner';
+    // One transaction per idea: replace verdicts (idempotent on re-run) and update status together.
+    await db.transaction(async (tx) => {
+      await tx.delete(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+      await tx.insert(gateVerdicts).values(values);
+      if (kill) await tx.update(ideas).set({ status: 'gated_out' }).where(eq(ideas.id, idea.id));
+    });
     if (failed.length === 0) {
       passed.push(idea.id);
-    } else if (idea.origin === 'owner') {
+    } else if (!kill) {
       passed.push(idea.id);
       advisory.push({ ideaId: idea.id, failedChecks: [...failed] });
     } else {
       killed++;
-      await db.update(ideas).set({ status: 'gated_out' }).where(eq(ideas.id, idea.id));
     }
   }
 

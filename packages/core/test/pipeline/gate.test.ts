@@ -61,6 +61,31 @@ describe('gate', () => {
     await expect(gate(deps(db, router), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
   });
 
+  it('is idempotent: running twice leaves exactly 6 verdict rows', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    const router = fakeRouter({ research: { competitors: [research, research] }, structured: { gate: [verdicts(), verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    expect(rows).toHaveLength(6);
+  });
+
+  it('counts independent sources by registrable domain and excludes bad urls', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const urls = ['https://news.example.com/a', 'https://www.example.com/b', 'not a url', 'ftp://x.com/f'];
+    const sigs = await db.insert(signals).values(urls.map((url, i) => ({
+      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hd${i}`,
+    }))).returning({ id: signals.id });
+    const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const ev = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
+    expect(ev.reasoning).toBe('1 independent sources: example.com');
+  });
+
   it('makes no LLM calls for empty input', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

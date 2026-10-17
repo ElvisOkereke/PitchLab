@@ -1,5 +1,6 @@
 import { and, cosineDistance, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { ideas } from '../db/schema';
+import { capField } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 const PROMPT_VERSION = 'embed';
@@ -13,6 +14,9 @@ function cosine(a: number[], b: number[]): number {
   }
   return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
 }
+
+const validEmbedding = (v: unknown): v is number[] =>
+  Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'number' && Number.isFinite(x)) && v.some((x) => x !== 0);
 
 export async function dedupe(
   { db, router, log }: StageDeps,
@@ -41,7 +45,8 @@ export async function dedupe(
 
   for (let i = 0; i < ordered.length; i++) {
     const idea = ordered[i]!;
-    const vec = vectors[i]!;
+    const vec = vectors[i];
+    if (!validEmbedding(vec)) throw new Error(`invalid embedding for idea ${idea.id}`);
     await db.update(ideas).set({ embedding: vec }).where(eq(ideas.id, idea.id));
 
     let best: { id: string; sim: number } | null = null;
@@ -49,17 +54,19 @@ export async function dedupe(
     const [past] = await db
       .select({ id: ideas.id, sim: similarity })
       .from(ideas)
-      .where(and(ne(ideas.runId, run.id), isNotNull(ideas.embedding)))
+      .where(and(ne(ideas.runId, run.id), isNotNull(ideas.embedding), sql`${similarity} <> 'NaN'::float8`))
       .orderBy(desc(similarity))
       .limit(1);
-    if (past) best = { id: past.id, sim: Number(past.sim) };
+    const pastSim = past ? Number(past.sim) : NaN;
+    if (past && Number.isFinite(pastSim)) best = { id: past.id, sim: pastSim };
     for (const k of kept) {
       const sim = cosine(vec, k.vec);
+      if (!Number.isFinite(sim)) continue;
       if (!best || sim > best.sim) best = { id: k.id, sim };
     }
 
     if (idea.origin === 'owner') {
-      if (best) log(`dedupe: owner idea "${idea.title}" nearest ${best.id} similarity ${best.sim.toFixed(3)} (kept)`);
+      if (best) log(`dedupe: owner idea "${capField(idea.title, 120)}" nearest ${best.id} similarity ${best.sim.toFixed(3)} (kept)`);
       kept.push({ id: idea.id, vec });
       keptIds.push(idea.id);
     } else if (best && best.sim >= threshold) {

@@ -3,7 +3,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { lenses, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { wrapUntrusted } from '../llm/untrusted';
+import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
 import type { RawItem } from '../tools/sources/types';
 import { logDataCall } from '../tools/data-calls';
@@ -134,7 +134,9 @@ ${wrapUntrusted('idea', idea)}`;
       if (!s.isPain) continue;
       const quote = collapse(s.quote);
       if (!quote) continue;
-      const item = batch.find((it) => it.url === s.url && collapse(it.text).includes(quote));
+      // Compare against what the model actually saw (neutralised text); store the matched text.
+      const seen = (it: RawItem) => collapse(neutralizeUntrusted(it.text));
+      const item = batch.find((it) => it.url === s.url && seen(it).includes(quote));
       if (!item) continue;
       kept.push({ item, quote, hash: md5(normalizeQuote(quote)), sector: s.sector, painType: s.painType });
     }

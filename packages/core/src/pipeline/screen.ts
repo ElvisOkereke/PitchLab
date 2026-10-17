@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { AiScoresSchema, CRITERIA } from '../case/schema';
 import { ideas } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { wrapUntrusted } from '../llm/untrusted';
+import { capField, wrapUntrusted } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 export async function screen(

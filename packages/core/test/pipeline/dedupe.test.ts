@@ -50,6 +50,35 @@ describe('dedupe', () => {
     expect((await getIdea(db, b.id)).duplicateOf).toBe(a.id);
   });
 
+  it('throws on a zero-norm embedding', async () => {
+    const { db, run } = await setup();
+    const a = await insertIdea(db, run.id, {});
+    const router = fakeRouter({ embed: () => [Array<number>(1536).fill(0)] });
+    await expect(dedupe(deps(db, router), run, { ideaIds: [a.id] })).rejects.toThrow(`invalid embedding for idea ${a.id}`);
+  });
+
+  it('throws on a non-finite embedding', async () => {
+    const { db, run } = await setup();
+    const a = await insertIdea(db, run.id, {});
+    const bad = unit(0);
+    bad[3] = Number.NaN;
+    const router = fakeRouter({ embed: () => [bad] });
+    await expect(dedupe(deps(db, router), run, { ideaIds: [a.id] })).rejects.toThrow('invalid embedding');
+  });
+
+  it('a NaN similarity against a past idea does not hide an in-run duplicate', async () => {
+    const db = await testDb();
+    const past = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await insertIdea(db, past.id, { embedding: Array<number>(1536).fill(0) });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const a = await insertIdea(db, run.id, {});
+    const b = await insertIdea(db, run.id, {});
+    const router = fakeRouter({ embed: () => [unit(5), unit(5)] });
+    const out = await dedupe(deps(db, router), run, { ideaIds: [a.id, b.id] });
+    expect(out.ideaIds).toEqual([a.id]);
+    expect((await getIdea(db, b.id)).duplicateOf).toBe(a.id);
+  });
+
   it('returns empty without embedding for empty input', async () => {
     const { db, run } = await setup();
     const router = fakeRouter({});
