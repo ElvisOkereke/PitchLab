@@ -5,7 +5,8 @@
 
 ## Status
 - **Phase:** **Plan 1 complete; next: Plan 2 (Dashboard).** Live benchmark + first open run done 2026-10-17, results in
-  `docs/runs/2026-10-17-benchmark.md` (benchmark case passes §12.1 case criteria; open run produced 1 case, owner to judge).
+  `docs/runs/2026-10-17-benchmark.md` (benchmark: 3 of 4 §12.1 case criteria pass; evidence integrity not met by construction, because signal and
+  competitor links are unverified and the inputs table lacks claim flags; open run produced 1 case, owner to judge).
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Last updated:** 2026-10-17
 
@@ -149,7 +150,9 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   Wrote Plan 1 (14 tasks, TDD, CLI-first, ends with live benchmark run).
 - **2026-10-17:** Plan 1 built (Tasks 1–13) and run live (Task 14). Fixed 3 gateway defects (above). Benchmark case
   "Lead-delivery checks for WordPress care-plan agencies": agency buyer, 4-level table, all numbers formula-backed with
-  sources or named assumptions, 9/10 claims verified (1 flagged unsupported); notional cost $7.10. Open run: 16 ideas →
+  sources or named assumptions (one sourced input judged unsupported), 9/10 claims verified (1 flagged unsupported);
+  evidence-integrity criterion only PARTIAL (2 unflagged signal URLs return 403 to the fetcher; the inputs table lacks
+  claim flags); notional cost $7.10. Open run: 16 ideas →
   1 duplicate, 10 screened out, 5 at gate, 1 passed ("Lead-Line Canary", ROI 0.72×); $6.64. **Owner to review both cases.**
   Open points for owner: ideation anchors on the benchmark pattern (only 1/5 passed the gate); verify covers claims but
   not harvested-signal/competitor URLs. Details in `docs/runs/2026-10-17-benchmark.md`.
