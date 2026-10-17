@@ -48,7 +48,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
 }
 
 function extract(html: string): { title: string; text: string } {
-  const { document } = parseHTML(/<html[s>]/i.test(html) ? html : `<html><body>${html}</body></html>`);
+  const { document } = parseHTML(/<html[\s>]/i.test(html) ? html : `<html><body>${html}</body></html>`);
   const title = (document.title || document.querySelector('title')?.textContent || '').trim();
   const article = new Readability(document as unknown as ConstructorParameters<typeof Readability>[0]).parse();
   const text = (article?.textContent ?? (document.body ?? document.documentElement)?.textContent ?? '').trim();
