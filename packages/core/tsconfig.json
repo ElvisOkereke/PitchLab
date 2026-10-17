@@ -5,5 +5,5 @@
     "moduleResolution": "Bundler",
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src", "test", "scripts", "vitest.config.ts"]
 }
