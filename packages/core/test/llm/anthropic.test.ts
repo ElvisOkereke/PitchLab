@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  buildAnthropicParams, createAnthropicAdapter, isForcedToolChoiceRejection, mapAnthropicMessage,
+  buildAnthropicParams, createAnthropicAdapter, isForcedToolChoiceRejection, isStreamForbidden, mapAnthropicMessage,
 } from '../../src/llm/anthropic';
 import type { AdapterRequest } from '../../src/llm/types';
 
@@ -56,6 +56,7 @@ describe('mapAnthropicMessage', () => {
   });
 });
 
+const noCreate = vi.fn().mockRejectedValue(new Error('non-streaming path not expected'));
 const schema = { type: 'object', properties: { pass: { type: 'boolean' } }, required: ['pass'] };
 const structuredReq = (model: string, extra: Partial<AdapterRequest> = {}): AdapterRequest => ({
   model, system: 'You are a judge.', messages: [{ role: 'user', content: 'Judge it.' }], maxTokens: 8000,
@@ -144,7 +145,7 @@ describe('createAnthropicAdapter tool_choice fallback', () => {
     const send = vi.fn()
       .mockRejectedValueOnce(rejection())
       .mockResolvedValue(toolReply);
-    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', transport: { stream: send, create: noCreate } });
 
     expect((await adapter.complete(structuredReq('claude-new-model'))).json).toEqual({ pass: true });
     expect(send.mock.calls.map((c) => c[0].tool_choice.type)).toEqual(['tool', 'auto']);
@@ -159,17 +160,58 @@ describe('createAnthropicAdapter tool_choice fallback', () => {
 
   it('uses auto from the start for models known to reject forced tool_choice', async () => {
     const send = vi.fn().mockResolvedValue(toolReply);
-    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', transport: { stream: send, create: noCreate } });
     await adapter.complete(structuredReq('claude-opus-5-5'));
     await adapter.complete(structuredReq('claude-sonnet-5-5'));
     expect(send.mock.calls.map((c) => c[0].tool_choice.type)).toEqual(['auto', 'auto']);
   });
 
   it('does not fall back on other errors', async () => {
-    const send = vi.fn().mockRejectedValue(new Error('403 forbidden'));
-    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
-    await expect(adapter.complete(structuredReq('claude-haiku-5-5'))).rejects.toThrow('403 forbidden');
+    const send = vi.fn().mockRejectedValue(new Error('400 {"error":{"message":"max_tokens: too large"}}'));
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', transport: { stream: send, create: noCreate } });
+    await expect(adapter.complete(structuredReq('claude-haiku-5-5'))).rejects.toThrow('max_tokens: too large');
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createAnthropicAdapter streaming 403 fallback', () => {
+  // Live run 2026-10-17: Fuelix intermittently answered every streaming /v1/messages request (any claude
+  // model) with this SSE error event while the same request without streaming succeeded.
+  const streamForbidden = () => new Error(
+    '{"type":"error","error":{"message":"Error code: 403 - {\'error\': \'forbidden\'}","type":"anthropic.PermissionDeniedError"}}',
+  );
+  const textReply = { content: [{ type: 'text', text: 'pong', citations: null }], usage: { input_tokens: 1, output_tokens: 1, server_tool_use: null } };
+  const plainReq: AdapterRequest = { model: 'claude-haiku-5-5', messages: [{ role: 'user', content: 'ping' }], maxTokens: 50 };
+
+  it('recognises only the streaming 403 forbidden error', () => {
+    expect(isStreamForbidden(streamForbidden())).toBe(true);
+    expect(isStreamForbidden(new Error('401 {"error":{"message":"invalid token"}}'))).toBe(false);
+    expect(isStreamForbidden('Error code: 403 forbidden')).toBe(false);
+  });
+
+  it('retries the same params once without streaming when the stream is forbidden', async () => {
+    const stream = vi.fn().mockRejectedValue(streamForbidden());
+    const create = vi.fn().mockResolvedValue(textReply);
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', transport: { stream, create } });
+    expect((await adapter.complete(plainReq)).text).toBe('pong');
+    expect(stream).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]![0]).toEqual(stream.mock.calls[0]![0]);
+  });
+
+  it('does not use the non-streaming path for other errors, and surfaces a non-streaming failure', async () => {
+    const create = vi.fn().mockRejectedValue(new Error('403 {"error":"forbidden"}'));
+    const other = createAnthropicAdapter({
+      baseURL: 'x', key: 'k', transport: { stream: vi.fn().mockRejectedValue(new Error('500 boom')), create },
+    });
+    await expect(other.complete(plainReq)).rejects.toThrow('500 boom');
+    expect(create).not.toHaveBeenCalled();
+
+    const both = createAnthropicAdapter({
+      baseURL: 'x', key: 'k', transport: { stream: vi.fn().mockRejectedValue(streamForbidden()), create },
+    });
+    await expect(both.complete(plainReq)).rejects.toThrow('403 {"error":"forbidden"}');
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });
 

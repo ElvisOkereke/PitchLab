@@ -106,11 +106,23 @@ export function buildAnthropicParams(
 }
 
 type Send = (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<MappableMessage>;
+export type AnthropicTransport = { stream: Send; create: Send };
 
-export function createAnthropicAdapter(opts: { baseURL: string; key: string; send?: Send }): ProviderAdapter {
-  let send = opts.send;
-  if (!send) {
+/**
+ * True for the gateway's streaming-only rejection: Fuelix intermittently answers streaming /v1/messages
+ * requests with an SSE error event `Error code: 403 - {'error': 'forbidden'}` while the same request
+ * without streaming succeeds (live run 2026-10-17).
+ */
+export function isStreamForbidden(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : '';
+  return /Error code: 403\b/.test(msg) && /forbidden/.test(msg);
+}
+
+export function createAnthropicAdapter(opts: { baseURL: string; key: string; transport?: AnthropicTransport }): ProviderAdapter {
+  let transport = opts.transport;
+  if (!transport) {
     // apiKey: null stops the SDK picking up ANTHROPIC_API_KEY (which would win over the bearer token).
+    // The explicit timeout also lets the SDK accept long non-streaming requests (used only as a fallback).
     const client = new Anthropic({
       baseURL: opts.baseURL,
       apiKey: null,
@@ -118,9 +130,21 @@ export function createAnthropicAdapter(opts: { baseURL: string; key: string; sen
       timeout: 15 * 60_000,
       maxRetries: 0,
     });
-    send = (params) => client.messages.stream(params).finalMessage();
+    transport = {
+      stream: (params) => client.messages.stream(params).finalMessage(),
+      create: (params) => client.messages.create(params),
+    };
   }
-  const sendMessage = send;
+  const { stream, create } = transport;
+  /** Stream by default; retry once without streaming only on the gateway's streaming 403. */
+  const sendMessage: Send = async (params) => {
+    try {
+      return await stream(params);
+    } catch (err) {
+      if (!isStreamForbidden(err)) throw err;
+      return create(params);
+    }
+  };
   /** Models that rejected forced tool_choice during this process (beyond the known NO_FORCED_TOOL_CHOICE set). */
   const learnedNoForce = new Set<string>();
 
