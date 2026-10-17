@@ -108,7 +108,7 @@ describe('createRouter', () => {
 
   it('adds each call cost to the run and logs failed attempts', async () => {
     const db = await testDb();
-    const [run] = await db.insert(runs).values({ config: {}, status: 'running' }).returning();
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'running' }).returning();
     const a = scriptedAdapter([
       { text: 'one', usage: { inputTokens: 1000, outputTokens: 1000, searchRequests: 0 } },
       Object.assign(new Error('bad request'), { status: 400 }),

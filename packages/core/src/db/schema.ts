@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { RunConfig } from '../pipeline/types';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
   vector, primaryKey, uniqueIndex, check,
@@ -39,7 +40,7 @@ export const lenses = pgTable('lenses', {
 
 export const runs = pgTable('runs', {
   id: id(),
-  config: jsonb('config').$type<Record<string, unknown>>().notNull(),
+  config: jsonb('config').$type<RunConfig>().notNull(),
   status: runStatus('status').notNull(),
   currentStage: text('current_stage'),
   error: text('error'),

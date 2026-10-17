@@ -10,7 +10,7 @@ describe('db', () => {
     await seedDefaults(db);
     expect(await db.select().from(lenses)).toHaveLength(8);
     expect((await db.select().from(markets))[0].currency).toBe('USD');
-    const [run] = await db.insert(runs).values({ config: {}, status: 'queued' }).returning();
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
     const v = Array(1536).fill(0);
     v[0] = 1;
     await db.insert(ideas).values({ runId: run.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], embedding: v, status: 'candidate' });
