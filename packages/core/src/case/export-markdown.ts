@@ -1,5 +1,6 @@
 import { listInputs } from '../calc/inputs';
 import type { Sourced } from '../calc/schema';
+import { decodeEntities } from '../tools/entities';
 import { competitorPricingText, hasPriceFigure } from './schema';
 import type { cases, claims, scores } from '../db/schema';
 
@@ -25,6 +26,10 @@ const line = (s: string) => esc(s.replace(/\s+/g, ' ').trim());
 
 /** A table cell: single line, pipes escaped. */
 const cell = (s: string) => line(s).replace(/\|/g, '\\|');
+
+// Quotes stored before entity decoding landed (legacy rows) may still hold `&#8217;` etc.: decode first, then escape.
+const quoteLine = (s: string) => line(decodeEntities(s));
+const quoteCell = (s: string) => cell(decodeEntities(s));
 
 /** Multi-line text: each line escaped and trimmed, line breaks kept as hard breaks, blank lines as paragraph breaks. */
 function block(s: string): string {
@@ -137,7 +142,7 @@ const UNPUBLISHED_PRICE_REASON = 'pricing not published — check it yourself';
  * is written only when the case has claims and none of these.
  */
 function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
-  const item = (label: string, text: string, url: string, reason: string) => `- **${label}:** ${line(text)} (${link(url)}): ${line(reason)}`;
+  const item = (label: string, text: string, url: string, reason: string) => `- **${label}:** ${quoteLine(text)} (${link(url)}): ${line(reason)}`;
   const items = claimRows
     .filter((r) => FOR_OWNER.has(r.verified))
     .map((r) => item(SECTION_LABEL[r.section] ?? r.section, r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified));
@@ -165,7 +170,7 @@ function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[
 const emoji = (s: Status | undefined) => (s ? ` ${STATUS_EMOJI[s]}` : '');
 
 function sourceOf(s: Sourced, status: Status | undefined): string {
-  if (s.source) return `${cellLink(s.source.url)}: "${cell(s.source.quote)}"${emoji(status)}`;
+  if (s.source) return `${cellLink(s.source.url)}: "${quoteCell(s.source.quote)}"${emoji(status)}`;
   return `assumption: ${cell(s.assumption ?? '')}`;
 }
 
@@ -199,14 +204,14 @@ function evidence(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
   if (signals.length === 0) out.push('_No harvested signals._');
   for (const s of signals) {
     const status = flags.signal.get(linkKey(s.url, s.quote));
-    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)}) ${status ? STATUS_EMOJI[status] : 'not checked'}`);
+    out.push(`- "${quoteLine(s.quote)}" (${line(s.sourceName)}, ${link(s.url)}) ${status ? STATUS_EMOJI[status] : 'not checked'}`);
   }
   out.push('', '### Claims', '');
   const listed = claimRows.filter((cl) => LISTED_SECTIONS.has(cl.section));
   if (listed.length === 0) out.push('_No claims recorded._');
   for (const cl of listed) {
     out.push(`- ${CLAIM_STATUS[cl.verified]}: ${line(cl.text)}`);
-    if (cl.quote) out.push(`  - Quote: "${line(cl.quote)}"`);
+    if (cl.quote) out.push(`  - Quote: "${quoteLine(cl.quote)}"`);
     out.push(`  - Source: ${link(cl.sourceUrl)}`);
   }
   return out;

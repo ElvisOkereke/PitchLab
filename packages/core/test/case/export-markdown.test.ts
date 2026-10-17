@@ -8,7 +8,7 @@ import { caseToMarkdown, type CaseRow, type ClaimRow, type ScoreRow } from '../.
 const FIXTURE = new URL('../helpers/fixtures/case-draft.json', import.meta.url);
 
 function caseFixture(opts: { gateFlags?: string[]; mutate?: (s: CaseSections) => void; title?: string } = {}): CaseRow {
-  const { title, ...draft } = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+  const { title, usedSignalUrls: _used, ...draft } = JSON.parse(readFileSync(FIXTURE, 'utf8'));
   const sections: CaseSections = {
     ...draft,
     summary: { ...draft.summary, gateFlags: opts.gateFlags ?? [] },
@@ -246,6 +246,19 @@ describe('caseToMarkdown', () => {
     expect(md).not.toMatch(/(^|[^\\])\]\(javascript:/m);
     expect(md).toContain('javascript:alert(1)');
     expect(md).toContain('a \\| b c');
+  });
+
+  it('decodes HTML entities in legacy stored quotes before escaping them', () => {
+    const quote = 'We don&#8217;t know &amp; can&rsquo;t see it &lt;b&gt;';
+    const kase = caseFixture({ mutate: (s) => { s.evidence.signals = [{ quote, url: 'https://news.example/item/9', sourceName: 'HN' }]; } });
+    const md = caseToMarkdown(kase, [
+      claim('verified', { section: 'signal', text: quote, sourceUrl: 'https://news.example/item/9', quote }),
+      claim('verified', { text: 'Owners claim', quote: 'It&#x2019;s broken' }),
+    ], []);
+    expect(md).toContain('- "We don’t know &amp; can’t see it &lt;b&gt;" (HN, [news.example](https://news.example/item/9)) ✅');
+    expect(md).toContain('  - Quote: "It’s broken"');
+    expect(md).not.toContain('&#8217;');
+    expect(md).not.toMatch(/<b>/);
   });
 
   it('percent-encodes parentheses in link targets', () => {

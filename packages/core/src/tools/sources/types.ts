@@ -1,5 +1,6 @@
 export type RawItem = { source: string; url: string; title: string; text: string; publishedAt: Date | null };
 
+import { decodeEntities } from '../entities';
 import { readCapped, TooLarge } from '../fetch-page';
 
 export interface SearchOpts {
@@ -12,26 +13,13 @@ export interface SignalSource {
   search(query: string, opts: SearchOpts): Promise<RawItem[]>;
 }
 
-const ENTITIES: Record<string, string> = {
-  '&lt;': '<',
-  '&gt;': '>',
-  '&quot;': '"',
-  '&#x27;': "'",
-  '&#39;': "'",
-  '&#x2F;': '/',
-  '&#47;': '/',
-  '&#38;': '&',
-  '&nbsp;': ' ',
-  '&#160;': ' ',
-};
-const ENTITY_RE = /&(?:lt|gt|quot|nbsp|#x27|#x2F|#39|#47|#38|#160);/gi;
-
-/** Decode common entities (&amp; last), strip tags, drop stray angle brackets, collapse whitespace. */
+/**
+ * Decode entities (all numeric ones plus the common named set, see decodeEntities), then strip tags, drop stray angle
+ * brackets and collapse whitespace, so decoded `&lt;script&gt;` is neutralised like a literal tag.
+ */
 export function cleanText(s: string | null | undefined): string {
   if (!s) return '';
-  return s
-    .replace(ENTITY_RE, (m) => ENTITIES[m] ?? ENTITIES[m.toLowerCase()] ?? ENTITIES[m.replace(/x2f/i, 'x2F')] ?? m)
-    .replace(/&amp;/gi, '&')
+  return decodeEntities(s)
     .replace(/<[^>]*>/g, ' ')
     .replace(/[<>]/g, ' ')
     .replace(/\s+/g, ' ')

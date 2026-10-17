@@ -68,7 +68,7 @@ describe('deepCase', () => {
     expect(row.gateAdvisory).toBe(false);
     expect(row.sections.summary.gateFlags).toEqual([]);
     expect(row.model).toBe('claude-opus-5-5');
-    expect(row.promptVersion).toBe('case-write.v2');
+    expect(row.promptVersion).toBe('case-write.v3');
     expect(row.updatedAt).toBeInstanceOf(Date);
     expect(CaseSectionsSchema.safeParse(row.sections).success).toBe(true);
 
@@ -99,6 +99,7 @@ describe('deepCase', () => {
     const idea = await ideaWithSignal(db, run.id);
     const [sig] = await db.select().from(signals).where(eq(signals.id, idea.signalIds[0]!));
     const d = draft();
+    d.usedSignalUrls = [sig!.url];
     d.competitors.list.push({ name: 'Offline agency', url: 'not a url', pricing: 'unknown', gap: 'manual' });
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
@@ -140,6 +141,7 @@ describe('deepCase', () => {
     const ordered = [...sigs].reverse();
     const idea = await insertIdea(db, run.id, { signalIds: ordered.map((s) => s.id), status: 'advanced' });
     const d = draft();
+    d.usedSignalUrls = sigs.map((s) => s.url);
     d.competitors.list = Array.from({ length: 17 }, (_, i) => ({ name: `C${i}`, url: `https://c${i}.example/`, pricing: '$1', gap: 'g' }));
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
@@ -294,6 +296,7 @@ describe('deepCase', () => {
     const idea = await ideaWithSignal(db, run.id);
     const [sig] = await db.select().from(signals).where(eq(signals.id, idea.signalIds[0]!));
     const d = draft();
+    d.usedSignalUrls = [sig!.url];
     d.evidence.signals = [{ quote: 'Invented quote nobody said', url: 'https://made-up.example/x', sourceName: 'Nowhere' }];
 
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
@@ -302,6 +305,42 @@ describe('deepCase', () => {
     expect(row.sections.evidence.signals).toEqual([
       { quote: sig!.quote, url: sig!.url, sourceName: 'news.example' },
     ]);
+  });
+
+  it('stores only the signals the writer says it used, ignoring urls that were not provided', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const sigs = await db.insert(signals).values(['a', 'b', 'c'].map((k) => ({
+      marketId: 'ca-us', source: 'hn', url: `https://news.example/used/${k}`, title: 't', quote: `quote ${k}`, quoteHash: `used${k}`,
+    }))).returning({ id: signals.id, url: signals.url, quote: signals.quote });
+    const [banned] = await db.insert(signals).values({
+      marketId: 'ca-us', source: 'web', url: 'https://www.reddit.com/r/x/comments/1', title: 't', quote: 'banned quote', quoteHash: 'usedbanned',
+    }).returning({ id: signals.id, url: signals.url });
+    const idea = await insertIdea(db, run.id, { signalIds: [...sigs.map((s) => s.id), banned!.id], status: 'advanced' });
+    const d = draft();
+    d.usedSignalUrls = [sigs[2]!.url, 'https://invented.example/not-provided', banned!.url, sigs[0]!.url];
+    const router = recordingRouter([d]);
+    await deepCase(deps(db, router), run, { passed: [idea.id], advisory: [] });
+
+    expect(router.calls[1]!.prompt).toContain('usedSignalUrls');
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.evidence.signals.map((s) => s.url)).toEqual([sigs[0]!.url, sigs[2]!.url]);
+    expect(row.sections).not.toHaveProperty('usedSignalUrls');
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    expect(rows.filter((c) => c.section === 'signal').map((c) => c.sourceUrl).sort()).toEqual([sigs[0]!.url, sigs[2]!.url].sort());
+  });
+
+  it('stores no signals and no signal claims when the writer used none', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.usedSignalUrls = [];
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.evidence.signals).toEqual([]);
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    expect(rows.filter((c) => c.section === 'signal')).toHaveLength(0);
   });
 
   it('every email and follow-up carries all four CASL placeholders', async () => {
@@ -371,7 +410,7 @@ describe('CaseDraftSchema', () => {
   it('converts to JSON Schema for the structured-output tool (R9)', () => {
     const json = z.toJSONSchema(CaseDraftSchema) as { type: string; properties: Record<string, unknown> };
     expect(json.type).toBe('object');
-    expect(Object.keys(json.properties)).toEqual(['title', 'summary', 'evidence', 'numbers', 'competitors', 'pitch']);
+    expect(Object.keys(json.properties)).toEqual(['title', 'summary', 'evidence', 'usedSignalUrls', 'numbers', 'competitors', 'pitch']);
   });
 
   it('enforces the minimum structure', () => {

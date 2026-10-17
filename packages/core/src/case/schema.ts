@@ -89,12 +89,17 @@ export const NumberResultsSchema = z.object({
   formulas: z.array(z.string()),
 });
 
-/** What the case writer returns. `numbers.results`, `summary.gateFlags` and `evidence.signals` are not in it: code adds them. */
+/**
+ * What the case writer returns. `numbers.results`, `summary.gateFlags` and `evidence.signals` are not in it: code adds
+ * them (evidence signals from the real rows named in `usedSignalUrls`, which is not stored in the sections).
+ */
 export const CaseDraftSchema = z
   .object({
     title: nonEmpty,
     summary: z.object(summaryShape),
     evidence: EvidenceDraftSchema,
+    /** URLs of the provided signals the writer actually relied on; code keeps only real, provided signal rows. */
+    usedSignalUrls: z.array(z.string()),
     numbers: z.object({ inputs: NumberInputsSchema }),
     competitors: CompetitorsSchema,
     pitch: PitchSchema,

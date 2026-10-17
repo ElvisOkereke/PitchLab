@@ -54,6 +54,25 @@ describe('harvest', () => {
     expect(out.signalIds).toHaveLength(1);
     expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(1);
   });
+  it('decodes HTML entities in research source text and titles before extraction', async () => {
+    const db = await testDb();
+    const router = fakeRouter({
+      research: { harvest: [{ text: '', sources: [
+        { url: 'https://x.test/a', title: 'Owners&#8217; pain', citedText: 'We can&rsquo;t keep re-keying invoices by hand &#x2014; it takes hours.' },
+      ] }] },
+      structured: { extract: [{ signals: [{ url: 'https://x.test/a', title: 'Owners’ pain', quote: 'We can’t keep re-keying invoices by hand', sector: null, painType: null, isPain: true }] }] },
+    });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying' }));
+    const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
+    const extractPrompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
+    expect(extractPrompt).toContain('We can’t keep re-keying invoices by hand — it takes hours.');
+    expect(extractPrompt).toContain('Owners’ pain');
+    expect(extractPrompt).not.toContain('&rsquo;');
+    expect(out.signalIds).toHaveLength(1);
+    const [row] = await db.select().from(signals);
+    expect(row).toMatchObject({ quote: 'We can’t keep re-keying invoices by hand', title: 'Owners’ pain' });
+  });
+
   it('drops banned-domain sources and tells the researcher never to cite them', async () => {
     const db = await testDb();
     const reddit = 'https://www.reddit.com/r/smallbusiness/comments/1';

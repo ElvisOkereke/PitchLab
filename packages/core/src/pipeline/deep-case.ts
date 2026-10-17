@@ -152,8 +152,11 @@ export async function deepCase(
       // Banned-domain sources are dropped (claims, competitors) or turned into assumptions (number inputs).
       const inputs = NumberInputsSchema.parse(withoutBannedSources(draft.numbers.inputs));
       const evidenceClaims = draft.evidence.claims.filter((c) => !isBannedSource(c.sourceUrl));
+      // Signals shown are only those the writer says it relied on, matched against the rows it was given (unknown
+      // urls ignored; allSigRows is already banned-filtered), in signalIds order.
       // Only the first LINK_CLAIMS_MAX signals/competitors are stored, so every displayed link has a verification claim.
-      const sigRows = allSigRows.slice(0, LINK_CLAIMS_MAX);
+      const used = new Set(draft.usedSignalUrls.map((u) => u.trim()));
+      const sigRows = allSigRows.filter((s) => used.has(s.url)).slice(0, LINK_CLAIMS_MAX);
       const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url)).slice(0, LINK_CLAIMS_MAX);
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const sections: CaseSections = {

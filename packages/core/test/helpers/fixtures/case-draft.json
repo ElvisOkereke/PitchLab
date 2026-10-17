@@ -1,5 +1,6 @@
 {
   "title": "Lead-flow verification for web agencies",
+  "usedSignalUrls": ["https://news.example/item/1"],
   "summary": {
     "oneLiner": "Daily synthetic test leads through every client site's quote form, confirmed all the way to the inbox or CRM, sold to the agency that maintains the sites.",
     "buyer": "Small web and marketing agencies that maintain 20-100 small-business client sites on retainer. They, not the plumber, see the same broken-form failure across many sites, take the blame when leads stop, and need proof that their maintenance retainer is worth paying for.",

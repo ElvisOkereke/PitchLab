@@ -7,6 +7,7 @@ import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
 import type { RawItem } from '../tools/sources/types';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
+import { decodeEntities } from '../tools/entities';
 import { logDataCall } from '../tools/data-calls';
 import { phrasesFor } from './pain-phrases';
 import type { RunConfig, StageDeps } from './types';
@@ -119,9 +120,10 @@ ${wrapUntrusted('idea', idea)}`;
     { runId: run.id, promptVersion: researchPrompt.version },
   );
   for (const s of research.sources) {
-    const text = s.citedText ?? '';
+    const text = decodeEntities(s.citedText ?? '');
     if (!text.trim() || isBannedSource(s.url)) continue;
-    items.push(sanitizeItem({ source: 'web', url: s.url, title: s.title ?? s.url, text, publishedAt: null }));
+    // Free sources decode entities in cleanText; web-search citations get the same decoding here.
+    items.push(sanitizeItem({ source: 'web', url: s.url, title: decodeEntities(s.title ?? s.url), text, publishedAt: null }));
   }
 
   // (c) extraction
