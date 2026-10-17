@@ -192,6 +192,25 @@ describe('caseToMarkdown', () => {
     expect(md).not.toContain('Nothing — every displayed source');
   });
 
+  it('reads a legacy "<name>: <pricing>" competitor claim (before tuning-2) as that competitor\'s check', () => {
+    const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.pricing = 'Not published'; } });
+    const [a, b] = kase.sections.competitors.list;
+    const md = caseToMarkdown(kase, [
+      ...settledClaims().filter((c) => c.section !== 'competitor' && c.section !== 'competitor-pricing'),
+      claim('unsupported', { section: 'competitor', text: `${a!.name}: ${a!.pricing}`, sourceUrl: a!.url, quote: null }),
+      claim('unreachable', { section: 'competitor', text: `${b!.name}: Not published`, sourceUrl: b!.url, quote: null }),
+    ], []);
+    const old = '(old check: name + pricing)';
+    expect(md).toContain(`| ❌ unsupported ${old} | ❌ unsupported ${old} |`);
+    expect(md).toMatch(/\| Synthetic browser testing platform \|.*\| ⚠️ unreachable \(old check: name \+ pricing\) \| 🔍 not published — check \|/);
+    const section = checkSection(md);
+    expect(section).not.toContain('not checked yet');
+    expect(section).not.toContain('Generic uptime monitor');
+    expect(section).toMatch(/\*\*Competitor:\*\* Synthetic browser testing platform: Not published .*page could not be loaded/);
+    expect(section).toMatch(/\*\*Competitor pricing:\*\* Synthetic browser testing platform .*pricing not published/);
+    expect(section.match(/^- /gm)).toHaveLength(2);
+  });
+
   it('tells the owner to verify everything when the case has no claims', () => {
     const md = caseToMarkdown(caseFixture(), [], []);
     expect(md).toContain('## For you to check\n\nThis case has no checked sources — verify everything yourself.\n');

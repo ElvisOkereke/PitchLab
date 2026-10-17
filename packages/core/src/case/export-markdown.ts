@@ -103,6 +103,15 @@ type Flags = {
 // a signal by its quote, a competitor by its name, its pricing by the `competitorPricingText` deep-case stored.
 const linkKey = (url: string, text: string) => `${url}\n${text}`;
 
+/**
+ * Before tuning-2 a competitor had one claim, `"<name>: <pricing>"` (section `competitor`), checking name and pricing
+ * together. Cases written then still carry it: it stands in for the product check, and for the pricing check when the
+ * pricing quotes a figure, labelled so the owner knows which rule produced it.
+ */
+type CompetitorLike = { url: string; name: string; pricing: string };
+const legacyCompetitorKey = (x: CompetitorLike) => linkKey(x.url, `${x.name}: ${x.pricing}`);
+const OLD_CHECK = '(old check: name + pricing)';
+
 /** Worst first: on a key collision the flag never looks better than its weakest claim. */
 const SEVERITY: Record<Status, number> = { unsupported: 4, unreachable: 3, needs_review: 2, unverified: 1, verified: 0 };
 
@@ -158,11 +167,13 @@ function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[
     }
   }
   for (const x of c.sections.competitors.list) {
-    if (!flags.competitor.has(linkKey(x.url, x.name))) items.push(item('Competitor', x.name, x.url, NOT_CHECKED_REASON));
+    // A legacy claim is listed above when unsettled, like any claim; it covers the product (and a quoted price).
+    const legacy = flags.competitor.has(legacyCompetitorKey(x));
+    if (!legacy && !flags.competitor.has(linkKey(x.url, x.name))) items.push(item('Competitor', x.name, x.url, NOT_CHECKED_REASON));
     // An existing pricing claim always wins (its own status is listed above when unsettled); otherwise the predicate.
     if (flags.competitorPricing.has(linkKey(x.url, competitorPricingText(x)))) continue;
     if (!hasPriceFigure(x.pricing)) items.push(item('Competitor pricing', x.name, x.url, UNPUBLISHED_PRICE_REASON));
-    else items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
+    else if (!legacy) items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
   }
   const out = ['## For you to check', ''];
   if (claimRows.length === 0) out.push('This case has no checked sources — verify everything yourself.', ...(items.length ? [''] : []));
@@ -263,12 +274,20 @@ function numbers(c: CaseRow, flags: Flags): string[] {
 function competitors(c: CaseRow, flags: Flags): string[] {
   const { list, levels } = c.sections.competitors;
   const shown = (s: Status | undefined) => (s ? CLAIM_STATUS[s] : 'not checked');
-  const product = (x: { url: string; name: string }) => shown(flags.competitor.get(linkKey(x.url, x.name)));
+  const legacy = (x: CompetitorLike) => {
+    const s = flags.competitor.get(legacyCompetitorKey(x));
+    return s ? `${CLAIM_STATUS[s]} ${OLD_CHECK}` : undefined;
+  };
+  const product = (x: CompetitorLike) => {
+    const s = flags.competitor.get(linkKey(x.url, x.name));
+    return s ? CLAIM_STATUS[s] : legacy(x) ?? shown(undefined);
+  };
   // A stored pricing claim always decides the cell, so a checked price never shows "not published".
-  const pricing = (x: { url: string; name: string; pricing: string }) => {
+  const pricing = (x: CompetitorLike) => {
     const s = flags.competitorPricing.get(linkKey(x.url, competitorPricingText(x)));
     if (s) return CLAIM_STATUS[s];
-    return hasPriceFigure(x.pricing) ? 'not checked' : '🔍 not published — check';
+    if (!hasPriceFigure(x.pricing)) return '🔍 not published — check';
+    return legacy(x) ?? 'not checked';
   };
   return [
     '## Competitors',
