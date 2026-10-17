@@ -8,6 +8,7 @@ interface Entry {
   title?: Label;
   content?: Label;
   updated?: Label;
+  id?: Label;
 }
 
 /** `search(query)` treats `query` as a numeric app id. */
@@ -28,7 +29,7 @@ export function createAppStoreSource(opts: { countries: string[] }): SignalSourc
           if (!Number.isFinite(rating) || rating > 3) continue;
           out.push({
             source: 'appstore',
-            url: `https://apps.apple.com/${cc}/app/id${query}`,
+            url: `https://apps.apple.com/${cc}/app/id${query}#review-${e.id?.label ?? out.length}`,
             title: cleanText(e.title?.label),
             text: cleanText(e.content?.label) || cleanText(e.title?.label),
             publishedAt: toDate(e.updated?.label),

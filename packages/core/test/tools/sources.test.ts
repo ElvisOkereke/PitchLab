@@ -159,8 +159,9 @@ describe('appstore', () => {
       'https://itunes.apple.com/us/rss/customerreviews/id=555/sortby=mostrecent/json',
     ]);
     expect(items).toHaveLength(4);
-    expect(items[0].url).toBe('https://apps.apple.com/ca/app/id555');
-    expect(items[2].url).toBe('https://apps.apple.com/us/app/id555');
+    expect(items[0].url).toBe('https://apps.apple.com/ca/app/id555#review-9001');
+    expect(items[2].url).toBe('https://apps.apple.com/us/app/id555#review-9001');
+    expect(new Set(items.slice(0, 2).map((i) => i.url)).size).toBe(2);
     expect(items.map((i) => i.text)).toContain('Syncing fails and I lose hours of work');
     expect(items.some((i) => i.text === 'Love it')).toBe(false);
     expect(items[0].publishedAt).toEqual(new Date('2026-03-01T10:00:00-07:00'));
