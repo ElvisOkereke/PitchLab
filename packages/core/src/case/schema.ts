@@ -36,9 +36,12 @@ const summaryShape = {
   nextAction: z.string(),
 };
 
+const claimsSchema = z.array(z.object({ text: nonEmpty, sourceUrl: nonEmpty, quote: nonEmpty })).min(3);
+/** Evidence signals are rebuilt by code from the idea's real signal rows, so the draft only carries claims. */
+const EvidenceDraftSchema = z.object({ claims: claimsSchema });
 const EvidenceSchema = z.object({
-  signals: z.array(z.object({ quote: nonEmpty, url: nonEmpty, sourceName: z.string() })),
-  claims: z.array(z.object({ text: nonEmpty, sourceUrl: nonEmpty, quote: nonEmpty })).min(3),
+  signals: z.array(z.object({ quote: z.string(), url: z.string(), sourceName: z.string() })),
+  claims: claimsSchema,
 });
 
 const CompetitorsSchema = z.object({
@@ -46,7 +49,15 @@ const CompetitorsSchema = z.object({
   levels: z.array(z.object({ level: z.string(), whatItChecks: z.string(), limitation: z.string() })).min(2),
 });
 
-const emailSchema = z.object({ subject: z.string(), body: z.string() });
+/** CASL / CAN-SPAM (spec §11.6): sender name, mailing address, one other contact method, unsubscribe line. */
+export const CASL_PLACEHOLDERS = ['[Your name]', '[Mailing address]', '[Phone or website]', '[Unsubscribe line]'] as const;
+
+const emailSchema = z.object({
+  subject: z.string(),
+  body: z.string().refine((b) => CASL_PLACEHOLDERS.every((p) => b.includes(p)), {
+    message: `email body must contain each placeholder: ${CASL_PLACEHOLDERS.join(', ')}`,
+  }),
+});
 const PitchSchema = z.object({
   elevator: z.string(),
   emails: z.array(emailSchema).length(3),
@@ -72,12 +83,12 @@ export const NumberResultsSchema = z.object({
   formulas: z.array(z.string()),
 });
 
-/** What the case writer returns. `numbers.results` and `summary.gateFlags` are not in it: code adds them. */
+/** What the case writer returns. `numbers.results`, `summary.gateFlags` and `evidence.signals` are not in it: code adds them. */
 export const CaseDraftSchema = z
   .object({
     title: nonEmpty,
     summary: z.object(summaryShape),
-    evidence: EvidenceSchema,
+    evidence: EvidenceDraftSchema,
     numbers: z.object({ inputs: NumberInputsSchema }),
     competitors: CompetitorsSchema,
     pitch: PitchSchema,

@@ -5,29 +5,16 @@
     "buyer": "Small web and marketing agencies that maintain 20-100 small-business client sites on retainer. They, not the plumber, see the same broken-form failure across many sites, take the blame when leads stop, and need proof that their maintenance retainer is worth paying for.",
     "problem": "A contact or quote form shows its success message, but a plugin update, SMTP change or CRM integration failure means the lead never arrives. Uptime monitors and analytics still report healthy, so the failure is silent until the client notices a dry pipeline weeks later.",
     "solution": "One engine submits a tagged test lead through each client site's real form on a schedule and checks that it lands at the destination (inbox, CRM or webhook). When it does not arrive, the agency gets an alert naming the site and the broken step, and every month gets a per-client report proving the lead path worked.",
-    "price": { "amount": 8, "per": "site per month", "rationale": "Priced per monitored site so it scales with the agency's book and can be passed through on the client's maintenance invoice; well under the value of a single recovered lead." },
+    "price": {
+      "amount": 8,
+      "per": "site per month",
+      "rationale": "Priced per monitored site so it scales with the agency's book and can be passed through on the client's maintenance invoice; well under the value of a single recovered lead."
+    },
     "whyNow": "WordPress plugin churn and the move to authenticated email sending mean form delivery breaks more often, while agencies are under pressure to justify retainers with visible proof of work.",
     "whyItWins": "Uptime and browser-automation tools stop at 'the page loaded' or 'the form submitted'. This is the only level that confirms the lead reached the business, and it is sold to the aggregator who feels the pain on every client site.",
     "nextAction": "Interview five agency owners who maintain 30+ client sites, then run a free 30-day pilot on one agency's sites and show them the first silent failure it catches."
   },
   "evidence": {
-    "signals": [
-      {
-        "quote": "Client called asking why they hadn't had a single enquiry in three weeks. Form was showing the thank-you message the whole time. SMTP plugin had silently stopped sending.",
-        "url": "https://forum.agency-owners.example/t/silent-form-failures/1182",
-        "sourceName": "Agency owners forum"
-      },
-      {
-        "quote": "We manage about 60 sites and the thing that burns us most is contact forms dying after updates. Nobody notices until the client does.",
-        "url": "https://news.ycombinator.example/item?id=40112233",
-        "sourceName": "Hacker News"
-      },
-      {
-        "quote": "Analytics still counted the conversion because the thank-you page fired, but the leads never hit the CRM after the Zapier zap broke.",
-        "url": "https://webmasters.stackexchange.example/questions/14402",
-        "sourceName": "Webmasters Stack Exchange"
-      }
-    ],
     "claims": [
       {
         "text": "Small agencies commonly maintain dozens of client sites on monthly retainers.",
@@ -49,7 +36,10 @@
   "numbers": {
     "inputs": {
       "price": {
-        "amount": { "value": 8, "assumption": "Our proposed price per monitored site per month, set well below the value of one lead." },
+        "amount": {
+          "value": 8,
+          "assumption": "Our proposed price per monitored site per month, set well below the value of one lead."
+        },
         "per": "site",
         "unitsPerBuyer": {
           "value": 40,
@@ -63,7 +53,10 @@
       "problemCost": [
         {
           "label": "lost leads from broken forms",
-          "quantity": { "value": 6, "assumption": "Leads lost per silent form failure before anyone notices (roughly three weeks of enquiries for a small trades business)." },
+          "quantity": {
+            "value": 6,
+            "assumption": "Leads lost per silent form failure before anyone notices (roughly three weeks of enquiries for a small trades business)."
+          },
           "unitCost": {
             "value": 400,
             "source": {
@@ -71,10 +64,16 @@
               "quote": "For home-service businesses, the average value of a qualified inbound lead is about $400."
             }
           },
-          "perYear": { "value": 40, "assumption": "One silent failure per client site per year across the agency's 40 sites." }
+          "perYear": {
+            "value": 40,
+            "assumption": "One silent failure per client site per year across the agency's 40 sites."
+          }
         }
       ],
-      "expectedReduction": { "value": 0.5, "assumption": "Daily checks catch failures within a day, recovering about half of the leads that would otherwise be lost." },
+      "expectedReduction": {
+        "value": 0.5,
+        "assumption": "Daily checks catch failures within a day, recovering about half of the leads that would otherwise be lost."
+      },
       "reachableBuyers": {
         "value": 3000,
         "source": {
@@ -82,25 +81,66 @@
           "quote": "Our directory lists 3,000 web design agencies in Canada and the US that advertise website maintenance plans."
         }
       },
-      "captureRate": { "value": 0.01, "assumption": "1% of reachable agencies buy in year one from cold outreach." },
+      "captureRate": {
+        "value": 0.01,
+        "assumption": "1% of reachable agencies buy in year one from cold outreach."
+      },
       "deliveryCostPerBuyerMonthly": [
-        { "label": "infra+LLM", "cost": { "value": 40, "assumption": "Headless browser runs, test inboxes and LLM triage for 40 sites per month." } }
+        {
+          "label": "infra+LLM",
+          "cost": {
+            "value": 40,
+            "assumption": "Headless browser runs, test inboxes and LLM triage for 40 sites per month."
+          }
+        }
       ],
       "fixedCostsMonthly": [
-        { "label": "hosting", "cost": { "value": 30, "assumption": "One small VPS plus database for the scheduler." } }
+        {
+          "label": "hosting",
+          "cost": {
+            "value": 30,
+            "assumption": "One small VPS plus database for the scheduler."
+          }
+        }
       ],
-      "scenarios": [10, 50, 200]
+      "scenarios": [
+        10,
+        50,
+        200
+      ]
     }
   },
   "competitors": {
     "list": [
-      { "name": "Generic uptime monitor", "url": "https://uptime-tool.example/pricing", "pricing": "$15/month for 50 monitors", "gap": "Checks the page responds; never submits the form or confirms delivery." },
-      { "name": "Synthetic browser testing platform", "url": "https://synthetic-tests.example/pricing", "pricing": "From $99/month", "gap": "Can fill and submit a form, but stops at the success message and is priced and built for engineering teams, not agencies." }
+      {
+        "name": "Generic uptime monitor",
+        "url": "https://uptime-tool.example/pricing",
+        "pricing": "$15/month for 50 monitors",
+        "gap": "Checks the page responds; never submits the form or confirms delivery."
+      },
+      {
+        "name": "Synthetic browser testing platform",
+        "url": "https://synthetic-tests.example/pricing",
+        "pricing": "From $99/month",
+        "gap": "Can fill and submit a form, but stops at the success message and is priced and built for engineering teams, not agencies."
+      }
     ],
     "levels": [
-      { "level": "Uptime", "whatItChecks": "Website responds", "limitation": "Doesn't detect broken customer journeys" },
-      { "level": "Browser automation", "whatItChecks": "Form can be filled and submitted", "limitation": "May not confirm the lead was delivered" },
-      { "level": "Lead-flow verification", "whatItChecks": "Customer action produces the expected downstream result", "limitation": "Requires some knowledge of the destination" }
+      {
+        "level": "Uptime",
+        "whatItChecks": "Website responds",
+        "limitation": "Doesn't detect broken customer journeys"
+      },
+      {
+        "level": "Browser automation",
+        "whatItChecks": "Form can be filled and submitted",
+        "limitation": "May not confirm the lead was delivered"
+      },
+      {
+        "level": "Lead-flow verification",
+        "whatItChecks": "Customer action produces the expected downstream result",
+        "limitation": "Requires some knowledge of the destination"
+      }
     ]
   },
   "pitch": {
@@ -122,17 +162,23 @@
     "followUps": [
       {
         "subject": "Re: client form checks",
-        "body": "Hi [First name], just following up. If it helps, I can run one free check on your three busiest client sites and send you the result.\n\n[Your name]\n[Mailing address]\n[Unsubscribe line]"
+        "body": "Hi [First name], just following up. If it helps, I can run one free check on your three busiest client sites and send you the result.\n\n[Your name]\n[Mailing address]\n[Phone or website]\n[Unsubscribe line]"
       },
       {
         "subject": "Closing the loop",
-        "body": "Hi [First name], I won't keep emailing. If silent form failures ever become a headache, reply and I'll set up a free pilot.\n\n[Your name]\n[Mailing address]\n[Unsubscribe line]"
+        "body": "Hi [First name], I won't keep emailing. If silent form failures ever become a headache, reply and I'll set up a free pilot.\n\n[Your name]\n[Mailing address]\n[Phone or website]\n[Unsubscribe line]"
       }
     ],
     "callScript": "Open: ask how many client sites they maintain and how they find out when a form stops delivering. Probe: last time a client complained about missing enquiries, how long it took to notice. Offer: free 30-day pilot on their sites with a daily delivery test and an end-of-month report. Close: book the pilot setup call.",
     "objections": [
-      { "objection": "We already have uptime monitoring.", "response": "Uptime confirms the page loads; this confirms the lead arrives. They catch different failures." },
-      { "objection": "Our forms rarely break.", "response": "The pilot is free, so you lose nothing if it finds nothing, and you get a report to show clients either way." }
+      {
+        "objection": "We already have uptime monitoring.",
+        "response": "Uptime confirms the page loads; this confirms the lead arrives. They catch different failures."
+      },
+      {
+        "objection": "Our forms rarely break.",
+        "response": "The pilot is free, so you lose nothing if it finds nothing, and you get a report to show clients either way."
+      }
     ],
     "pricingCopy": "$8 per monitored site per month. Daily end-to-end lead tests, instant alerts when a form stops delivering, and a monthly per-client proof report. No setup fee, cancel anytime."
   }

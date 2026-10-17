@@ -6,13 +6,12 @@ import { CaseDraftSchema, type CaseSections } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
-import { wrapUntrusted } from '../llm/untrusted';
+import { capField, wrapUntrusted } from '../llm/untrusted';
 import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
 const WRITE_MAX_TOKENS = 16000;
 
-const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
 const cut = (s: string, n: number) => s.slice(0, n).replace(/-+$/, '');
 
 /** Lowercase kebab-case of a title, at most 60 chars, never ending in '-'. */
@@ -32,6 +31,15 @@ async function uniqueSlug(db: Db, base: string): Promise<string> {
 }
 
 const urlList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((u): u is string => typeof u === 'string') : []);
+
+/** A readable source name for a signal: its hostname without "www.", else the harvest source id. */
+function sourceName(url: string, fallback: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, '') || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export async function deepCase(
   { db, router, log }: StageDeps,
@@ -67,15 +75,20 @@ export async function deepCase(
     for (const idea of ordered) {
       const wrappedIdea = wrapUntrusted(
         'idea',
-        `Title: ${idea.title}\nOne-liner: ${idea.oneLiner}\nBuyer: ${idea.buyer}\nProblem: ${idea.problem}\nSolution: ${idea.solution}`,
+        `Title: ${capField(idea.title, 200)}\nOne-liner: ${capField(idea.oneLiner, 2000)}\nBuyer: ${capField(idea.buyer, 2000)}\n` +
+          `Problem: ${capField(idea.problem, 2000)}\nSolution: ${capField(idea.solution, 2000)}`,
       );
 
-      const sigRows = idea.signalIds.length
+      const sigFound = idea.signalIds.length
         ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
         : [];
+      const sigById = new Map(sigFound.map((s) => [s.id, s]));
+      const sigRows = idea.signalIds.flatMap((id) => sigById.get(id) ?? []);
       const wrappedSignals = wrapUntrusted(
         'signals',
-        sigRows.map((s) => `- source: ${s.source}\n  url: ${s.url}\n  quote: ${oneLine(s.quote)}`).join('\n') || '(none)',
+        sigRows
+          .map((s) => `- source: ${capField(s.source, 100)}\n  url: ${capField(s.url, 2000)}\n  quote: ${capField(s.quote, 1000)}`)
+          .join('\n') || '(none)',
       );
 
       // Latest verdict per check (a resumed gate may have written more than one).
@@ -84,7 +97,7 @@ export async function deepCase(
       const wrappedGate = wrapUntrusted(
         'gate-findings',
         [...latest.values()]
-          .map((v) => `- ${v.check} (${v.pass ? 'pass' : 'fail'}): ${oneLine(v.reasoning)}\n  urls: ${urlList(v.sources).join(' ') || '(none)'}`)
+          .map((v) => `- ${v.check} (${v.pass ? 'pass' : 'fail'}): ${capField(v.reasoning, 1000)}\n  urls: ${urlList(v.sources).join(' ') || '(none)'}`)
           .join('\n') || '(no gate findings recorded)',
       );
 
@@ -100,7 +113,7 @@ export async function deepCase(
       );
 
       const sourcesText = research.sources
-        .map((s) => `- ${s.url}${s.title ? ` (${oneLine(s.title)})` : ''}${s.citedText ? `\n  cited: "${oneLine(s.citedText)}"` : ''}`)
+        .map((s) => `- ${capField(s.url, 2000)}${s.title ? ` (${capField(s.title, 300)})` : ''}${s.citedText ? `\n  cited: "${capField(s.citedText, 2000)}"` : ''}`)
         .join('\n');
       const draft = await router.structured(
         'case',
@@ -122,11 +135,15 @@ export async function deepCase(
       );
 
       // Arithmetic is done by code: validate the inputs, then compute. Any model-supplied results are discarded.
+      // Evidence signals come from the real signal rows used for this idea, never from the model.
       const inputs = NumberInputsSchema.parse(draft.numbers.inputs);
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const sections: CaseSections = {
         summary: { ...draft.summary, gateFlags },
-        evidence: draft.evidence,
+        evidence: {
+          signals: sigRows.map((s) => ({ quote: s.quote, url: s.url, sourceName: sourceName(s.url, s.source) })),
+          claims: draft.evidence.claims,
+        },
         numbers: { inputs, results: computeNumbers(inputs) },
         competitors: draft.competitors,
         pitch: draft.pitch,
