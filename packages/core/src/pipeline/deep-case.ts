@@ -97,10 +97,10 @@ export async function deepCase(
         ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
         : [];
       const sigById = new Map(sigFound.map((s) => [s.id, s]));
-      const sigRows = idea.signalIds.flatMap((id) => sigById.get(id) ?? []).filter((s) => !isBannedSource(s.url));
+      const allSigRows = idea.signalIds.flatMap((id) => sigById.get(id) ?? []).filter((s) => !isBannedSource(s.url));
       const wrappedSignals = wrapUntrusted(
         'signals',
-        sigRows
+        allSigRows
           .map((s) => `- source: ${capField(s.source, 100)}\n  url: ${capField(s.url, 2000)}\n  quote: ${capField(s.quote, 1000)}`)
           .join('\n') || '(none)',
       );
@@ -152,7 +152,9 @@ export async function deepCase(
       // Banned-domain sources are dropped (claims, competitors) or turned into assumptions (number inputs).
       const inputs = NumberInputsSchema.parse(withoutBannedSources(draft.numbers.inputs));
       const evidenceClaims = draft.evidence.claims.filter((c) => !isBannedSource(c.sourceUrl));
-      const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url));
+      // Only the first LINK_CLAIMS_MAX signals/competitors are stored, so every displayed link has a verification claim.
+      const sigRows = allSigRows.slice(0, LINK_CLAIMS_MAX);
+      const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url)).slice(0, LINK_CLAIMS_MAX);
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const sections: CaseSections = {
         summary: { ...draft.summary, gateFlags },
@@ -172,11 +174,11 @@ export async function deepCase(
             ? [{ caseId, section: 'numbers', text: `${label}: ${sourced.value}`, sourceUrl: sourced.source.url, quote: sourced.source.quote }]
             : [],
         ),
-        // Displayed links are verified too: the first LINK_CLAIMS_MAX signals (signalIds order) and competitors
-        // (all http(s): isBannedSource fails closed). Any beyond the cap render as "not checked".
-        ...sigRows.slice(0, LINK_CLAIMS_MAX)
+        // Displayed links are verified too: sigRows and competitorList are already capped at LINK_CLAIMS_MAX
+        // (all http(s): isBannedSource fails closed). Legacy cases may still render a link as "not checked".
+        ...sigRows
           .map((s) => ({ caseId, section: 'signal', text: capField(s.quote, 1000), sourceUrl: s.url, quote: s.quote })),
-        ...competitorList.slice(0, LINK_CLAIMS_MAX)
+        ...competitorList
           .map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
       ];
 
@@ -187,7 +189,8 @@ export async function deepCase(
           ideaId: idea.id, slug, title: draft.title, stage: 'new', sections,
           gateAdvisory: gateFlags.length > 0, model, promptVersion: writePrompt.version,
         }).returning({ id: cases.id });
-        await tx.insert(claims).values(claimRows(row!.id));
+        const rows = claimRows(row!.id);
+        if (rows.length) await tx.insert(claims).values(rows);
         return row!.id;
       });
       caseByIdea.set(idea.id, caseId);

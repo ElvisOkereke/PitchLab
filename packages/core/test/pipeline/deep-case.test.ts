@@ -127,7 +127,7 @@ describe('deepCase', () => {
     expect(rows.every((c) => c.verified === 'unverified')).toBe(true);
   });
 
-  it('caps link-verification claims at 15 signals (signalIds order) and 15 competitors per case', async () => {
+  it('stores and verifies at most 15 signals (signalIds order) and 15 competitors per case', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const sigs = await db.insert(signals).values(Array.from({ length: 17 }, (_, i) => ({
@@ -140,13 +140,33 @@ describe('deepCase', () => {
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
     const row = await caseFor(db, idea.id);
-    expect(row.sections.evidence.signals).toHaveLength(17);
-    expect(row.sections.competitors.list).toHaveLength(17);
+    expect(row.sections.evidence.signals).toHaveLength(15);
+    expect(row.sections.competitors.list).toHaveLength(15);
+    expect(row.sections.evidence.signals.map((s) => s.url)).toEqual(ordered.slice(0, 15).map((s) => s.url));
     const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
     expect(rows.filter((c) => c.section === 'signal').map((c) => c.sourceUrl).sort())
       .toEqual(ordered.slice(0, 15).map((s) => s.url).sort());
     expect(rows.filter((c) => c.section === 'competitor').map((c) => c.text).sort())
       .toEqual(d.competitors.list.slice(0, 15).map((c: { name: string }) => `${c.name}: $1`).sort());
+  });
+
+  it('stores a case with zero claims when everything is banned or unparseable', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { signalIds: [], status: 'advanced' });
+    const d = draft();
+    for (const c of d.evidence.claims) c.sourceUrl = 'https://www.reddit.com/r/x/1';
+    d.competitors.list = d.competitors.list.map((c: Record<string, string>) => ({ ...c, url: 'not a url' }));
+    const ban = (o: any): void => {
+      if (!o || typeof o !== 'object') return;
+      if (o.source && typeof o.source.url === 'string') o.source.url = 'https://www.linkedin.com/x';
+      Object.values(o).forEach(ban);
+    };
+    ban(d.numbers.inputs);
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(await db.select().from(claims).where(eq(claims.caseId, row.id))).toHaveLength(0);
+    expect(row.sections.competitors.list).toHaveLength(0);
   });
 
   it('drops banned-domain claims and competitors, and turns banned number sources into assumptions', async () => {
