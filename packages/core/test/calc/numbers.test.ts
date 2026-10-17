@@ -23,6 +23,12 @@ describe('computeNumbers', () => {
     expect(r.formulas.some(f => f.includes('$3,840'))).toBe(true);
     expect(r.formulas).toContain('Annual price = $8 × 40 × 12 = $3,840');
   });
+  it('shows small factors (capture rate, reduction) in formulas without rounding them to 0', () => {
+    const { formulas, market } = computeNumbers({ ...leadFlow, captureRate: s(0.003), expectedReduction: s(0.125) });
+    expect(market.year1Revenue).toBe(34560);
+    expect(formulas).toContain('Year 1 revenue = $11,520,000 × 0.003 = $34,560');
+    expect(formulas).toContain('Annual savings = $96,000 × 0.125 = $12,000');
+  });
   it('breakeven is null when price does not cover delivery', () => {
     const r = computeNumbers({ ...leadFlow, deliveryCostPerBuyerMonthly: [{ label: 'x', cost: s(400) }] });
     expect(r.breakevenBuyers).toBeNull(); expect(r.breakevenReason).toBe('price does not cover delivery cost');

@@ -32,7 +32,11 @@ const usd = (x: number) => {
     maximumFractionDigits: whole ? 0 : 2,
   });
 };
-const plain = (x: number) => String(round2(x));
+/** Factors in formula lines: 2 decimals, but values below 1 keep 4 significant digits (a 0.003 capture rate must not show as 0). */
+const plain = (x: number) => {
+  const v = fin(x);
+  return String(v !== 0 && Math.abs(v) < 1 ? Number(v.toPrecision(4)) : round2(v));
+};
 
 export function computeNumbers(i: NumberInputs): NumberResults {
   const amount = fin(i.price.amount.value);
