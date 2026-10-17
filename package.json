@@ -1,0 +1,11 @@
+{
+  "name": "business-case-gen",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "test": "npm test -w packages/core",
+    "gen": "npm run gen -w packages/core --",
+    "db:migrate": "npm run db:migrate -w packages/core"
+  }
+}
