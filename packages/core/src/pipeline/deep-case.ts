@@ -1,12 +1,13 @@
 import { asc, eq, inArray } from 'drizzle-orm';
 import { listInputs } from '../calc/inputs';
 import { computeNumbers } from '../calc/numbers';
-import { NumberInputsSchema } from '../calc/schema';
+import { NumberInputsSchema, type NumberInputs } from '../calc/schema';
 import { CaseDraftSchema, type CaseSections } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { isBannedSource } from '../tools/banned-sources';
 import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
@@ -28,6 +29,20 @@ async function uniqueSlug(db: Db, base: string): Promise<string> {
     const [hit] = await db.select({ id: cases.id }).from(cases).where(eq(cases.slug, candidate)).limit(1);
     if (!hit) return candidate;
   }
+}
+
+const BANNED_SOURCE_ASSUMPTION = 'source removed: banned domain';
+
+/** A copy of the inputs where every banned-domain source is replaced by an assumption (the value is kept). */
+function withoutBannedSources(raw: NumberInputs): NumberInputs {
+  const copy = structuredClone(raw);
+  for (const { sourced } of listInputs(copy)) {
+    if (sourced.source && isBannedSource(sourced.source.url)) {
+      delete sourced.source;
+      sourced.assumption = BANNED_SOURCE_ASSUMPTION;
+    }
+  }
+  return copy;
 }
 
 const urlList = (v: unknown): string[] => (Array.isArray(v) ? v.filter((u): u is string => typeof u === 'string') : []);
@@ -83,7 +98,7 @@ export async function deepCase(
         ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
         : [];
       const sigById = new Map(sigFound.map((s) => [s.id, s]));
-      const sigRows = idea.signalIds.flatMap((id) => sigById.get(id) ?? []);
+      const sigRows = idea.signalIds.flatMap((id) => sigById.get(id) ?? []).filter((s) => !isBannedSource(s.url));
       const wrappedSignals = wrapUntrusted(
         'signals',
         sigRows
@@ -136,21 +151,24 @@ export async function deepCase(
 
       // Arithmetic is done by code: validate the inputs, then compute. Any model-supplied results are discarded.
       // Evidence signals come from the real signal rows used for this idea, never from the model.
-      const inputs = NumberInputsSchema.parse(draft.numbers.inputs);
+      // Banned-domain sources are dropped (claims, competitors) or turned into assumptions (number inputs).
+      const inputs = NumberInputsSchema.parse(withoutBannedSources(draft.numbers.inputs));
+      const evidenceClaims = draft.evidence.claims.filter((c) => !isBannedSource(c.sourceUrl));
+      const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url));
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const sections: CaseSections = {
         summary: { ...draft.summary, gateFlags },
         evidence: {
           signals: sigRows.map((s) => ({ quote: s.quote, url: s.url, sourceName: sourceName(s.url, s.source) })),
-          claims: draft.evidence.claims,
+          claims: evidenceClaims,
         },
         numbers: { inputs, results: computeNumbers(inputs) },
-        competitors: draft.competitors,
+        competitors: { ...draft.competitors, list: competitorList },
         pitch: draft.pitch,
       };
 
       const claimRows = (caseId: string): (typeof claims.$inferInsert)[] => [
-        ...draft.evidence.claims.map((c) => ({ caseId, section: 'evidence', text: c.text, sourceUrl: c.sourceUrl, quote: c.quote })),
+        ...evidenceClaims.map((c) => ({ caseId, section: 'evidence', text: c.text, sourceUrl: c.sourceUrl, quote: c.quote })),
         ...listInputs(inputs).flatMap(({ label, sourced }) =>
           sourced.source
             ? [{ caseId, section: 'numbers', text: `${label}: ${sourced.value}`, sourceUrl: sourced.source.url, quote: sourced.source.quote }]

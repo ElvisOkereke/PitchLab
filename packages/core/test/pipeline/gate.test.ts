@@ -64,6 +64,17 @@ describe('gate', () => {
     expect((await getIdea(db, idea.id)).status).toBe('advanced');
   });
 
+  it('tells the competitor researcher never to cite banned domains', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls.find((c) => c.kind === 'research')!.prompt;
+    expect(prompt).toContain('capterra.com');
+    expect(prompt).toContain('g2.com');
+  });
+
   it('propagates StructuredOutputError when the judge omits a check', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

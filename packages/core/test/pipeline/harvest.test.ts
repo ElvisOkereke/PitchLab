@@ -53,6 +53,42 @@ describe('harvest', () => {
     expect(out.signalIds).toHaveLength(1);
     expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(1);
   });
+  it('drops banned-domain sources and tells the researcher never to cite them', async () => {
+    const db = await testDb();
+    const reddit = 'https://www.reddit.com/r/smallbusiness/comments/1';
+    const router = fakeRouter({
+      research: { harvest: [{ text: '', sources: [
+        { url: reddit, title: 'R', citedText: 'We lose hours every week re-keying invoices by hand.' },
+        { url: 'https://x.test/a', title: 'A', citedText: 'We lose hours every week re-keying invoices by hand.' },
+      ] }] },
+      structured: { extract: [{ signals: [
+        { url: reddit, title: 'R', quote: 'lose hours every week re-keying invoices', sector: null, painType: null, isPain: true },
+        { url: 'https://x.test/a', title: 'A', quote: 'lose hours every week re-keying invoices', sector: null, painType: null, isPain: true },
+      ] }] },
+    });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying' }));
+    const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
+    const researchPrompt = router.calls.find((c) => c.kind === 'research')!.prompt;
+    expect(researchPrompt).toContain('reddit.com');
+    expect(researchPrompt).toContain('trustpilot.com');
+    expect(router.calls.find((c) => c.kind === 'structured')!.prompt).not.toContain('reddit.com');
+    expect(out.signalIds).toHaveLength(1);
+    expect((await db.select().from(signals)).map((s) => s.url)).toEqual(['https://x.test/a']);
+  });
+
+  it('drops banned-domain items from free sources', async () => {
+    const db = await testDb();
+    const src: SignalSource = {
+      id: 'hn',
+      search: async () => [{ source: 'hn', url: 'https://www.linkedin.com/posts/x', title: 'T', text: 'Our contact form silently stopped sending email.', publishedAt: null }],
+    };
+    const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: {} });
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const out = await harvest({ db, router, sources: [src], fetchPage, log: () => {} }, run);
+    expect(out.signalIds).toEqual([]);
+    expect(router.calls.filter((c) => c.kind === 'structured')).toHaveLength(0);
+  });
+
   it('delimits and sanitises untrusted item text in the extract prompt', async () => {
     const db = await testDb();
     const long = 'a'.repeat(5000);

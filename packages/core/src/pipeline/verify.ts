@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { claims } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { isBannedSource } from '../tools/banned-sources';
 import type { PageResult } from '../tools/fetch-page';
 import type { RunConfig, StageDeps } from './types';
 
@@ -69,6 +70,12 @@ export async function verify(
   for (const claim of rows) {
     if (!claim.sourceUrl?.trim()) {
       tally.skipped++;
+      continue;
+    }
+    if (isBannedSource(claim.sourceUrl)) {
+      // A banned source never supports a claim: no fetch, no judge.
+      tally.unsupported++;
+      await db.update(claims).set({ verified: 'unsupported', confidence: null, checkedAt: new Date() }).where(eq(claims.id, claim.id));
       continue;
     }
     const page = await getPage(claim.sourceUrl);

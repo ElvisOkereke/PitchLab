@@ -6,6 +6,7 @@ import { loadPrompt } from '../llm/prompts';
 import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
 import type { RawItem } from '../tools/sources/types';
+import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { logDataCall } from '../tools/data-calls';
 import type { RunConfig, StageDeps } from './types';
 
@@ -100,7 +101,7 @@ ${wrapUntrusted('idea', idea)}`;
       for (const q of queries) {
         const found = await source.search(q, { limit: 10 });
         await logDataCall(db, { runId: run.id, provider: source.id, endpoint: q, costUsd: 0, ok: true });
-        items.push(...found.map(sanitizeItem));
+        items.push(...found.filter((it) => !isBannedSource(it.url)).map(sanitizeItem));
       }
     }
   }
@@ -110,12 +111,12 @@ ${wrapUntrusted('idea', idea)}`;
   const maxSearches = cfg.seedType === 'idea' ? 2 * cfg.maxSearchesPerCall : cfg.maxSearchesPerCall;
   const research = await router.research(
     'harvest',
-    { system: RESEARCH_SYSTEM, prompt: researchPrompt.render({ countries, focus }), maxSearches },
+    { system: RESEARCH_SYSTEM, prompt: researchPrompt.render({ countries, focus, bannedDomains: BANNED_DOMAINS.join(', ') }), maxSearches },
     { runId: run.id, promptVersion: researchPrompt.version },
   );
   for (const s of research.sources) {
     const text = s.citedText ?? '';
-    if (!text.trim()) continue;
+    if (!text.trim() || isBannedSource(s.url)) continue;
     items.push(sanitizeItem({ source: 'web', url: s.url, title: s.title ?? s.url, text, publishedAt: null }));
   }
 

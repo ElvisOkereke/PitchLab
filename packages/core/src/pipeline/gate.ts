@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { gateVerdicts, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { BANNED_DOMAINS } from '../tools/banned-sources';
 import type { RunConfig, StageDeps } from './types';
 
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
@@ -67,7 +68,7 @@ export async function gate(
     const research = await router.research(
       'competitors',
       {
-        prompt: competitorsPrompt.render({ idea: wrappedIdea }),
+        prompt: competitorsPrompt.render({ idea: wrappedIdea, bannedDomains: BANNED_DOMAINS.join(', ') }),
         maxSearches: run.config.maxSearchesPerCall,
       },
       { runId: run.id, promptVersion: competitorsPrompt.version },

@@ -117,6 +117,25 @@ describe('deepCase', () => {
     expect(rows.every((c) => c.verified === 'unverified')).toBe(true);
   });
 
+  it('drops banned-domain claims and competitors, and turns banned number sources into assumptions', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.evidence.claims[0].sourceUrl = 'https://www.reddit.com/r/webdev/comments/1';
+    d.competitors.list[0].url = 'https://www.g2.com/products/uptime/reviews';
+    d.numbers.inputs.reachableBuyers.source.url = 'https://www.linkedin.com/company/x';
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.evidence.claims.map((c) => c.sourceUrl)).toEqual(d.evidence.claims.slice(1).map((c: { sourceUrl: string }) => c.sourceUrl));
+    expect(row.sections.competitors.list.map((c) => c.name)).toEqual([d.competitors.list[1].name]);
+    expect(row.sections.numbers.inputs.reachableBuyers).toEqual({ value: 3000, assumption: 'source removed: banned domain' });
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    expect(rows.some((c) => /reddit|g2\.com|linkedin/.test(c.sourceUrl))).toBe(false);
+    expect(rows.some((c) => c.text.startsWith('reachableBuyers'))).toBe(false);
+  });
+
   it('flags an advisory idea with its failed gate checks', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea' }));

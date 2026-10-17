@@ -79,6 +79,19 @@ describe('verify', () => {
     expect(row!.verified).toBe('unverified');
   });
 
+  it('marks a banned-domain claim unsupported without fetching or judging', async () => {
+    const { db, run, kase } = await setup();
+    const [a] = await mk(db, kase.id, [{ text: 'Customers hate it', sourceUrl: 'https://uk.trustpilot.com/review/acme.com', quote: 'one two three four five six' }]);
+    const fetchPage = vi.fn(async () => page('one two three four five six'));
+    const router = fakeRouter({});
+    await verify({ db, router, fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    expect(fetchPage).not.toHaveBeenCalled();
+    expect(router.calls).toHaveLength(0);
+    const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+    expect(row!.verified).toBe('unsupported');
+    expect(row!.checkedAt).not.toBeNull();
+  });
+
   async function judged(quote: string, pageText: string, verdict: { supported: boolean; confidence: number }) {
     const { db, run, kase } = await setup();
     const [a] = await mk(db, kase.id, [{ text: 'claim text', sourceUrl: 'https://a.com', quote }]);
