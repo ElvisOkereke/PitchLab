@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { buildAnthropicParams, mapAnthropicMessage } from '../../src/llm/anthropic';
+import {
+  buildAnthropicParams, createAnthropicAdapter, isForcedToolChoiceRejection, mapAnthropicMessage,
+} from '../../src/llm/anthropic';
+import type { AdapterRequest } from '../../src/llm/types';
 
 const fixture = JSON.parse(
   readFileSync(new URL('../helpers/fixtures/anthropic-websearch.json', import.meta.url), 'utf8'),
@@ -53,65 +56,120 @@ describe('mapAnthropicMessage', () => {
   });
 });
 
-describe('buildAnthropicParams', () => {
-  const schema = { type: 'object', properties: { pass: { type: 'boolean' } }, required: ['pass'] };
+const schema = { type: 'object', properties: { pass: { type: 'boolean' } }, required: ['pass'] };
+const structuredReq = (model: string, extra: Partial<AdapterRequest> = {}): AdapterRequest => ({
+  model, system: 'You are a judge.', messages: [{ role: 'user', content: 'Judge it.' }], maxTokens: 8000,
+  jsonSchema: { name: 'verdict', schema }, ...extra,
+});
 
-  // Live run 2026-10-17: claude-opus-5-5 and claude-sonnet-5-5 return 400
-  // 'tool_choice: type "tool" and "any" are not supported for this model.'
-  it('never forces tool_choice for structured output; uses auto with one call and names the tool in the system prompt', () => {
-    const params = buildAnthropicParams({
-      model: 'claude-opus-5-5',
-      system: 'You are a judge.',
-      messages: [{ role: 'user', content: 'Judge it.' }],
-      maxTokens: 8000,
-      jsonSchema: { name: 'verdict', schema },
-    });
-    expect(params.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+describe('buildAnthropicParams', () => {
+  it('forces the schema tool when forceTool is set, with no extra instruction', () => {
+    const params = buildAnthropicParams(structuredReq('claude-haiku-5-5'), { forceTool: true });
+    expect(params.tool_choice).toEqual({ type: 'tool', name: 'verdict' });
     expect(params.tools).toEqual([expect.objectContaining({ name: 'verdict', input_schema: schema })]);
-    expect(params.system).toContain('You are a judge.');
-    expect(params.system).toContain('`verdict` tool');
+    expect(params.system).toBe('You are a judge.');
   });
 
-  it('adds the tool instruction as the system prompt when none was given', () => {
-    const params = buildAnthropicParams({
-      model: 'claude-haiku-5-5',
-      messages: [{ role: 'user', content: 'Judge it.' }],
-      maxTokens: 8000,
-      jsonSchema: { name: 'verdict', schema },
-    });
+  it('without forceTool uses auto with a single call and names the tool in the system prompt', () => {
+    const params = buildAnthropicParams(structuredReq('claude-opus-5-5'), { forceTool: false });
+    expect(params.tool_choice).toEqual({ type: 'auto', disable_parallel_tool_use: true });
+    expect(params.system).toContain('You are a judge.');
     expect(params.system).toContain('`verdict` tool');
+    const noSystem = buildAnthropicParams(structuredReq('claude-opus-5-5', { system: undefined }), { forceTool: false });
+    expect(noSystem.system).toContain('`verdict` tool');
+  });
+
+  it('re-asserts the tool instruction in the latest user message on a re-ask (auto mode only)', () => {
+    const messages: AdapterRequest['messages'] = [
+      { role: 'user', content: 'Long stable prompt' },
+      { role: 'assistant', content: '{}' },
+      { role: 'user', content: 'Your output was invalid' },
+    ];
+    const auto = buildAnthropicParams(structuredReq('claude-opus-5-5', { messages }), { forceTool: false });
+    expect(auto.messages[2]!.content).toContain('Your output was invalid');
+    expect(auto.messages[2]!.content).toContain('`verdict` tool');
+    const forced = buildAnthropicParams(structuredReq('claude-haiku-5-5', { messages }), { forceTool: true });
+    expect(forced.messages[2]).toEqual({ role: 'user', content: 'Your output was invalid' });
   });
 
   // Live run 2026-10-17: Fuelix returns 400 "Model 'claude-opus-5-5' requires a cache_control breakpoint
   // on prompts of 1024 tokens or more."
-  it('puts a cache_control breakpoint on the first user message and leaves later messages as plain text', () => {
-    const params = buildAnthropicParams({
-      model: 'claude-opus-5-5',
-      messages: [
-        { role: 'user', content: 'Long stable prompt' },
-        { role: 'assistant', content: '{}' },
-        { role: 'user', content: 'Your output was invalid' },
-      ],
-      maxTokens: 8000,
-      jsonSchema: { name: 'verdict', schema },
-    });
+  it('puts a cache_control breakpoint on the first user message only', () => {
+    const params = buildAnthropicParams(structuredReq('claude-opus-5-5', {
+      messages: [{ role: 'user', content: 'Long stable prompt' }, { role: 'assistant', content: '{}' }],
+    }), { forceTool: false });
     expect(params.messages[0]).toEqual({
       role: 'user',
       content: [{ type: 'text', text: 'Long stable prompt', cache_control: { type: 'ephemeral' } }],
     });
     expect(params.messages[1]).toEqual({ role: 'assistant', content: '{}' });
-    expect(params.messages[2]).toEqual({ role: 'user', content: 'Your output was invalid' });
   });
 
-  it('leaves plain and research requests without tool_choice', () => {
-    const plain = buildAnthropicParams({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 });
+  it('leaves plain and research requests without tool_choice or instruction', () => {
+    const plain = buildAnthropicParams({ model: 'claude-opus-5-5', messages: [{ role: 'user', content: 'hi' }], maxTokens: 100 }, { forceTool: false });
     expect(plain.tool_choice).toBeUndefined();
     expect(plain.tools).toBeUndefined();
     expect(plain.system).toBeUndefined();
     const research = buildAnthropicParams({
       model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'find' }], maxTokens: 100, webSearch: { maxUses: 2 },
-    });
+    }, { forceTool: false });
     expect(research.tool_choice).toBeUndefined();
     expect(research.tools).toEqual([expect.objectContaining({ name: 'web_search', max_uses: 2 })]);
   });
+
+  it('refuses a request that carries both jsonSchema and webSearch', () => {
+    expect(() => buildAnthropicParams(structuredReq('claude-haiku-5-5', { webSearch: { maxUses: 1 } }), { forceTool: true }))
+      .toThrow(/both jsonSchema and webSearch/);
+  });
 });
+
+describe('createAnthropicAdapter tool_choice fallback', () => {
+  // Error text observed on the live run (claude-opus-5-5), delivered as an SSE error event.
+  const rejection = () => new Error(
+    '{"type":"error","error":{"message":"Error code: 400 - {\'type\': \'error\', \'error\': {\'type\': \'invalid_request_error\', ' +
+      '\'message\': \'tool_choice: type \\"tool\\" and \\"any\\" are not supported for this model.\'}}","type":"anthropic.BadRequestError"}}',
+  );
+  const toolReply = {
+    content: [{ type: 'tool_use', id: 't1', name: 'verdict', input: { pass: true } }],
+    usage: { input_tokens: 1, output_tokens: 1, server_tool_use: null },
+  };
+
+  it('recognises the forced tool_choice rejection and nothing else', () => {
+    expect(isForcedToolChoiceRejection(rejection())).toBe(true);
+    expect(isForcedToolChoiceRejection(new Error('400 {"error":{"message":"max_tokens: too large"}}'))).toBe(false);
+    expect(isForcedToolChoiceRejection('tool_choice not supported')).toBe(false);
+  });
+
+  it('on the rejection retries once with auto, then goes straight to auto for that model', async () => {
+    const send = vi.fn()
+      .mockRejectedValueOnce(rejection())
+      .mockResolvedValue(toolReply);
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
+
+    expect((await adapter.complete(structuredReq('claude-new-model'))).json).toEqual({ pass: true });
+    expect(send.mock.calls.map((c) => c[0].tool_choice.type)).toEqual(['tool', 'auto']);
+
+    await adapter.complete(structuredReq('claude-new-model'));
+    expect(send.mock.calls.map((c) => c[0].tool_choice.type)).toEqual(['tool', 'auto', 'auto']);
+
+    // Other models are unaffected and still forced.
+    await adapter.complete(structuredReq('claude-haiku-5-5'));
+    expect(send.mock.calls[3]![0].tool_choice).toEqual({ type: 'tool', name: 'verdict' });
+  });
+
+  it('uses auto from the start for models known to reject forced tool_choice', async () => {
+    const send = vi.fn().mockResolvedValue(toolReply);
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
+    await adapter.complete(structuredReq('claude-opus-5-5'));
+    await adapter.complete(structuredReq('claude-sonnet-5-5'));
+    expect(send.mock.calls.map((c) => c[0].tool_choice.type)).toEqual(['auto', 'auto']);
+  });
+
+  it('does not fall back on other errors', async () => {
+    const send = vi.fn().mockRejectedValue(new Error('403 forbidden'));
+    const adapter = createAnthropicAdapter({ baseURL: 'x', key: 'k', send });
+    await expect(adapter.complete(structuredReq('claude-haiku-5-5'))).rejects.toThrow('403 forbidden');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+

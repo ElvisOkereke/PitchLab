@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { NO_FORCED_TOOL_CHOICE } from '../config/models';
 import type { AdapterRequest, AdapterResponse, ProviderAdapter, Source } from './types';
 
 type MappableMessage = Pick<Anthropic.Message, 'content' | 'usage'>;
@@ -48,19 +49,38 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
   };
 }
 
+/** True for the API error a model returns when it does not support forced tool_choice (`tool`/`any`). */
+export function isForcedToolChoiceRejection(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : '';
+  return /tool_choice/.test(msg) && /not supported/.test(msg);
+}
+
 /**
- * Build Messages API params. Structured output uses a single tool with `tool_choice: auto` plus a system
- * instruction naming it: claude-opus-5-5 / claude-sonnet-5-5 reject forced `tool`/`any` tool_choice (400).
- * A reply without the tool call is caught by the router's re-ask loop.
+ * Build Messages API params. Structured output uses one tool, forced via `tool_choice: tool` when
+ * `forceTool` is set; otherwise `tool_choice: auto` (single call) plus an instruction naming the tool in
+ * the system prompt and, on re-asks, in the latest user message. A reply without the tool call is caught
+ * by the router's re-ask loop.
  * The first user message carries a cache_control breakpoint: Fuelix rejects claude-opus-5-5 prompts of
  * 1024+ tokens without one, and it lets re-asks reuse the cached tools + system + prompt prefix.
  */
-export function buildAnthropicParams(r: AdapterRequest): Anthropic.MessageCreateParamsNonStreaming {
+export function buildAnthropicParams(
+  r: AdapterRequest,
+  { forceTool }: { forceTool: boolean },
+): Anthropic.MessageCreateParamsNonStreaming {
+  if (r.jsonSchema && r.webSearch) throw new Error('anthropic adapter: a request cannot use both jsonSchema and webSearch');
   const tools: Anthropic.ToolUnion[] = [];
   let system = r.system;
-  const messages: Anthropic.MessageParam[] = r.messages.map((m, i) => (i === 0
-    ? { role: m.role, content: [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }] }
-    : m));
+  const toolName = r.jsonSchema?.name;
+  const instruction = toolName && !forceTool
+    ? `Give your final answer by calling the \`${toolName}\` tool exactly once with the complete result. Do not answer in plain text.`
+    : null;
+  const last = r.messages.length - 1;
+  const messages: Anthropic.MessageParam[] = r.messages.map((m, i) => {
+    const text = instruction && i === last && i > 0 && m.role === 'user' ? `${m.content}\n\n${instruction}` : m.content;
+    return i === 0
+      ? { role: m.role, content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] }
+      : { role: m.role, content: text };
+  });
   const params: Anthropic.MessageCreateParamsNonStreaming = {
     model: r.model,
     max_tokens: r.maxTokens,
@@ -72,9 +92,10 @@ export function buildAnthropicParams(r: AdapterRequest): Anthropic.MessageCreate
       description: `Return the ${r.jsonSchema.name} result as structured data.`,
       input_schema: r.jsonSchema.schema as Anthropic.Tool.InputSchema,
     });
-    params.tool_choice = { type: 'auto', disable_parallel_tool_use: true };
-    const instruction = `Give your final answer by calling the \`${r.jsonSchema.name}\` tool exactly once with the complete result. Do not answer in plain text.`;
-    system = system ? `${system}\n\n${instruction}` : instruction;
+    params.tool_choice = forceTool
+      ? { type: 'tool', name: r.jsonSchema.name }
+      : { type: 'auto', disable_parallel_tool_use: true };
+    if (instruction) system = system ? `${system}\n\n${instruction}` : instruction;
   }
   if (r.webSearch) {
     tools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: r.webSearch.maxUses });
@@ -84,19 +105,36 @@ export function buildAnthropicParams(r: AdapterRequest): Anthropic.MessageCreate
   return params;
 }
 
-export function createAnthropicAdapter(opts: { baseURL: string; key: string }): ProviderAdapter {
-  // apiKey: null stops the SDK picking up ANTHROPIC_API_KEY (which would win over the bearer token).
-  const client = new Anthropic({
-    baseURL: opts.baseURL,
-    apiKey: null,
-    authToken: opts.key,
-    timeout: 15 * 60_000,
-    maxRetries: 0,
-  });
+type Send = (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<MappableMessage>;
+
+export function createAnthropicAdapter(opts: { baseURL: string; key: string; send?: Send }): ProviderAdapter {
+  let send = opts.send;
+  if (!send) {
+    // apiKey: null stops the SDK picking up ANTHROPIC_API_KEY (which would win over the bearer token).
+    const client = new Anthropic({
+      baseURL: opts.baseURL,
+      apiKey: null,
+      authToken: opts.key,
+      timeout: 15 * 60_000,
+      maxRetries: 0,
+    });
+    send = (params) => client.messages.stream(params).finalMessage();
+  }
+  const sendMessage = send;
+  /** Models that rejected forced tool_choice during this process (beyond the known NO_FORCED_TOOL_CHOICE set). */
+  const learnedNoForce = new Set<string>();
 
   return {
     async complete(r: AdapterRequest): Promise<AdapterResponse> {
-      const msg = await client.messages.stream(buildAnthropicParams(r)).finalMessage();
+      const forceTool = !!r.jsonSchema && !NO_FORCED_TOOL_CHOICE.has(r.model) && !learnedNoForce.has(r.model);
+      let msg: MappableMessage;
+      try {
+        msg = await sendMessage(buildAnthropicParams(r, { forceTool }));
+      } catch (err) {
+        if (!forceTool || !isForcedToolChoiceRejection(err)) throw err;
+        learnedNoForce.add(r.model);
+        msg = await sendMessage(buildAnthropicParams(r, { forceTool: false }));
+      }
       return mapAnthropicMessage(msg, r.jsonSchema?.name);
     },
 

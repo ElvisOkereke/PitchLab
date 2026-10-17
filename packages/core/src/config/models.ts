@@ -19,6 +19,13 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
   embed: 'text-embedding-3-small',
 };
 
+/**
+ * Claude models seen rejecting forced tool_choice (`tool`/`any`) with a 400 on the live run (2026-10-17):
+ * 'tool_choice: type "tool" and "any" are not supported for this model.' Structured calls on these use
+ * `auto` + an instruction from the start; other models fall back to that only after the same rejection.
+ */
+export const NO_FORCED_TOOL_CHOICE: ReadonlySet<string> = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
+
 /** Stages that use the Anthropic web-search server tool, so must run on a claude model. */
 const WEB_SEARCH_STAGES = ['harvest', 'competitors', 'case'] as const satisfies readonly ModelStage[];
 
