@@ -115,10 +115,12 @@ function flagsOf(claimRows: ClaimRow[]): Flags {
 }
 
 /** Statuses the checker could not settle: the owner must open the link himself. Real `unsupported` is not one. */
-const FOR_OWNER = new Set<Status>(['unreachable', 'needs_review']);
+const FOR_OWNER = new Set<Status>(['unreachable', 'needs_review', 'unverified']);
+const NOT_CHECKED_REASON = 'not checked yet — open it yourself';
 const FIXED_REASON: Partial<Record<Status, string>> = {
   unreachable: 'page could not be loaded by the checker — open it yourself',
   needs_review: 'checker unsure',
+  unverified: NOT_CHECKED_REASON,
 };
 const SECTION_LABEL: Record<string, string> = {
   evidence: 'Claim',
@@ -129,17 +131,35 @@ const SECTION_LABEL: Record<string, string> = {
 };
 const UNPUBLISHED_PRICE_REASON = 'pricing not published — check it yourself';
 
-function forYouToCheck(c: CaseRow, claimRows: ClaimRow[]): string[] {
+/**
+ * Everything the checker could not settle: unreachable, unsure and never-checked claims, displayed links that have no
+ * claim at all (legacy cases, items past the cap), and competitors whose pricing is not published. The all-clear line
+ * is written only when the case has claims and none of these.
+ */
+function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
+  const item = (label: string, text: string, url: string, reason: string) => `- **${label}:** ${line(text)} (${link(url)}): ${line(reason)}`;
   const items = claimRows
     .filter((r) => FOR_OWNER.has(r.verified))
-    .map((r) => {
-      const reason = r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified;
-      return `- **${SECTION_LABEL[r.section] ?? line(r.section)}:** ${line(r.text)} (${link(r.sourceUrl)}): ${line(reason)}`;
-    });
-  for (const x of c.sections.competitors.list) {
-    if (!hasPriceFigure(x.pricing)) items.push(`- **Competitor pricing:** ${line(x.name)} (${link(x.url)}): ${UNPUBLISHED_PRICE_REASON}`);
+    .map((r) => item(SECTION_LABEL[r.section] ?? r.section, r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified));
+  for (const s of c.sections.evidence.signals) {
+    if (!flags.signal.has(linkKey(s.url, s.quote))) items.push(item('Signal', s.quote, s.url, NOT_CHECKED_REASON));
   }
-  return ['## For you to check', '', ...(items.length ? items : ['Nothing — every displayed source was confirmed or flagged.'])];
+  for (const { label, sourced } of listInputs(c.sections.numbers.inputs)) {
+    if (sourced.source && !flags.input.has(`${label}: ${sourced.value}`)) {
+      items.push(item('Number input', `${label}: ${sourced.value}`, sourced.source.url, NOT_CHECKED_REASON));
+    }
+  }
+  for (const x of c.sections.competitors.list) {
+    if (!flags.competitor.has(linkKey(x.url, x.name))) items.push(item('Competitor', x.name, x.url, NOT_CHECKED_REASON));
+    if (!hasPriceFigure(x.pricing)) items.push(item('Competitor pricing', x.name, x.url, UNPUBLISHED_PRICE_REASON));
+    else if (!flags.competitorPricing.has(linkKey(x.url, competitorPricingText(x)))) {
+      items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
+    }
+  }
+  const out = ['## For you to check', ''];
+  if (claimRows.length === 0) out.push('This case has no checked sources — verify everything yourself.', ...(items.length ? [''] : []));
+  else if (items.length === 0) out.push('Nothing — every displayed source was confirmed or flagged.');
+  return [...out, ...items];
 }
 
 const emoji = (s: Status | undefined) => (s ? ` ${STATUS_EMOJI[s]}` : '');
@@ -303,7 +323,7 @@ export function caseToMarkdown(c: CaseRow, claimRows: ClaimRow[], scoreRows: Sco
   return [
     ...head,
     ...summary(c), '',
-    ...forYouToCheck(c, claimRows), '',
+    ...forYouToCheck(c, claimRows, linkFlags), '',
     ...evidence(c, claimRows, linkFlags), '',
     ...numbers(c, linkFlags), '',
     ...competitors(c, linkFlags), '',

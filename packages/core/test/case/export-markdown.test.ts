@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { listInputs } from '../../src/calc/inputs';
 import { computeNumbers } from '../../src/calc/numbers';
 import { CRITERIA, type CaseSections } from '../../src/case/schema';
 import { caseToMarkdown, type CaseRow, type ClaimRow, type ScoreRow } from '../../src/case/export-markdown';
@@ -154,9 +155,47 @@ describe('caseToMarkdown', () => {
     expect(md).toContain('❌ unsupported: Forms fail weekly');
   });
 
-  it('says there is nothing to check when every source was confirmed or flagged', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('verified'), claim('unsupported')], []);
+  /** A verification claim for every displayed link of the fixture case. */
+  function settledClaims(status: ClaimRow['verified'] = 'verified'): ClaimRow[] {
+    const s = caseFixture().sections;
+    return [
+      ...s.evidence.signals.map((x) => claim(status, { section: 'signal', text: x.quote, sourceUrl: x.url, quote: x.quote })),
+      ...listInputs(s.numbers.inputs).flatMap(({ label, sourced }) =>
+        sourced.source ? [claim(status, { section: 'numbers', text: `${label}: ${sourced.value}`, sourceUrl: sourced.source.url })] : []),
+      ...s.competitors.list.flatMap((x) => [
+        claim(status, { section: 'competitor', text: x.name, sourceUrl: x.url, quote: null }),
+        claim(status, { section: 'competitor-pricing', text: `${x.name} pricing: ${x.pricing}`, sourceUrl: x.url, quote: null }),
+      ]),
+    ];
+  }
+  const checkSection = (md: string) => md.slice(md.indexOf('\n## For you to check\n'), md.indexOf('\n## Evidence\n'));
+
+  it('says there is nothing to check only when every displayed source was confirmed or flagged', () => {
+    const md = caseToMarkdown(caseFixture(), [...settledClaims(), claim('verified'), claim('unsupported')], []);
     expect(md).toContain('## For you to check\n\nNothing — every displayed source was confirmed or flagged.\n');
+    expect(checkSection(md)).not.toMatch(/^- /m);
+  });
+
+  it('lists never-checked (unverified) claims and does not claim all-clear', () => {
+    const md = caseToMarkdown(caseFixture(), [...settledClaims(), claim('unverified', { text: 'Agencies churn yearly', sourceUrl: 'https://churn.example/' })], []);
+    const section = checkSection(md);
+    expect(section).toMatch(/Agencies churn yearly \(\[churn\.example\]\(https:\/\/churn\.example\/\)\): not checked yet — open it yourself/);
+    expect(md).not.toContain('Nothing — every displayed source');
+  });
+
+  it('lists displayed links that have no verification claim at all (legacy cases)', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('verified')], []);
+    const section = checkSection(md);
+    expect(section).toMatch(/\*\*Signal:\*\* Our forms die after plugin updates .*not checked yet — open it yourself/);
+    expect(section).toMatch(/\*\*Number input:\*\* reachableBuyers: 3000 .*not checked yet/);
+    expect(section).toMatch(/\*\*Competitor:\*\* Generic uptime monitor .*not checked yet/);
+    expect(md).not.toContain('Nothing — every displayed source');
+  });
+
+  it('tells the owner to verify everything when the case has no claims', () => {
+    const md = caseToMarkdown(caseFixture(), [], []);
+    expect(md).toContain('## For you to check\n\nThis case has no checked sources — verify everything yourself.\n');
+    expect(md).not.toContain('Nothing — every displayed source');
   });
 
   it('shows the 🔍 status for a needs_review claim', () => {
