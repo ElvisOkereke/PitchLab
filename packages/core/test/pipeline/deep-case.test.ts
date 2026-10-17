@@ -127,6 +127,28 @@ describe('deepCase', () => {
     expect(rows.every((c) => c.verified === 'unverified')).toBe(true);
   });
 
+  it('caps link-verification claims at 15 signals (signalIds order) and 15 competitors per case', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const sigs = await db.insert(signals).values(Array.from({ length: 17 }, (_, i) => ({
+      marketId: 'ca-us', source: 'hn', url: `https://news.example/cap/${i}`, title: 't', quote: `quote ${i}`, quoteHash: `cap${i}`,
+    }))).returning({ id: signals.id, url: signals.url });
+    const ordered = [...sigs].reverse();
+    const idea = await insertIdea(db, run.id, { signalIds: ordered.map((s) => s.id), status: 'advanced' });
+    const d = draft();
+    d.competitors.list = Array.from({ length: 17 }, (_, i) => ({ name: `C${i}`, url: `https://c${i}.example/`, pricing: '$1', gap: 'g' }));
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.evidence.signals).toHaveLength(17);
+    expect(row.sections.competitors.list).toHaveLength(17);
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    expect(rows.filter((c) => c.section === 'signal').map((c) => c.sourceUrl).sort())
+      .toEqual(ordered.slice(0, 15).map((s) => s.url).sort());
+    expect(rows.filter((c) => c.section === 'competitor').map((c) => c.text).sort())
+      .toEqual(d.competitors.list.slice(0, 15).map((c: { name: string }) => `${c.name}: $1`).sort());
+  });
+
   it('drops banned-domain claims and competitors, and turns banned number sources into assumptions', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

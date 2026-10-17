@@ -89,6 +89,12 @@ describe('caseToMarkdown', () => {
     expect(md).toContain('_No claims recorded._');
   });
 
+  it('marks a signal or competitor without a verification claim (e.g. beyond the cap) as not checked', () => {
+    const md = caseToMarkdown(caseFixture(), [], []);
+    expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) not checked');
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| not checked \|/);
+  });
+
   it('adds a status column to the competitors table', () => {
     const comp = claim('verified', {
       section: 'competitor', text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null,

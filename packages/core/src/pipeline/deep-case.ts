@@ -12,6 +12,8 @@ import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
 const WRITE_MAX_TOKENS = 16000;
+/** Per case, at most this many signal claims and this many competitor claims are written for verification. */
+const LINK_CLAIMS_MAX = 15;
 
 const cut = (s: string, n: number) => s.slice(0, n).replace(/-+$/, '');
 
@@ -174,9 +176,12 @@ export async function deepCase(
             ? [{ caseId, section: 'numbers', text: `${label}: ${sourced.value}`, sourceUrl: sourced.source.url, quote: sourced.source.quote }]
             : [],
         ),
-        // Every displayed link is verified too: each signal used and each competitor (all http(s): isBannedSource fails closed).
-        ...sigRows.map((s) => ({ caseId, section: 'signal', text: capField(s.quote, 1000), sourceUrl: s.url, quote: s.quote })),
-        ...competitorList.map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
+        // Displayed links are verified too: the first LINK_CLAIMS_MAX signals (signalIds order) and competitors
+        // (all http(s): isBannedSource fails closed). Any beyond the cap render as "not checked".
+        ...sigRows.slice(0, LINK_CLAIMS_MAX)
+          .map((s) => ({ caseId, section: 'signal', text: capField(s.quote, 1000), sourceUrl: s.url, quote: s.quote })),
+        ...competitorList.slice(0, LINK_CLAIMS_MAX)
+          .map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
       ];
 
       // One transaction per case so a crash can never leave a case without its claims.

@@ -142,7 +142,8 @@ function evidence(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
   const out = ['## Evidence', '', '### Signals', ''];
   if (signals.length === 0) out.push('_No harvested signals._');
   for (const s of signals) {
-    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})${emoji(flags.signal.get(linkKey(s.url, s.quote)))}`);
+    const status = flags.signal.get(linkKey(s.url, s.quote));
+    out.push(`- "${line(s.quote)}" (${line(s.sourceName)}, ${link(s.url)}) ${status ? STATUS_EMOJI[status] : 'not checked'}`);
   }
   out.push('', '### Claims', '');
   const listed = claimRows.filter((cl) => LISTED_SECTIONS.has(cl.section));
