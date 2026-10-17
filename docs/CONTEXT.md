@@ -188,3 +188,4 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   Fixed: export ignored pre-tuning-2 `"name: pricing"` competitor claims, so old cases listed every competitor as
   "not checked yet" (`78885c1`). Owner decision needed: how to stop repeat ideas reaching the gate (similarity to past
   gate kills, lower threshold) and whether to feed `generic` kills back into ideate.
+- **2026-10-17:** tuning-2 merged + pushed. A CRLF line-ending issue (Windows autocrlf) broke one test on main briefly; fixed (prompt loader normalises CRLF, `.gitattributes` enforces LF) and pushed green (310 tests). Run 3: 0/5 passed the gate (all `generic`); next options presented to owner.
