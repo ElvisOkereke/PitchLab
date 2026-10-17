@@ -31,7 +31,7 @@ function claim(verified: ClaimRow['verified'], overrides: Partial<ClaimRow> = {}
   n += 1;
   return {
     id: `claim-${n}`, caseId: 'case-1', section: 'evidence', text: `Claim ${n} (${verified})`, sourceUrl: `https://src.example/${n}`,
-    quote: `quote ${n}`, verified, confidence: null, checkedAt: null, createdAt: new Date(), ...overrides,
+    quote: `quote ${n}`, verified, confidence: null, reviewNote: null, checkedAt: null, createdAt: new Date(), ...overrides,
   };
 }
 
@@ -56,7 +56,7 @@ describe('caseToMarkdown', () => {
     const lines = md.split('\n');
     expect(lines[0]).toBe('# Lead-flow verification for web agencies');
     expect(md.indexOf('> ⚠️ Gate flags: evidence, control')).toBeLessThan(md.indexOf('## Summary'));
-    const order = ['## Summary', '## Evidence', '## Numbers', '## Competitors', '## Pitch', '## Score'].map((h) => md.indexOf(`\n${h}\n`));
+    const order = ['## Summary', '## For you to check', '## Evidence', '## Numbers', '## Competitors', '## Pitch', '## Score'].map((h) => md.indexOf(`\n${h}\n`));
     expect(order.every((i) => i > 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
@@ -95,25 +95,73 @@ describe('caseToMarkdown', () => {
     expect(md).toMatch(/\| Generic uptime monitor \|.*\| not checked \|/);
   });
 
-  it('adds a status column to the competitors table', () => {
-    const comp = claim('verified', {
-      section: 'competitor', text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null,
-    });
-    const md = caseToMarkdown(caseFixture(), [comp], []);
-    expect(md).toContain('| Name | Link | Pricing | Gap | Status |');
-    expect(md).toMatch(/\| Generic uptime monitor \| \[uptime-tool\.example\]\(https:\/\/uptime-tool\.example\/pricing\) \| .* \| ✅ verified \|/);
+  it('gives the competitors table a Product and a Pricing status column', () => {
+    const url = 'https://uptime-tool.example/pricing';
+    const md = caseToMarkdown(caseFixture(), [
+      claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
+      claim('needs_review', { section: 'competitor-pricing', text: 'Generic uptime monitor pricing: $15/month for 50 monitors', sourceUrl: url, quote: null }),
+    ], []);
+    expect(md).toContain('| Name | Link | Pricing | Gap | Product | Pricing check |');
+    expect(md).toMatch(/\| Generic uptime monitor \| \[uptime-tool\.example\]\(https:\/\/uptime-tool\.example\/pricing\) \| .* \| ✅ verified \| 🔍 needs review \|/);
     expect(md).not.toContain('- ✅ verified: Generic uptime monitor');
+    expect(md).not.toMatch(/- 🔍 needs review: Generic uptime monitor/);
   });
 
-  it('keys competitor flags by url and text, so two competitors on one site keep their own status', () => {
+  it('shows "not published — check" in the pricing column when the case quotes no figure', () => {
+    const kase = caseFixture({ mutate: (s) => { s.competitors.list[0]!.pricing = 'Not published'; } });
+    const md = caseToMarkdown(kase, [
+      claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: 'https://uptime-tool.example/pricing', quote: null }),
+    ], []);
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| Not published \|.*\| ✅ verified \| 🔍 not published — check \|/);
+  });
+
+  it('keys competitor flags by url and name, so two competitors on one site keep their own status', () => {
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.url = s.competitors.list[0]!.url; } });
     const url = kase.sections.competitors.list[0]!.url;
     const md = caseToMarkdown(kase, [
-      claim('verified', { section: 'competitor', text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: url, quote: null }),
-      claim('unsupported', { section: 'competitor', text: 'Synthetic browser testing platform: From $99/month', sourceUrl: url, quote: null }),
+      claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
+      claim('unsupported', { section: 'competitor', text: 'Synthetic browser testing platform', sourceUrl: url, quote: null }),
+      claim('verified', { section: 'competitor-pricing', text: 'Synthetic browser testing platform pricing: From $99/month', sourceUrl: url, quote: null }),
     ], []);
-    expect(md).toMatch(/\| Generic uptime monitor \|.*\| ✅ verified \|/);
-    expect(md).toMatch(/\| Synthetic browser testing platform \|.*\| ❌ unsupported \|/);
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| ✅ verified \| not checked \|/);
+    expect(md).toMatch(/\| Synthetic browser testing platform \|.*\| ❌ unsupported \| ✅ verified \|/);
+  });
+
+  it('lists unreachable links, unsure checks and unpublished prices under "For you to check", but not real failures', () => {
+    const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.pricing = 'Contact sales'; } });
+    const md = caseToMarkdown(kase, [
+      claim('unreachable', { text: 'Agencies run 40 sites', sourceUrl: 'https://down.example/report', reviewNote: 'page could not be loaded by the checker — open it yourself' }),
+      claim('needs_review', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: 'https://uptime-tool.example/pricing', quote: null, reviewNote: 'checker unsure (confidence 0.45)' }),
+      claim('unsupported', { text: 'Forms fail weekly', sourceUrl: 'https://wrong.example/x' }),
+      claim('unreachable', { section: 'signal', text: 'Our forms die after plugin updates', sourceUrl: 'https://news.example/item/1', quote: 'Our forms die after plugin updates' }),
+    ], []);
+    const start = md.indexOf('\n## For you to check\n');
+    const end = md.indexOf('\n## Evidence\n');
+    expect(start).toBeGreaterThan(md.indexOf('\n## Summary\n'));
+    expect(end).toBeGreaterThan(start);
+    const section = md.slice(start, end);
+    expect(section).toContain('Agencies run 40 sites');
+    expect(section).toContain('[down.example](https://down.example/report)');
+    expect(section).toContain('page could not be loaded by the checker — open it yourself');
+    expect(section).toContain('Generic uptime monitor');
+    expect(section).toContain('checker unsure (confidence 0.45)');
+    expect(section).toContain('Synthetic browser testing platform');
+    expect(section).toContain('[synthetic-tests.example](https://synthetic-tests.example/pricing)');
+    expect(section).toContain('pricing not published');
+    // A legacy row without a note still gets a reason.
+    expect(section).toMatch(/Our forms die after plugin updates.*news\.example.*page could not be loaded/);
+    expect(section).not.toContain('Forms fail weekly');
+    expect(md).toContain('❌ unsupported: Forms fail weekly');
+  });
+
+  it('says there is nothing to check when every source was confirmed or flagged', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('verified'), claim('unsupported')], []);
+    expect(md).toContain('## For you to check\n\nNothing — every displayed source was confirmed or flagged.\n');
+  });
+
+  it('shows the 🔍 status for a needs_review claim', () => {
+    const md = caseToMarkdown(caseFixture(), [claim('needs_review')], []);
+    expect(md).toMatch(/🔍 needs review.*\(needs_review\)/);
   });
 
   it('shows the worst status when two claims share a url and text', () => {

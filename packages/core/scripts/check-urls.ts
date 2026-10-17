@@ -28,7 +28,7 @@ for (const file of files) {
       e.sections.add(section);
       // A claim's status is on its bullet line, two lines above its "Source:" line (Quote line between).
       const ctx = ln.includes('Source:') ? `${lines[i - 2] ?? ''} ${lines[i - 1] ?? ''} ${ln}` : ln;
-      for (const f of ['verified', 'unsupported', 'unreachable', 'unverified']) if (ctx.includes(` ${f}`)) e.flags.add(f);
+      for (const f of ['verified', 'unsupported', 'unreachable', 'needs review', 'unverified']) if (ctx.includes(` ${f}`)) e.flags.add(f);
       seen.set(url, e);
     }
   });

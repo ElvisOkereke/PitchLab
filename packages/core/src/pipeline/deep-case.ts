@@ -2,7 +2,7 @@ import { asc, eq, inArray } from 'drizzle-orm';
 import { listInputs } from '../calc/inputs';
 import { computeNumbers } from '../calc/numbers';
 import { NumberInputsSchema, type NumberInputs } from '../calc/schema';
-import { CaseDraftSchema, type CaseSections } from '../case/schema';
+import { CaseDraftSchema, competitorPricingText, hasPriceFigure, type CaseSections } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -13,7 +13,7 @@ import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
 const WRITE_MAX_TOKENS = 16000;
-/** Per case, at most this many signal claims and this many competitor claims are written for verification. */
+/** Per case, at most this many signals and this many competitors are stored, each with its verification claim(s). */
 const LINK_CLAIMS_MAX = 15;
 
 const cut = (s: string, n: number) => s.slice(0, n).replace(/-+$/, '');
@@ -178,8 +178,14 @@ export async function deepCase(
         // (all http(s): isBannedSource fails closed). Legacy cases may still render a link as "not checked".
         ...sigRows
           .map((s) => ({ caseId, section: 'signal', text: capField(s.quote, 1000), sourceUrl: s.url, quote: s.quote })),
-        ...competitorList
-          .map((c) => ({ caseId, section: 'competitor', text: `${c.name}: ${c.pricing}`, sourceUrl: c.url, quote: null })),
+        // Each competitor: a product claim (the page describes it), plus a pricing claim only when the case quotes a
+        // figure. "Not published" / "Contact sales" is not checkable, so the export lists it under "For you to check".
+        ...competitorList.flatMap((c) => [
+          { caseId, section: 'competitor', text: c.name, sourceUrl: c.url, quote: null },
+          ...(hasPriceFigure(c.pricing)
+            ? [{ caseId, section: 'competitor-pricing', text: competitorPricingText(c), sourceUrl: c.url, quote: null }]
+            : []),
+        ]),
       ];
 
       // One transaction per case so a crash can never leave a case without its claims.

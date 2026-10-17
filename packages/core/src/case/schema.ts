@@ -49,6 +49,12 @@ const CompetitorsSchema = z.object({
   levels: z.array(z.object({ level: z.string(), whatItChecks: z.string(), limitation: z.string() })).min(2),
 });
 
+/** True when a competitor's pricing text quotes a concrete figure ("$49/mo"), so a pricing claim can be checked. */
+export const hasPriceFigure = (pricing: string) => /\d/.test(pricing);
+
+/** The `competitor-pricing` claim text; deep-case stores it and the export looks it up by the same string. */
+export const competitorPricingText = (c: { name: string; pricing: string }) => `${c.name} pricing: ${c.pricing}`;
+
 /** CASL / CAN-SPAM (spec §11.6): sender name, mailing address, one other contact method, unsubscribe line. */
 export const CASL_PLACEHOLDERS = ['[Your name]', '[Mailing address]', '[Phone or website]', '[Unsubscribe line]'] as const;
 

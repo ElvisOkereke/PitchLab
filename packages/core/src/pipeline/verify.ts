@@ -38,7 +38,14 @@ export function bestWindow(text: string, needle: string): string {
   return text.slice(best, best + WINDOW);
 }
 
+/** A judge verdict at or above this confidence is final: verified when supported, unsupported when not. */
 export const MIN_JUDGE_CONFIDENCE = 0.6;
+/**
+ * A verdict with confidence in [REVIEW_CONFIDENCE_FLOOR, MIN_JUDGE_CONFIDENCE) is too unsure to call either way, so the
+ * claim goes to the owner as `needs_review` (whichever way the judge leaned). Below the floor it is `unsupported`.
+ */
+export const REVIEW_CONFIDENCE_FLOOR = 0.3;
+export const UNREACHABLE_NOTE = 'page could not be loaded by the checker — open it yourself';
 const MIN_QUOTE_WORDS = 6;
 const MIN_QUOTE_CHARS = 30;
 /**
@@ -72,7 +79,7 @@ export async function verify(
     return p;
   };
 
-  const tally = { verified: 0, unsupported: 0, unreachable: 0, skipped: 0 };
+  const tally = { verified: 0, unsupported: 0, unreachable: 0, needs_review: 0, skipped: 0 };
   for (const claim of rows) {
     if (!claim.sourceUrl?.trim()) {
       tally.skipped++;
@@ -81,16 +88,18 @@ export async function verify(
     if (isBannedSource(claim.sourceUrl)) {
       // A banned (or non-http / unparseable / IP) source never supports a claim: no fetch, no judge.
       tally.unsupported++;
-      await db.update(claims).set({ verified: 'unsupported', confidence: null, checkedAt: new Date() }).where(eq(claims.id, claim.id));
+      await db.update(claims).set({ verified: 'unsupported', confidence: null, reviewNote: null, checkedAt: new Date() }).where(eq(claims.id, claim.id));
       continue;
     }
     const page = await getPage(claim.sourceUrl);
-    let verified: 'verified' | 'unsupported' | 'unreachable';
+    let verified: 'verified' | 'unsupported' | 'unreachable' | 'needs_review';
     let confidence: number | null;
+    let reviewNote: string | null = null;
 
     if (!page.ok) {
       verified = 'unreachable';
       confidence = null;
+      reviewNote = UNREACHABLE_NOTE;
     } else if (isBannedSource(page.finalUrl)) {
       // Redirected into a banned domain: the page is not an acceptable source, so no judge.
       verified = 'unsupported';
@@ -104,12 +113,14 @@ export async function verify(
       } else if (page.text.replace(/\s+/g, ' ').trim().length < MIN_READABLE_CHARS) {
         verified = 'unreachable';
         confidence = null;
+        reviewNote = UNREACHABLE_NOTE;
       } else {
         const excerpt = bestWindow(page.text, quote ? (claim.quote ?? '') : claim.text);
         const verdict = await router.structured(
           'verify',
           {
             prompt: prompt.render({
+              section: claim.section,
               claim: wrapUntrusted('claim', capField(claim.text, 2000)),
               quote: wrapUntrusted('quote', capField(claim.quote, 2000) || '(none given)'),
               page: wrapUntrusted('page-excerpt', excerpt.slice(0, WINDOW)),
@@ -120,14 +131,24 @@ export async function verify(
           { runId: run.id, promptVersion: prompt.version },
         );
         confidence = clamp01(verdict.confidence);
-        verified = verdict.supported && confidence >= MIN_JUDGE_CONFIDENCE ? 'verified' : 'unsupported';
+        if (confidence >= MIN_JUDGE_CONFIDENCE) {
+          verified = verdict.supported ? 'verified' : 'unsupported';
+        } else if (confidence >= REVIEW_CONFIDENCE_FLOOR) {
+          verified = 'needs_review';
+          reviewNote = `checker unsure (confidence ${confidence.toFixed(2)})`;
+        } else {
+          verified = 'unsupported';
+        }
       }
     }
     tally[verified]++;
-    await db.update(claims).set({ verified, confidence, checkedAt: new Date() }).where(eq(claims.id, claim.id));
+    await db.update(claims).set({ verified, confidence, reviewNote, checkedAt: new Date() }).where(eq(claims.id, claim.id));
   }
 
-  log(`verify: ${tally.verified} verified, ${tally.unsupported} unsupported, ${tally.unreachable} unreachable, ${tally.skipped} skipped`);
+  log(
+    `verify: ${tally.verified} verified, ${tally.unsupported} unsupported, ${tally.unreachable} unreachable, ` +
+      `${tally.needs_review} need review, ${tally.skipped} skipped`,
+  );
   return { caseIds: input.caseIds };
 }
 

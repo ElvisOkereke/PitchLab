@@ -9,7 +9,7 @@ import { fakeRouter } from '../helpers/fake-router';
 
 const aiScores = (evidence = 5) => Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'evidence' ? evidence : 4, note: `${c} note` }]));
 
-async function setup(statuses: ('verified' | 'unsupported' | 'unreachable' | 'unverified')[]) {
+async function setup(statuses: ('verified' | 'unsupported' | 'unreachable' | 'unverified' | 'needs_review')[]) {
   const db = await testDb();
   const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
   const idea = await insertIdea(db, run.id);
@@ -79,6 +79,24 @@ describe('score', () => {
     expect(prompt).toContain('3/3 cited claims verified');
     expect(prompt).toContain('1/2 harvested signal links verified');
     expect(prompt).toContain('0/1 competitor links verified');
+  });
+
+  it('treats needs_review as non-credit in the evidence ratio and reports it separately', async () => {
+    const { db, run, kase } = await setup(['verified', 'needs_review', 'needs_review', 'unsupported']);
+    await db.insert(claims).values([
+      { caseId: kase.id, section: 'competitor', text: 'Acme', sourceUrl: 'https://acme.com', quote: null, verified: 'needs_review' },
+      { caseId: kase.id, section: 'competitor-pricing', text: 'Acme pricing: $5', sourceUrl: 'https://acme.com', quote: null, verified: 'verified' },
+    ]);
+    const router = fakeRouter({ structured: { score: [aiScores(5)] } });
+    await score(depsOf(db, router), run, { caseIds: [kase.id] });
+    const [ev] = await db.select().from(scores).where(and(eq(scores.caseId, kase.id), eq(scores.criterion, 'evidence')));
+    expect(ev).toMatchObject({ value: 2, note: 'evidence note (capped: 1/4 claims verified)' });
+    const prompt = router.calls[0]!.prompt;
+    expect(prompt).toContain('1/4 cited claims verified');
+    expect(prompt).toContain('2 left for the owner to check (checker unsure)');
+    expect(prompt).toContain('1 not supported by the page');
+    expect(prompt).toContain('0/1 competitor links verified (1 left for the owner to check)');
+    expect(prompt).toContain('1/1 quoted competitor prices verified');
   });
 
   it('is idempotent and keeps owner scores', async () => {

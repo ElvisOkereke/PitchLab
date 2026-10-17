@@ -15,7 +15,7 @@ export const ideaOrigin = pgEnum('idea_origin', ['generated', 'owner']);
 export const ideaStatus = pgEnum('idea_status', ['candidate', 'duplicate', 'screened_out', 'gated_out', 'advanced']);
 export const gateCheck = pgEnum('gate_check', ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence']);
 export const caseStage = pgEnum('case_stage', ['new', 'validating', 'pilot', 'live', 'killed']);
-export const claimVerified = pgEnum('claim_verified', ['unverified', 'verified', 'unsupported', 'unreachable']);
+export const claimVerified = pgEnum('claim_verified', ['unverified', 'verified', 'unsupported', 'unreachable', 'needs_review']);
 export const criterion = pgEnum('criterion', ['pain', 'roi', 'evidence', 'speed', 'autonomy', 'novelty', 'reach', 'gut']);
 export const scoreBy = pgEnum('score_by', ['ai', 'owner']);
 
@@ -132,6 +132,8 @@ export const claims = pgTable('claims', {
   quote: text('quote'),
   verified: claimVerified('verified').notNull().default('unverified'),
   confidence: real('confidence'),
+  /** Why the owner must check this claim himself (set with `unreachable` and `needs_review`). */
+  reviewNote: text('review_note'),
   checkedAt: timestamp('checked_at', { withTimezone: true }),
   createdAt: createdAt(),
 });

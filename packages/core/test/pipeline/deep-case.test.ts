@@ -105,13 +105,17 @@ describe('deepCase', () => {
     const row = await caseFor(db, idea.id);
     expect(row.sections.competitors.list.map((c) => c.name)).not.toContain('Offline agency'); // non-http url: fails closed
     const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
-    expect(rows).toHaveLength(d.evidence.claims.length + 3 + 1 + 2);
+    expect(rows).toHaveLength(d.evidence.claims.length + 3 + 1 + 2 + 2);
     expect(rows.filter((c) => c.section === 'signal').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
       { text: sig!.quote, sourceUrl: sig!.url, quote: sig!.quote },
     ]);
     expect(rows.filter((c) => c.section === 'competitor').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
-      { text: 'Generic uptime monitor: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null },
-      { text: 'Synthetic browser testing platform: From $99/month', sourceUrl: 'https://synthetic-tests.example/pricing', quote: null },
+      { text: 'Generic uptime monitor', sourceUrl: 'https://uptime-tool.example/pricing', quote: null },
+      { text: 'Synthetic browser testing platform', sourceUrl: 'https://synthetic-tests.example/pricing', quote: null },
+    ]);
+    expect(rows.filter((c) => c.section === 'competitor-pricing').map(({ text, sourceUrl, quote }) => ({ text, sourceUrl, quote }))).toEqual([
+      { text: 'Generic uptime monitor pricing: $15/month for 50 monitors', sourceUrl: 'https://uptime-tool.example/pricing', quote: null },
+      { text: 'Synthetic browser testing platform pricing: From $99/month', sourceUrl: 'https://synthetic-tests.example/pricing', quote: null },
     ]);
     expect(rows.filter((c) => c.section === 'evidence').map((c) => c.text).sort())
       .toEqual(d.evidence.claims.map((c: { text: string }) => c.text).sort());
@@ -147,7 +151,32 @@ describe('deepCase', () => {
     expect(rows.filter((c) => c.section === 'signal').map((c) => c.sourceUrl).sort())
       .toEqual(ordered.slice(0, 15).map((s) => s.url).sort());
     expect(rows.filter((c) => c.section === 'competitor').map((c) => c.text).sort())
-      .toEqual(d.competitors.list.slice(0, 15).map((c: { name: string }) => `${c.name}: $1`).sort());
+      .toEqual(d.competitors.list.slice(0, 15).map((c: { name: string }) => c.name).sort());
+    expect(rows.filter((c) => c.section === 'competitor-pricing').map((c) => c.text).sort())
+      .toEqual(d.competitors.list.slice(0, 15).map((c: { name: string }) => `${c.name} pricing: $1`).sort());
+  });
+
+  it('checks a competitor\'s product page always, and its pricing only when the case quotes a figure', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.competitors.list = [
+      { name: 'Hidden Co', url: 'https://hidden.example/', pricing: 'Not published', gap: 'g' },
+      { name: 'Sales Co', url: 'https://sales.example/', pricing: 'Contact sales', gap: 'g' },
+      { name: 'Priced Co', url: 'https://priced.example/', pricing: '$49/mo', gap: 'g' },
+    ];
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+
+    const row = await caseFor(db, idea.id);
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    const pick = (section: string) => rows.filter((c) => c.section === section).map(({ text, sourceUrl }) => ({ text, sourceUrl }));
+    expect(pick('competitor')).toEqual([
+      { text: 'Hidden Co', sourceUrl: 'https://hidden.example/' },
+      { text: 'Sales Co', sourceUrl: 'https://sales.example/' },
+      { text: 'Priced Co', sourceUrl: 'https://priced.example/' },
+    ]);
+    expect(pick('competitor-pricing')).toEqual([{ text: 'Priced Co pricing: $49/mo', sourceUrl: 'https://priced.example/' }]);
   });
 
   it('stores a case with zero claims when everything is banned or unparseable', async () => {

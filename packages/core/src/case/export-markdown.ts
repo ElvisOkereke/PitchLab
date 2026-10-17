@@ -1,5 +1,6 @@
 import { listInputs } from '../calc/inputs';
 import type { Sourced } from '../calc/schema';
+import { competitorPricingText, hasPriceFigure } from './schema';
 import type { cases, claims, scores } from '../db/schema';
 
 export type CaseRow = typeof cases.$inferSelect;
@@ -71,25 +72,31 @@ function table(headers: string[], rows: string[][]): string {
 
 type Status = ClaimRow['verified'];
 
-const STATUS_EMOJI: Record<Status, string> = { verified: '✅', unsupported: '❌', unreachable: '⚠️', unverified: '⏳' };
+const STATUS_EMOJI: Record<Status, string> = { verified: '✅', unsupported: '❌', unreachable: '⚠️', needs_review: '🔍', unverified: '⏳' };
 const CLAIM_STATUS: Record<Status, string> = {
   verified: '✅ verified',
   unsupported: '❌ unsupported',
   unreachable: '⚠️ unreachable',
+  needs_review: '🔍 needs review',
   unverified: '⏳ unverified',
 };
 /** Claim sections listed under "Claims"; signal and competitor rows are flagged where their link is shown. */
 const LISTED_SECTIONS = new Set(['evidence', 'numbers']);
 
 /** Verification status of every displayed link, looked up the way deep-case keyed its claim rows. */
-type Flags = { signal: Map<string, Status>; competitor: Map<string, Status>; input: Map<string, Status> };
+type Flags = {
+  signal: Map<string, Status>;
+  competitor: Map<string, Status>;
+  competitorPricing: Map<string, Status>;
+  input: Map<string, Status>;
+};
 
 // One url can carry several items (quotes, competitors), so links are keyed by url + identifying text:
-// a signal by its quote, a competitor by the `${name}: ${pricing}` text deep-case stored as the claim.
+// a signal by its quote, a competitor by its name, its pricing by the `competitorPricingText` deep-case stored.
 const linkKey = (url: string, text: string) => `${url}\n${text}`;
 
 /** Worst first: on a key collision the flag never looks better than its weakest claim. */
-const SEVERITY: Record<Status, number> = { unsupported: 3, unreachable: 2, unverified: 1, verified: 0 };
+const SEVERITY: Record<Status, number> = { unsupported: 4, unreachable: 3, needs_review: 2, unverified: 1, verified: 0 };
 
 function setWorst(map: Map<string, Status>, key: string, status: Status) {
   const prev = map.get(key);
@@ -97,13 +104,42 @@ function setWorst(map: Map<string, Status>, key: string, status: Status) {
 }
 
 function flagsOf(claimRows: ClaimRow[]): Flags {
-  const f: Flags = { signal: new Map(), competitor: new Map(), input: new Map() };
+  const f: Flags = { signal: new Map(), competitor: new Map(), competitorPricing: new Map(), input: new Map() };
   for (const r of claimRows) {
     if (r.section === 'signal') setWorst(f.signal, linkKey(r.sourceUrl, r.quote ?? ''), r.verified);
     else if (r.section === 'competitor') setWorst(f.competitor, linkKey(r.sourceUrl, r.text), r.verified);
+    else if (r.section === 'competitor-pricing') setWorst(f.competitorPricing, linkKey(r.sourceUrl, r.text), r.verified);
     else if (r.section === 'numbers') setWorst(f.input, r.text, r.verified);
   }
   return f;
+}
+
+/** Statuses the checker could not settle: the owner must open the link himself. Real `unsupported` is not one. */
+const FOR_OWNER = new Set<Status>(['unreachable', 'needs_review']);
+const FIXED_REASON: Partial<Record<Status, string>> = {
+  unreachable: 'page could not be loaded by the checker — open it yourself',
+  needs_review: 'checker unsure',
+};
+const SECTION_LABEL: Record<string, string> = {
+  evidence: 'Claim',
+  numbers: 'Number input',
+  signal: 'Signal',
+  competitor: 'Competitor',
+  'competitor-pricing': 'Competitor pricing',
+};
+const UNPUBLISHED_PRICE_REASON = 'pricing not published — check it yourself';
+
+function forYouToCheck(c: CaseRow, claimRows: ClaimRow[]): string[] {
+  const items = claimRows
+    .filter((r) => FOR_OWNER.has(r.verified))
+    .map((r) => {
+      const reason = r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified;
+      return `- **${SECTION_LABEL[r.section] ?? line(r.section)}:** ${line(r.text)} (${link(r.sourceUrl)}): ${line(reason)}`;
+    });
+  for (const x of c.sections.competitors.list) {
+    if (!hasPriceFigure(x.pricing)) items.push(`- **Competitor pricing:** ${line(x.name)} (${link(x.url)}): ${UNPUBLISHED_PRICE_REASON}`);
+  }
+  return ['## For you to check', '', ...(items.length ? items : ['Nothing — every displayed source was confirmed or flagged.'])];
 }
 
 const emoji = (s: Status | undefined) => (s ? ` ${STATUS_EMOJI[s]}` : '');
@@ -198,16 +234,16 @@ function numbers(c: CaseRow, flags: Flags): string[] {
 
 function competitors(c: CaseRow, flags: Flags): string[] {
   const { list, levels } = c.sections.competitors;
-  const status = (x: { url: string; name: string; pricing: string }) => {
-    const s = flags.competitor.get(linkKey(x.url, `${x.name}: ${x.pricing}`));
-    return s ? CLAIM_STATUS[s] : 'not checked';
-  };
+  const shown = (s: Status | undefined) => (s ? CLAIM_STATUS[s] : 'not checked');
+  const product = (x: { url: string; name: string }) => shown(flags.competitor.get(linkKey(x.url, x.name)));
+  const pricing = (x: { url: string; name: string; pricing: string }) =>
+    hasPriceFigure(x.pricing) ? shown(flags.competitorPricing.get(linkKey(x.url, competitorPricingText(x)))) : '🔍 not published — check';
   return [
     '## Competitors',
     '',
     table(
-      ['Name', 'Link', 'Pricing', 'Gap', 'Status'],
-      list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap), status(x)]),
+      ['Name', 'Link', 'Pricing', 'Gap', 'Product', 'Pricing check'],
+      list.map((x) => [cell(x.name), cellLink(x.url), cell(x.pricing), cell(x.gap), product(x), pricing(x)]),
     ),
     '',
     '### Levels',
@@ -267,6 +303,7 @@ export function caseToMarkdown(c: CaseRow, claimRows: ClaimRow[], scoreRows: Sco
   return [
     ...head,
     ...summary(c), '',
+    ...forYouToCheck(c, claimRows), '',
     ...evidence(c, claimRows, linkFlags), '',
     ...numbers(c, linkFlags), '',
     ...competitors(c, linkFlags), '',

@@ -9,7 +9,7 @@ const SECTIONS_MAX = 30000;
 
 type ClaimStatus = (typeof claims.$inferSelect)['verified'];
 
-/** The evidence cap counts the case's own claims; signal and competitor link checks are reported but don't move it. */
+/** The evidence cap counts the case's own claims; signal and competitor (product/pricing) checks are reported but don't move it. */
 const CAP_SECTIONS = ['evidence', 'numbers'];
 
 /** Evidence cap by verified ratio: < 0.5 → at most 2, < 0.8 → at most 3. */
@@ -38,10 +38,16 @@ export async function score(
     const verified = count(CAP_SECTIONS, 'verified');
     const unreachable = count(CAP_SECTIONS, 'unreachable');
     const unsupported = count(CAP_SECTIONS, 'unsupported');
+    // needs_review earns no credit (like unreachable): only verified claims count toward the ratio.
+    const needsReview = count(CAP_SECTIONS, 'needs_review');
     const ratio = total === 0 ? 0 : verified / total;
+    const linkStat = (section: string, label: string) => {
+      const owner = count([section], 'unreachable') + count([section], 'needs_review');
+      return `${count([section], 'verified')}/${count([section])} ${label} verified${owner ? ` (${owner} left for the owner to check)` : ''}`;
+    };
     const linkStats =
-      `${count(['signal'], 'verified')}/${count(['signal'])} harvested signal links verified; ` +
-      `${count(['competitor'], 'verified')}/${count(['competitor'])} competitor links verified.`;
+      `${linkStat('signal', 'harvested signal links')}; ${linkStat('competitor', 'competitor links')}; ` +
+      `${linkStat('competitor-pricing', 'quoted competitor prices')}.`;
 
     const json = JSON.stringify(kase.sections, null, 1);
     const result = await router.structured(
@@ -49,7 +55,9 @@ export async function score(
       {
         prompt: prompt.render({
           sections: wrapUntrusted('case', json.slice(0, SECTIONS_MAX)),
-          stats: `${verified}/${total} cited claims verified against their source pages; ${unreachable} unreachable; ${unsupported} not supported by the page. ${linkStats}`,
+          stats:
+            `${verified}/${total} cited claims verified against their source pages; ${unreachable} unreachable; ` +
+            `${needsReview} left for the owner to check (checker unsure); ${unsupported} not supported by the page. ${linkStats}`,
         }),
         schema: AiScoresSchema,
         schemaName: 'case_scores',

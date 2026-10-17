@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import { claims } from '../../src/db/schema';
-import { verify } from '../../src/pipeline/verify';
+import { MIN_JUDGE_CONFIDENCE, REVIEW_CONFIDENCE_FLOOR, verify } from '../../src/pipeline/verify';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import type { PageResult } from '../../src/tools/fetch-page';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
@@ -145,11 +145,58 @@ describe('verify', () => {
     expect(r.row).toMatchObject({ verified: 'verified', confidence: 1 });
   });
 
-  it('requires judge confidence >= 0.6', async () => {
-    const low = await judged('short', 'page', { supported: true, confidence: 0.5 });
-    expect(low.row).toMatchObject({ verified: 'unsupported', confidence: 0.5 });
+  it('requires judge confidence >= 0.6 to verify', async () => {
     const ok = await judged('short', 'page', { supported: true, confidence: 0.6 });
-    expect(ok.row.verified).toBe('verified');
+    expect(ok.row).toMatchObject({ verified: 'verified', reviewNote: null });
+    const no = await judged('short', 'page', { supported: false, confidence: 0.6 });
+    expect(no.row).toMatchObject({ verified: 'unsupported', reviewNote: null });
+  });
+
+  it('sends an unsure judgement (confidence in [0.3, 0.6)) to the owner as needs_review, whichever way it leans', async () => {
+    expect(REVIEW_CONFIDENCE_FLOOR).toBe(0.3);
+    expect(MIN_JUDGE_CONFIDENCE).toBe(0.6);
+    const yes = await judged('short', 'page', { supported: true, confidence: 0.45 });
+    expect(yes.row).toMatchObject({ verified: 'needs_review', confidence: 0.45, reviewNote: 'checker unsure (confidence 0.45)' });
+    const no = await judged('short', 'page', { supported: false, confidence: 0.3 });
+    expect(no.row).toMatchObject({ verified: 'needs_review', reviewNote: 'checker unsure (confidence 0.30)' });
+    const edge = await judged('short', 'page', { supported: true, confidence: 0.59 });
+    expect(edge.row.verified).toBe('needs_review');
+  });
+
+  it('marks a very low-confidence judgement (< 0.3) unsupported', async () => {
+    const low = await judged('short', 'page', { supported: true, confidence: 0.29 });
+    expect(low.row).toMatchObject({ verified: 'unsupported', confidence: 0.29, reviewNote: null });
+  });
+
+  it('gives an unreachable claim a note telling the owner to open the page', async () => {
+    const { db, run, kase } = await setup();
+    const [a, b] = await mk(db, kase.id, [
+      { text: 'A', sourceUrl: 'https://down.example', quote: 'whatever' },
+      { text: 'B', sourceUrl: 'https://empty.example', quote: null },
+    ]);
+    const fetchPage = vi.fn(async (url: string) => (url.includes('down') ? page('', false) : page('')));
+    await verify({ db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    const rows = new Map((await db.select().from(claims).where(eq(claims.caseId, kase.id))).map((r) => [r.id, r]));
+    for (const id of [a!.id, b!.id]) {
+      expect(rows.get(id)).toMatchObject({ verified: 'unreachable', reviewNote: 'page could not be loaded by the checker — open it yourself' });
+    }
+  });
+
+  it('tells the judge what a competitor or competitor-pricing claim must show (verify-claim.v2)', async () => {
+    const { db, run, kase } = await setup();
+    await db.insert(claims).values([
+      { caseId: kase.id, section: 'competitor', text: 'Acme Monitor', sourceUrl: 'https://acme.example', quote: null },
+      { caseId: kase.id, section: 'competitor-pricing', text: 'Acme Monitor pricing: $49/mo', sourceUrl: 'https://acme.example', quote: null },
+    ]);
+    const router = fakeRouter({ structured: { verify: [{ supported: true, confidence: 0.9 }, { supported: true, confidence: 0.9 }] } });
+    const text = `Acme Monitor watches your stack. Plans from $49/mo. ${'lorem ipsum dolor sit amet '.repeat(10)}`;
+    await verify({ db, router, fetchPage: async () => page(text), log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+    const prompts = router.calls.filter((c) => c.stage === 'verify').map((c) => c.prompt);
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain('Claim type: competitor\n');
+    expect(prompts[1]).toContain('Claim type: competitor-pricing\n');
+    expect(prompts[0]).toContain('is about the named product or company');
+    expect(prompts[1]).toContain('shows that pricing');
   });
 
   it('marks a fetched page with almost no readable text unreachable without the judge (client-side rendered)', async () => {
