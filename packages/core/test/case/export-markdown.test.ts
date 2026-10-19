@@ -211,6 +211,41 @@ describe('caseToMarkdown', () => {
     expect(section.match(/^- /gm)).toHaveLength(2);
   });
 
+  it('shows an unconfirmable competitor claim (needs_review from verify) as 🔍 and lists it with its note', () => {
+    const note = 'the checker could not find this on the linked page — check it yourself';
+    const [a] = caseFixture().sections.competitors.list;
+    const md = caseToMarkdown(caseFixture(), [
+      ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === a!.url)),
+      claim('needs_review', { section: 'competitor', text: a!.name, sourceUrl: a!.url, quote: null, reviewNote: note }),
+      claim('needs_review', { section: 'competitor-pricing', text: `${a!.name} pricing: ${a!.pricing}`, sourceUrl: a!.url, quote: null, reviewNote: note }),
+    ], []);
+    expect(md).toMatch(/\| Generic uptime monitor \|.*\| 🔍 needs review \| 🔍 needs review \|/);
+    const section = checkSection(md);
+    // Product and pricing claims share the url and the note, so they merge into one line (D4).
+    expect(section.split('\n').filter((l) => l.startsWith('- '))).toEqual([
+      `- **Competitor:** Generic uptime monitor ([uptime-tool.example](https://uptime-tool.example/pricing)): ${note} (2 claims)`,
+    ]);
+    expect(md).not.toContain('❌');
+  });
+
+  it('merges "For you to check" items that share a url and reason, keeping the first and counting the claims', () => {
+    const down = 'https://apex.example/report';
+    const reviewNote = 'page could not be loaded by the checker — open it yourself';
+    const md = caseToMarkdown(caseFixture(), [
+      ...settledClaims(),
+      claim('unreachable', { text: 'Overpayments run 1%', sourceUrl: down, reviewNote }),
+      claim('unreachable', { text: 'Audits recover 20%', sourceUrl: down, reviewNote }),
+      claim('unreachable', { section: 'numbers', text: 'problem.rate: 3', sourceUrl: down, reviewNote }),
+      claim('needs_review', { text: 'Same page, different reason', sourceUrl: down, reviewNote: 'checker unsure (confidence 0.45)' }),
+    ], []);
+    const section = checkSection(md);
+    const lines = section.split('\n').filter((l) => l.startsWith('- '));
+    expect(lines).toEqual([
+      `- **Claim:** Overpayments run 1% ([apex.example](${down})): ${reviewNote} (3 claims)`,
+      `- **Claim:** Same page, different reason ([apex.example](${down})): checker unsure (confidence 0.45)`,
+    ]);
+  });
+
   it('tells the owner to verify everything when the case has no claims', () => {
     const md = caseToMarkdown(caseFixture(), [], []);
     expect(md).toContain('## For you to check\n\nThis case has no checked sources — verify everything yourself.\n');

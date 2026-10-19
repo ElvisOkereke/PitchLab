@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
 import { claims } from '../../src/db/schema';
-import { MIN_JUDGE_CONFIDENCE, REVIEW_CONFIDENCE_FLOOR, verify } from '../../src/pipeline/verify';
+import { COMPETITOR_REVIEW_NOTE, MIN_JUDGE_CONFIDENCE, REVIEW_CONFIDENCE_FLOOR, verify } from '../../src/pipeline/verify';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import type { PageResult } from '../../src/tools/fetch-page';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
@@ -116,9 +116,9 @@ describe('verify', () => {
     expect(row!.verified).toBe('unsupported');
   });
 
-  async function judged(quote: string, pageText: string, verdict: { supported: boolean; confidence: number }) {
+  async function judged(quote: string | null, pageText: string, verdict: { supported: boolean; confidence: number }, section = 'evidence') {
     const { db, run, kase } = await setup();
-    const [a] = await mk(db, kase.id, [{ text: 'claim text', sourceUrl: 'https://a.com', quote }]);
+    const [a] = await db.insert(claims).values({ caseId: kase.id, section, text: 'claim text', sourceUrl: 'https://a.com', quote }).returning();
     const router = fakeRouter({ structured: { verify: [verdict] } });
     // Padded past MIN_READABLE_CHARS so the judge path is exercised.
     const padded = `${pageText} ${'lorem ipsum dolor sit amet '.repeat(10)}`;
@@ -166,6 +166,49 @@ describe('verify', () => {
   it('marks a very low-confidence judgement (< 0.3) unsupported', async () => {
     const low = await judged('short', 'page', { supported: true, confidence: 0.29 });
     expect(low.row).toMatchObject({ verified: 'unsupported', confidence: 0.29, reviewNote: null });
+  });
+
+  describe('unconfirmable competitor claims go to the owner, not shown as failures', () => {
+    it('turns a confident unsupported competitor verdict into needs_review with a note', async () => {
+      expect(COMPETITOR_REVIEW_NOTE).toBe('the checker could not find this on the linked page — check it yourself');
+      const r = await judged(null, 'page', { supported: false, confidence: 0.9 }, 'competitor');
+      expect(r.row).toMatchObject({ verified: 'needs_review', confidence: 0.9, reviewNote: COMPETITOR_REVIEW_NOTE });
+    });
+
+    it('turns a very low-confidence competitor-pricing verdict into needs_review with the note', async () => {
+      const r = await judged(null, 'page', { supported: true, confidence: 0.1 }, 'competitor-pricing');
+      expect(r.row).toMatchObject({ verified: 'needs_review', confidence: 0.1, reviewNote: COMPETITOR_REVIEW_NOTE });
+      const pricing = await judged(null, 'page', { supported: false, confidence: 0.95 }, 'competitor-pricing');
+      expect(pricing.row).toMatchObject({ verified: 'needs_review', reviewNote: COMPETITOR_REVIEW_NOTE });
+    });
+
+    it('keeps unsupported for signal and evidence claims', async () => {
+      for (const section of ['signal', 'evidence', 'numbers']) {
+        const r = await judged(null, 'page', { supported: false, confidence: 0.9 }, section);
+        expect(r.row).toMatchObject({ verified: 'unsupported', reviewNote: null });
+      }
+      const low = await judged(null, 'page', { supported: true, confidence: 0.1 }, 'signal');
+      expect(low.row.verified).toBe('unsupported');
+    });
+
+    it('leaves the unsure band and verified competitor claims unchanged', async () => {
+      const unsure = await judged(null, 'page', { supported: false, confidence: 0.45 }, 'competitor');
+      expect(unsure.row).toMatchObject({ verified: 'needs_review', reviewNote: 'checker unsure (confidence 0.45)' });
+      const ok = await judged(null, 'page', { supported: true, confidence: 0.9 }, 'competitor');
+      expect(ok.row).toMatchObject({ verified: 'verified', reviewNote: null });
+      const okPricing = await judged(null, 'page', { supported: true, confidence: 0.6 }, 'competitor-pricing');
+      expect(okPricing.row).toMatchObject({ verified: 'verified', reviewNote: null });
+    });
+
+    it('still marks a competitor claim on a banned domain unsupported without judging', async () => {
+      const { db, run, kase } = await setup();
+      const [a] = await db.insert(claims).values({ caseId: kase.id, section: 'competitor', text: 'Acme', sourceUrl: 'https://www.reddit.com/r/x', quote: null }).returning();
+      const router = fakeRouter({});
+      await verify({ db, router, fetchPage: vi.fn(), log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
+      const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));
+      expect(row!.verified).toBe('unsupported');
+      expect(router.calls).toHaveLength(0);
+    });
   });
 
   it('gives an unreachable claim a note telling the owner to open the page', async () => {

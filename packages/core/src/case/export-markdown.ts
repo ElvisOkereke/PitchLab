@@ -154,27 +154,37 @@ const UNPUBLISHED_PRICE_REASON = 'pricing not published — check it yourself';
  * is written only when the case has claims and none of these.
  */
 function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
-  const item = (label: string, text: string, url: string, reason: string) => `- **${label}:** ${quoteLine(text)} (${link(url)}): ${line(reason)}`;
-  const items = claimRows
-    .filter((r) => FOR_OWNER.has(r.verified))
-    .map((r) => item(SECTION_LABEL[r.section] ?? line(r.section), r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified));
+  // Items sharing a url and reason (one unreachable page behind several claims) become one line: the first, counted.
+  const merged = new Map<string, { label: string; text: string; url: string; reason: string; count: number }>();
+  const item = (label: string, text: string, url: string, reason: string) => {
+    const key = `${url}\n${reason}`;
+    const prev = merged.get(key);
+    if (prev) prev.count++;
+    else merged.set(key, { label, text, url, reason, count: 1 });
+  };
+  for (const r of claimRows) {
+    if (FOR_OWNER.has(r.verified)) item(SECTION_LABEL[r.section] ?? line(r.section), r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified);
+  }
   for (const s of c.sections.evidence.signals) {
-    if (!flags.signal.has(linkKey(s.url, s.quote))) items.push(item('Signal', s.quote, s.url, NOT_CHECKED_REASON));
+    if (!flags.signal.has(linkKey(s.url, s.quote))) item('Signal', s.quote, s.url, NOT_CHECKED_REASON);
   }
   for (const { label, sourced } of listInputs(c.sections.numbers.inputs)) {
     if (sourced.source && !flags.input.has(`${label}: ${sourced.value}`)) {
-      items.push(item('Number input', `${label}: ${sourced.value}`, sourced.source.url, NOT_CHECKED_REASON));
+      item('Number input', `${label}: ${sourced.value}`, sourced.source.url, NOT_CHECKED_REASON);
     }
   }
   for (const x of c.sections.competitors.list) {
     // A legacy claim is listed above when unsettled, like any claim; it covers the product (and a quoted price).
     const legacy = flags.competitor.has(legacyCompetitorKey(x));
-    if (!legacy && !flags.competitor.has(linkKey(x.url, x.name))) items.push(item('Competitor', x.name, x.url, NOT_CHECKED_REASON));
+    if (!legacy && !flags.competitor.has(linkKey(x.url, x.name))) item('Competitor', x.name, x.url, NOT_CHECKED_REASON);
     // An existing pricing claim always wins (its own status is listed above when unsettled); otherwise the predicate.
     if (flags.competitorPricing.has(linkKey(x.url, competitorPricingText(x)))) continue;
-    if (!hasPriceFigure(x.pricing)) items.push(item('Competitor pricing', x.name, x.url, UNPUBLISHED_PRICE_REASON));
-    else if (!legacy) items.push(item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON));
+    if (!hasPriceFigure(x.pricing)) item('Competitor pricing', x.name, x.url, UNPUBLISHED_PRICE_REASON);
+    else if (!legacy) item('Competitor pricing', competitorPricingText(x), x.url, NOT_CHECKED_REASON);
   }
+  const items = [...merged.values()].map(
+    (m) => `- **${m.label}:** ${quoteLine(m.text)} (${link(m.url)}): ${line(m.reason)}${m.count > 1 ? ` (${m.count} claims)` : ''}`,
+  );
   const out = ['## For you to check', ''];
   if (claimRows.length === 0) out.push('This case has no checked sources — verify everything yourself.', ...(items.length ? [''] : []));
   else if (items.length === 0) out.push('Nothing — every displayed source was confirmed or flagged.');

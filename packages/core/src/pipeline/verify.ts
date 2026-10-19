@@ -47,6 +47,12 @@ export const MIN_JUDGE_CONFIDENCE = 0.6;
  */
 export const REVIEW_CONFIDENCE_FLOOR = 0.3;
 export const UNREACHABLE_NOTE = 'page could not be loaded by the checker — open it yourself';
+/**
+ * Competitor claims the judge could not confirm: a price or product missing from the linked page, or a category linked
+ * through someone else's article, means "couldn't confirm", not "false", so the owner checks it (decision 1).
+ */
+export const COMPETITOR_REVIEW_NOTE = 'the checker could not find this on the linked page — check it yourself';
+const COMPETITOR_SECTIONS = new Set(['competitor', 'competitor-pricing']);
 const MIN_QUOTE_WORDS = 6;
 const MIN_QUOTE_CHARS = 30;
 /**
@@ -164,6 +170,11 @@ export async function verify(
           reviewNote = `checker unsure (confidence ${confidence.toFixed(2)})`;
         } else {
           verified = 'unsupported';
+        }
+        // Evidence, numbers and signals stay unsupported (❌); an unconfirmed competitor claim goes to the owner.
+        if (verified === 'unsupported' && COMPETITOR_SECTIONS.has(claim.section)) {
+          verified = 'needs_review';
+          reviewNote = COMPETITOR_REVIEW_NOTE;
         }
       }
     }

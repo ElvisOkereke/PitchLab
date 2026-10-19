@@ -64,6 +64,7 @@ const PRICE_PATTERNS = [
   new RegExp(String.raw`\b${CURRENCY_CODE}\s?${NUM}`, 'i'), // USD 15
   new RegExp(String.raw`${NUM}\s?${CURRENCY_CODE}\b`, 'i'), // 49 USD
   new RegExp(String.raw`${NUM}\s*(?:\/\s*${BILLING_UNIT}\b|per\s+${BILLING_UNIT}\b)`, 'i'), // 29/mo, 29 per month, 5 per seat
+  new RegExp(String.raw`${NUM}\s?(?:%|percent\b|per\s?cent\b)`, 'i'), // 20%, 5-10% of spend, 20 to 30 percent, 25 per cent
   // "Free" / "free tier" / "free plan" is a published price; a free trial, demo or consultation is not.
   /\bfree\b(?!\s+(?:trial|demo|consultation|quote|estimate|audit|assessment)s?\b)/i,
 ];
@@ -71,7 +72,8 @@ const PRICE_PATTERNS = [
 /**
  * True when a competitor's pricing text states a concrete published price, so a `competitor-pricing` claim can be
  * checked: a currency symbol or code next to a number ("$49", "49 USD", "CA$29", "€10"), a number with a billing unit
- * ("29/mo", "5 per seat"), or a free plan ("Free", "free tier"). Bare numbers ("first 150 testers", "10+ seats") are not.
+ * ("29/mo", "5 per seat"), a percentage fee or commission ("20%", "20 to 30 percent of recovered credits"), or a free plan
+ * ("Free", "free tier"). Bare numbers ("first 150 testers", "10+ seats", "up to 5 users") are not.
  */
 export const hasPriceFigure = (pricing: string) => PRICE_PATTERNS.some((re) => re.test(pricing));
 

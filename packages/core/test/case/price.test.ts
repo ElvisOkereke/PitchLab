@@ -23,6 +23,16 @@ describe('hasPriceFigure', () => {
     'Free tier',
     'free plan for 1 form',
     'Agency staff time (hourly rates $75–$200/hour cited)',
+    // A percentage fee or commission is a price (contingency and percent-of-spend pricing).
+    '20%',
+    '5-10% of media spend',
+    '20 to 30 percent',
+    '15 percent of recovered credits',
+    '10% commission',
+    'a percentage of recovered overpayments, usually between 20 to 30 percent',
+    'typically 5-10% of media spend',
+    '12.5 % of savings',
+    '25 per cent contingency',
   ])('treats %j as a published price', (p) => {
     expect(hasPriceFigure(p)).toBe(true);
   });
@@ -37,6 +47,8 @@ describe('hasPriceFigure', () => {
     'Free trial, then contact sales',
     'Free demo on request',
     'Version 2.0 launched in 2024',
+    'Up to 5 users included',
+    'A percentage of recovered funds (rate not published)',
     '',
   ])('treats %j as not a published price', (p) => {
     expect(hasPriceFigure(p)).toBe(false);
