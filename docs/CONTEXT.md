@@ -10,8 +10,11 @@
   case-similarity rule (0.82) never fired, real copies sit at 0.68–0.86. No new case, so the new-case checks
   (`needs_review`, pricing split, GitHub via API) are untested live. One export defect fixed (legacy competitor claims).
   2026-10-19: five owner-idea cases written (`docs/runs/2026-10-19-owner-ideas.md`), none pitch-worthy yet.
-  **Tuning-3 built on branch `tuning-3`** (funnel + per-sector research + D1–D4; 368 tests green), not yet run live.
-  Next: a live open run on `tuning-3` to check gate entrants and passes, then merge, then Plan 2 (Dashboard).
+  **Tuning-3 built on branch `tuning-3`** (funnel + per-sector research + D1–D4; 368 tests green) and run live
+  2026-10-19 (`docs/runs/2026-10-19-run-4.md`): 39 signals, 13 ideas, 5 at gate, **0 passed** (generic 4, autonomy 3);
+  ideas fully off the old clusters, but the crowd penalty saturated (12/13 at cap) and web signals are mostly vendor
+  blogs. **Owner decision needed:** 3 of 4 `generic` kills call a new buyer/channel "positioning", which ideate's
+  "non-obvious buyer" principle pushes; align the generator and gate. Then merge, then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -208,3 +211,10 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   to fee vocabulary ("20% fee", "15 percent of recovered credits") counts as a published price, a bare one ("20%",
   "99.9% uptime", "30% discount") does not; D2/D3 unconfirmed competitor claims become `needs_review` ("check it
   yourself"), not ❌; D4 "For you to check" merges items with the same url + reason + label ("(N claims)"). D5 (gate counts evidence before verify) and other leftovers are in `docs/plan-1-followups.md`.
+- **2026-10-19:** Run 4 on `tuning-3` (`docs/runs/2026-10-19-run-4.md`). Open run `7d0959e7`: 6 per-sector research
+  calls (18 searches) + 8 tech-forum queries → 39 signals (run 3: 20), ~27/31 web signals vendor content marketing;
+  13 ideas, 0 duplicates, 0 skips (max 0.552 to a past kill, 0.654 to a case), 8 below the cut, 5 at gate, **0 passed**
+  (generic 4, autonomy 3). Already-sold 10 / already-covered 9 reached ideate.v6: 0 lead-capture ideas, max 0.694 to
+  any past idea. Crowd penalty hit the cap for 12/13 ideas and changed no pick; novelty weight swapped 2 picks, incl.
+  the only `generic` pass (Repair-Request Clock, killed on autonomy). No case; no defect; $4.91, 0 × 429. Owner
+  decision: 3 of 4 generic kills reject "same product, new buyer" as positioning, contradicting ideate principle 3.
