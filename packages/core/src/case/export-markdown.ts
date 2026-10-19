@@ -154,10 +154,11 @@ const UNPUBLISHED_PRICE_REASON = 'pricing not published — check it yourself';
  * is written only when the case has claims and none of these.
  */
 function forYouToCheck(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
-  // Items sharing a url and reason (one unreachable page behind several claims) become one line: the first, counted.
+  // Items sharing a url, reason and label (one unreachable page behind several claims) become one line: the first,
+  // counted. The label stays in the key so a competitor's product and pricing items remain separate lines.
   const merged = new Map<string, { label: string; text: string; url: string; reason: string; count: number }>();
   const item = (label: string, text: string, url: string, reason: string) => {
-    const key = `${url}\n${reason}`;
+    const key = `${url}\n${reason}\n${label}`;
     const prev = merged.get(key);
     if (prev) prev.count++;
     else merged.set(key, { label, text, url, reason, count: 1 });

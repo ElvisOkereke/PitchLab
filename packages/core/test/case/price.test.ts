@@ -23,16 +23,20 @@ describe('hasPriceFigure', () => {
     'Free tier',
     'free plan for 1 form',
     'Agency staff time (hourly rates $75–$200/hour cited)',
-    // A percentage fee or commission is a price (contingency and percent-of-spend pricing).
-    '20%',
+    // A percentage counts only next to fee vocabulary (contingency and percent-of-spend pricing).
+    '20% fee',
+    'Fee: 20%',
+    'commission of 20%',
     '5-10% of media spend',
-    '20 to 30 percent',
+    'typically 5-10% of media spend',
+    '20 to 30 percent of recovered credits',
     '15 percent of recovered credits',
     '10% commission',
-    'a percentage of recovered overpayments, usually between 20 to 30 percent',
-    'typically 5-10% of media spend',
     '12.5 % of savings',
     '25 per cent contingency',
+    'takes a 15% cut',
+    'charges 3% of collected',
+    'Contingency rate 25–35%',
   ])('treats %j as a published price', (p) => {
     expect(hasPriceFigure(p)).toBe(true);
   });
@@ -49,6 +53,14 @@ describe('hasPriceFigure', () => {
     'Version 2.0 launched in 2024',
     'Up to 5 users included',
     'A percentage of recovered funds (rate not published)',
+    // A bare percentage, or one about something other than a fee, is not a price.
+    '20%',
+    '20 to 30 percent',
+    '99.9% uptime',
+    'grew 30% YoY',
+    '40% faster',
+    // A discount off an unstated base gives no checkable price.
+    '30% discount for annual plans',
     '',
   ])('treats %j as not a published price', (p) => {
     expect(hasPriceFigure(p)).toBe(false);

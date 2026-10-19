@@ -221,20 +221,22 @@ describe('caseToMarkdown', () => {
     ], []);
     expect(md).toMatch(/\| Generic uptime monitor \|.*\| 🔍 needs review \| 🔍 needs review \|/);
     const section = checkSection(md);
-    // Product and pricing claims share the url and the note, so they merge into one line (D4).
+    // Product and pricing share the url and the note but not the label, so they stay on separate lines (D4).
     expect(section.split('\n').filter((l) => l.startsWith('- '))).toEqual([
-      `- **Competitor:** Generic uptime monitor ([uptime-tool.example](https://uptime-tool.example/pricing)): ${note} (2 claims)`,
+      `- **Competitor:** Generic uptime monitor ([uptime-tool.example](https://uptime-tool.example/pricing)): ${note}`,
+      `- **Competitor pricing:** Generic uptime monitor pricing: $15/month for 50 monitors ([uptime-tool.example](https://uptime-tool.example/pricing)): ${note}`,
     ]);
     expect(md).not.toContain('❌');
   });
 
-  it('merges "For you to check" items that share a url and reason, keeping the first and counting the claims', () => {
+  it('merges "For you to check" items that share a url, reason and label, keeping the first and counting the claims', () => {
     const down = 'https://apex.example/report';
     const reviewNote = 'page could not be loaded by the checker — open it yourself';
     const md = caseToMarkdown(caseFixture(), [
       ...settledClaims(),
       claim('unreachable', { text: 'Overpayments run 1%', sourceUrl: down, reviewNote }),
       claim('unreachable', { text: 'Audits recover 20%', sourceUrl: down, reviewNote }),
+      claim('unreachable', { text: 'Recovery takes 90 days', sourceUrl: down, reviewNote }),
       claim('unreachable', { section: 'numbers', text: 'problem.rate: 3', sourceUrl: down, reviewNote }),
       claim('needs_review', { text: 'Same page, different reason', sourceUrl: down, reviewNote: 'checker unsure (confidence 0.45)' }),
     ], []);
@@ -242,8 +244,24 @@ describe('caseToMarkdown', () => {
     const lines = section.split('\n').filter((l) => l.startsWith('- '));
     expect(lines).toEqual([
       `- **Claim:** Overpayments run 1% ([apex.example](${down})): ${reviewNote} (3 claims)`,
+      `- **Number input:** problem.rate: 3 ([apex.example](${down})): ${reviewNote}`,
       `- **Claim:** Same page, different reason ([apex.example](${down})): checker unsure (confidence 0.45)`,
     ]);
+  });
+
+  it('keeps a competitor\'s product and pricing items on separate lines even with the same url and reason', () => {
+    const kase = caseFixture();
+    const [a] = kase.sections.competitors.list;
+    const reviewNote = 'page could not be loaded by the checker — open it yourself';
+    const md = caseToMarkdown(kase, [
+      ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === a!.url)),
+      claim('unreachable', { section: 'competitor', text: a!.name, sourceUrl: a!.url, quote: null, reviewNote }),
+      claim('unreachable', { section: 'competitor-pricing', text: `${a!.name} pricing: ${a!.pricing}`, sourceUrl: a!.url, quote: null, reviewNote }),
+    ], []);
+    const lines = checkSection(md).split('\n').filter((l) => l.startsWith('- '));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^- \*\*Competitor:\*\* Generic uptime monitor .*open it yourself$/);
+    expect(lines[1]).toMatch(/^- \*\*Competitor pricing:\*\* Generic uptime monitor pricing: .*open it yourself$/);
   });
 
   it('tells the owner to verify everything when the case has no claims', () => {
