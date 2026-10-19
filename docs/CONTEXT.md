@@ -16,7 +16,11 @@
   blogs. **Tuning-4 built on branch `tuning-4`** (owner chose option (a); 368 → 399 tests green, migration 0003):
   ideate names incumbents + the functional gap and is told a new buyer/channel is not a differentiator, the gate
   judges that claimed gap, the crowd penalty is gone, and signals are tagged operator/neutral/vendor with only
-  operator + neutral counting as evidence. Not yet run live. Next: run 5, then merge, then Plan 2 (Dashboard).
+  operator + neutral counting as evidence. Merged to main and run live 2026-10-19 (`docs/runs/2026-10-19-run-5.md`):
+  migration 0003 applied cleanly (prior rows unchanged), 43 signals (operator 17, neutral 0, vendor 26), 8 ideas, 5 at
+  gate, **0 passed** (autonomy 4, generic 2, control 2, regulation 1). Generic kills now about function, not buyer;
+  autonomy is the binding check; operator-only evidence collapsed ideas onto two signal sets. Next: owner decision on
+  run-5 Read 5–6 (feed all kill reasons + an autonomy rule into ideate; fix signal supply), then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -235,3 +239,14 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   signals do not count either (gate reasoning: "excluded N vendor, M untagged"), and a re-harvest backfills a NULL voice
   (never overwrites one). Consequence: re-gating old ideas fails `evidence` until their signals are re-harvested (all 121
   signals in the local DB are untagged). Owner ideas store no incumbents or gap.
+- **2026-10-19:** Run 5 on `main` after tuning-4 (`docs/runs/2026-10-19-run-5.md`). Migration 0003 applied on start
+  (backup `.data/pglite-backup-20261019-143949`; signals 121 / ideas 60 / cases 9 / claims 220 unchanged; 3 legacy
+  signals got a voice backfilled). Open run `71862e9d`: 43 signals, voice operator 17 / neutral 0 / vendor 26 (web 5/0/26,
+  wordpress.org 10/0/0, github 2/0/0); first owner-forum threads (lawnsite, electriciantalk). 8 ideas (2 asked per lens, 1
+  each), 0 duplicates, 0 skips, 5 at gate, **0 passed**: autonomy 4, generic 2, control 2, regulation 1. Option (a) worked:
+  all gaps are functional and both generic kills name an incumbent doing the claimed function (NCS, draw inspectors).
+  Evidence rule excluded nothing at the gate (ideate cited operator signals only), but 5 of 8 ideas share the same 5
+  signals and 4 of 5 entrants reach 3 units only through a GitHub problem-catalog issue mis-tagged `operator`. Screen:
+  plain ranking gives the same 5; 0 re-asks. No case, no defect; $4.42, 0 × 429. Recommended next: feed all gate kill
+  reasons (not only generic) and an autonomy rule into ideate; exclude problem catalogs from operator voice; sector-aware
+  WordPress queries.
