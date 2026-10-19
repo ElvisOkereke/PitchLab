@@ -18,14 +18,47 @@ export const MvpSpecSchema = z.object({
 });
 export type MvpSpec = z.infer<typeof MvpSpecSchema>;
 
-export const PilotPlanSchema = z.object({
-  idealPilotCustomer: text,
-  firstStep: text,
-  steps: list.min(3).max(8),
-  measures: z.array(z.object({ metric: text, successThreshold: text })).min(2),
-  timelineWeeks: z.number().int().min(1).max(52),
-  permissionsAndRisks: list,
-});
+/**
+ * Wording that means acting on someone else's site or systems (ruling P3-R1): submitting or filling in forms, sending or
+ * running test leads, probing, scanning, signing up, logging in, sending test emails or messages.
+ */
+export const THIRD_PARTY_ACTION =
+  /\b(?:submit(?:s|ted|ting)?|fill(?:s|ed|ing)?\s+(?:in|out)|test[\s-]+leads?|prob(?:e|es|ed|ing)|scan(?:s|ned|ning)?|sign(?:s|ed|ing)?[\s-]*up|log(?:s|ged|ging)?[\s-]*(?:in|on)\b|login|test[\s-]+(?:e-?mails?|messages?))/i;
+/** Wording that shows the owner has (or must get) the third party's permission. */
+export const PERMISSION_WORDING = /\b(?:permission|consent(?:s|ed|ing)?|authori[sz](?:e|es|ed|ing|ation|ations)|agreed)\b/i;
+
+/** True when the text describes acting on a third party's site or systems without mentioning permission. */
+export const needsPermissionWording = (s: string) => THIRD_PARTY_ACTION.test(s) && !PERMISSION_WORDING.test(s);
+
+export const PilotPlanSchema = z
+  .object({
+    idealPilotCustomer: text,
+    firstStep: text,
+    steps: list.min(3).max(8),
+    measures: z.array(z.object({ metric: text, successThreshold: text })).min(2),
+    timelineWeeks: z.number().int().min(1).max(52),
+    permissionsAndRisks: list,
+  })
+  // A refinement, not a transform (R9): the router re-asks until every such step names the permission it depends on.
+  .superRefine((plan, ctx) => {
+    const checked: [string, (string | number)[], string][] = [
+      ['firstStep', ['firstStep'], plan.firstStep],
+      ...plan.steps.map((s, i): [string, (string | number)[], string] => [`steps[${i}]`, ['steps', i], s]),
+      ...plan.measures.map((m, i): [string, (string | number)[], string] => [`measures[${i}].metric`, ['measures', i, 'metric'], m.metric]),
+      ...plan.permissionsAndRisks.map((s, i): [string, (string | number)[], string] => [`permissionsAndRisks[${i}]`, ['permissionsAndRisks', i], s]),
+    ];
+    for (const [label, path, value] of checked) {
+      if (needsPermissionWording(value)) {
+        ctx.addIssue({
+          code: 'custom',
+          path,
+          message:
+            `step ${label} interacts with a third party without mentioning permission: ` +
+            "say in the same text that it happens only with the owner's written permission (or consent / authorisation / as agreed)",
+        });
+      }
+    }
+  });
 export type PilotPlan = z.infer<typeof PilotPlanSchema>;
 
 export const InterviewKitSchema = z.object({

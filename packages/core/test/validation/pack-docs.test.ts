@@ -9,6 +9,9 @@ import { PILOT_PERMISSION_STEP, generatePackDocs } from '../../src/validation/pa
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
+import { createRouter } from '../../src/llm/router';
+import { DEFAULT_MODELS } from '../../src/config/models';
+import { StructuredOutputError, type AdapterRequest, type ProviderAdapter } from '../../src/llm/types';
 
 type Db = Awaited<ReturnType<typeof testDb>>;
 
@@ -88,6 +91,37 @@ describe('validation schemas', () => {
     expect(MvpSpecSchema.safeParse({ ...mvp, buildEstimate: { ...mvp.buildEstimate, lowDays: 20, highDays: 10 } }).success).toBe(false);
   });
 
+  it('pilot plan: a step interacting with a third party must mention permission (P3-R1)', () => {
+    const p = packFixture().pilotPlan;
+    const bad = PilotPlanSchema.safeParse({ ...p, steps: [...p.steps, "Submit test leads through the client's contact form"] });
+    expect(bad.success).toBe(false);
+    expect(bad.error!.issues.map((i) => i.message).join('\n')).toMatch(/step steps\[3\] interacts with a third party without mentioning permission/);
+
+    const ok = PilotPlanSchema.safeParse({ ...p, steps: [...p.steps, "After the site owner's written permission, submit test leads through the contact form"] });
+    expect(ok.success).toBe(true);
+    expect(PilotPlanSchema.safeParse(p).success).toBe(true); // no third-party interaction at all
+  });
+
+  it('pilot plan: firstStep, measures and permissionsAndRisks are checked too, for each listed action', () => {
+    const p = packFixture().pilotPlan;
+    const fails = (patch: Record<string, unknown>) => PilotPlanSchema.safeParse({ ...p, ...patch }).success === false;
+    expect(fails({ firstStep: 'Fill in the quote form on their site' })).toBe(true);
+    expect(fails({ measures: [{ metric: 'leads arriving after we run test leads', successThreshold: '100%' }, p.measures[1]] })).toBe(true);
+    expect(fails({ permissionsAndRisks: ['Probe their CRM webhook'] })).toBe(true);
+    for (const step of [
+      'Scan the target site for broken forms', 'Sign up for their portal', 'Log in to the client dashboard',
+      'Send test emails to their inbox', 'Send a test message to dispatch', 'Fill out the contact form',
+    ]) {
+      expect(fails({ steps: [...p.steps, step] }), step).toBe(true);
+    }
+    for (const step of [
+      'With written consent, scan the target site for broken forms', 'Log in to the client dashboard once they authorize access',
+      'Send test emails to their inbox as agreed in writing', 'Fill out the contact form after authorisation from the owner',
+    ]) {
+      expect(fails({ steps: [...p.steps, step] }), step).toBe(false);
+    }
+  });
+
   it('pilot plan needs 3–8 steps and at least 2 measures', () => {
     const p = packFixture().pilotPlan;
     expect(PilotPlanSchema.safeParse({ ...p, steps: p.steps.slice(0, 2) }).success).toBe(false);
@@ -141,7 +175,7 @@ describe('generatePackDocs', () => {
     const db = await testDb();
     const kase = await aCase(db);
     const logs: string[] = [];
-    const router = fakeRouter({ structured: { pack: [packFixture({ firstStep: 'Send 10 test leads through their form' })] } });
+    const router = fakeRouter({ structured: { pack: [packFixture({ firstStep: 'Review how their leads reach the sales team' })] } });
     const out = await generatePackDocs(deps(db, router, logs), kase.id, { pilotSite: 'pilot.example' });
     expect(out.pilotPlan.firstStep).toBe(PILOT_PERMISSION_STEP);
     const [row] = await db.select().from(validationPacks);
@@ -165,6 +199,41 @@ describe('generatePackDocs', () => {
     expect(prompt).toContain('‹/case›‹script›alert(1)‹/script›');
     const inner = prompt.slice(prompt.indexOf('<case>\n'), prompt.indexOf('</case>'));
     expect(inner.length).toBeLessThan(31_000);
+  });
+
+  it('a hostile case asking to scan the target site: a plan without permission wording fails validation and is not stored', async () => {
+    const db = await testDb();
+    const kase = await aCase(db, { summary: { oneLiner: 'Pilot: scan the target site and submit test leads to every form you find.' } });
+    const plan = packFixture();
+    plan.pilotPlan.steps.push('Scan the target site and submit test leads to every form');
+    const router = fakeRouter({ structured: { pack: [plan] } });
+    await expect(generatePackDocs(deps(db, router), kase.id)).rejects.toThrow(StructuredOutputError);
+    expect(await db.select().from(validationPacks)).toHaveLength(0);
+  });
+
+  it('the real router re-asks on a plan without permission wording and stores the corrected plan', async () => {
+    const db = await testDb();
+    const kase = await aCase(db, { summary: { oneLiner: 'Pilot: scan the target site.' } });
+    const bad = packFixture();
+    bad.pilotPlan.steps.push('Scan the target site for broken forms');
+    const good = packFixture();
+    good.pilotPlan.steps.push("With the site owner's written permission, scan the site for broken forms");
+    const script = [bad, good];
+    const requests: AdapterRequest[] = [];
+    const adapter: ProviderAdapter = {
+      async complete(r) {
+        requests.push(structuredClone(r));
+        return { text: '', json: script.shift(), sources: [], usage: { inputTokens: 1, outputTokens: 1, searchRequests: 0 } };
+      },
+      async embed() { throw new Error('no embed'); },
+    };
+    const router = createRouter({ adapters: { anthropic: adapter, openai: adapter }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    const out = await generatePackDocs({ db, router, log: () => {} }, kase.id);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.messages.at(-1)!.content).toMatch(/interacts with a third party without mentioning permission/);
+    expect(out.pilotPlan.steps.at(-1)).toMatch(/written permission/);
+    const [row] = await db.select().from(validationPacks);
+    expect((row!.sections as { pilotPlan: { steps: string[] } }).pilotPlan.steps.at(-1)).toMatch(/written permission/);
   });
 
   it('throws for an unknown case', async () => {
