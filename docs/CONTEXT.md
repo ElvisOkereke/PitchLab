@@ -189,3 +189,11 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   "not checked yet" (`78885c1`). Owner decision needed: how to stop repeat ideas reaching the gate (similarity to past
   gate kills, lower threshold) and whether to feed `generic` kills back into ideate.
 - **2026-10-17:** tuning-2 merged + pushed. A CRLF line-ending issue (Windows autocrlf) broke one test on main briefly; fixed (prompt loader normalises CRLF, `.gitattributes` enforces LF) and pushed green (310 tests). Run 3: 0/5 passed the gate (all `generic`); next options presented to owner.
+- **2026-10-19:** Owner approved option A (run the five screened-out novel ideas as owner ideas) then B+C. Five cases generated
+  ($21.56; `docs/runs/2026-10-19-owner-ideas.md`): none pitch-worthy yet, all five failed the `autonomy` check (need human
+  labour). Best = **Shipper detention proof packets for freight brokers** (ROI 1.07×, the only idea where no competitor
+  already sells it; needs 5–10 broker interviews to test the 20 hrs/month loss assumption). Others: permit-share reports for
+  HVAC agencies (thin moat), checkout-outage loss reports (no one pays it back), contingency ad-invoice recovery (−285% margin,
+  human work), rent-notice engine (ROI 0.59×, already sold, legal risk). Defects D1–D5 logged. Build round `tuning-3`
+  (`docs/superpowers/plans/2026-10-19-tuning-3.md`): funnel (skip past kills, already-sold context, novelty/crowdedness in
+  screen), per-sector research, plus D1–D4 fixes.
