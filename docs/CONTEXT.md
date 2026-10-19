@@ -9,12 +9,13 @@
   entrants fell from 3/5 to 1/5, but repeat ideas (benchmark idea, a run-2 gate kill) still reach the gate: the
   case-similarity rule (0.82) never fired, real copies sit at 0.68–0.86. No new case, so the new-case checks
   (`needs_review`, pricing split, GitHub via API) are untested live. One export defect fixed (legacy competitor claims).
-  Next: owner decision on the run-3 "next improvement" (skip near past gate kills, feed `generic` kills to ideate),
-  then Plan 2 (Dashboard).
+  2026-10-19: five owner-idea cases written (`docs/runs/2026-10-19-owner-ideas.md`), none pitch-worthy yet.
+  **Tuning-3 built on branch `tuning-3`** (funnel + per-sector research + D1–D4; 356 tests green), not yet run live.
+  Next: a live open run on `tuning-3` to check gate entrants and passes, then merge, then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
-- **Last updated:** 2026-10-17
+- **Last updated:** 2026-10-19
 
 ## The Goal (in the user's words, summarised)
 Build a repeatable **software-service business case generator**: something run consistently to research and produce
@@ -197,3 +198,12 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   human work), rent-notice engine (ROI 0.59×, already sold, legal risk). Defects D1–D5 logged. Build round `tuning-3`
   (`docs/superpowers/plans/2026-10-19-tuning-3.md`): funnel (skip past kills, already-sold context, novelty/crowdedness in
   screen), per-sector research, plus D1–D4 fixes.
+- **2026-10-19:** Tuning-3 built on `tuning-3` (TDD, 310 → 356 tests, typecheck green; no live run, no migration).
+  Screen: skips candidates at cosine ≥ 0.75 to any `gated_out` idea; `screen.v2` also lists up to 8 known competitors,
+  and ranking is `(7 criteria + novelty) / 8 − min(1, 0.25 × competitors)`. Ideate (`ideate.v6`): untrusted
+  `<already-sold>` (past `generic` kills with the gate's reason) and `<already-covered>` (ideas with cases), 15 each.
+  Harvest (`harvest-research.v4`): one research call per sector (open: the 6 picked; sector: up to 8;
+  `researchSearchesPerSector`, default 3), owner/trade sources preferred; tech forums only when a software-adjacent
+  sector is chosen. Fixes: D1 percentage prices count as published; D2/D3 unconfirmed competitor claims become
+  `needs_review` ("check it yourself"), not ❌; D4 "For you to check" merges items with the same url + reason
+  ("(N claims)"). D5 (gate counts evidence before verify) and other leftovers are in `docs/plan-1-followups.md`.

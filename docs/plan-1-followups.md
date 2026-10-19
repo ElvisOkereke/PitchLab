@@ -10,6 +10,21 @@ Taken from the Plan 1 build ledger (subagent-driven development, 2026-10-17) and
 2. **Guard the empty claims insert** in `deep-case.ts`. If every claim is filtered out (banned or unparseable sources and no signals), `tx.insert(claims).values([])` throws. The fix is a one-line `if (rows.length)`.
 3. **Link cap.** Slice the displayed `evidence.signals` and `competitors.list` to the 15-item verification cap, so no link is ever shown unverified. Today, links beyond the cap render as "not checked".
 
+## Tuning-3 (2026-10-19, branch `tuning-3`)
+- [x] **Source skew:** open and sector seeds now make one research call per sector (3 searches each, trade and owner
+  sources preferred), and the tech-forum sources (HN, Stack Exchange, GitHub, WordPress.org) run only when a
+  software-adjacent sector is chosen.
+- [x] **Diverse gate entrants follow-ups (run 3):** screen skips candidates at cosine ≥ 0.75 to any gated-out idea;
+  ideate sees past `generic` kills ("already sold") and ideas with cases ("already covered"); screen ranks by a
+  novelty-weighted mean minus 0.25 per known competitor (max 1).
+
+Open after tuning-3:
+- `lens` seeds still use a single research call (not per sector).
+- The screen's crowdedness list (`knownCompetitors`) is model knowledge, not searched: a cheap pre-check, not evidence.
+- **D5:** the gate counts evidence before verification, so a harvested quote that isn't on its page still counted
+  toward the `evidence` rule. Consider re-checking evidence after verify.
+- GitHub-API verification has not yet been exercised on a real case (no GitHub URLs in run 3 or the owner-idea runs).
+
 ## Waiting on owner feedback (§12.2 tuning)
 - Should lead-form examples be dropped from the benchmark quality bar in the ideate prompt?
 - Should `DEFAULT_WP_SLUGS` and `PAIN_PHRASES` be broadened beyond lead-form and SMTP pain? Today they push signals toward the benchmark.
