@@ -23,9 +23,19 @@ const ideaFields = {
   mechanism: z.enum(IDEA_MECHANISMS),
   buyerType: z.string(),
 };
+/**
+ * Generated ideas also name the incumbents the model knows and the functional gap they leave (ideate.v7), so the gate
+ * can judge that claimed gap. Both are model claims, not verified evidence.
+ */
 const lensIdeasSchema = z.object({
-  ideas: z.array(z.object({ ...ideaFields, signalUrls: z.array(z.string()) })),
+  ideas: z.array(z.object({
+    ...ideaFields,
+    knownIncumbents: z.array(z.string().max(120)).max(8),
+    functionalGap: z.string().max(600),
+    signalUrls: z.array(z.string()),
+  })),
 });
+/** Owner ideas never get invented incumbents or gaps: those columns stay null. */
 const ownerIdeaSchema = z.object(ideaFields);
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -62,7 +72,7 @@ export async function ideate(
       { runId: run.id, promptVersion: prompt.version },
     );
     const ideaIds = await replaceRunIdeas(db, run.id, [{
-      runId: run.id, lensId: null, origin: 'owner', ...out, signalIds: input.signalIds, status: 'candidate',
+      runId: run.id, lensId: null, origin: 'owner', ...out, functionalGap: null, knownIncumbents: null, signalIds: input.signalIds, status: 'candidate',
     }]);
     log('ideate: 1 owner idea');
     return { ideaIds };
@@ -82,7 +92,8 @@ export async function ideate(
   const rows = used.length ? await db.select().from(signals).where(inArray(signals.id, used)) : [];
   const byId = new Map(rows.map((r) => [r.id, r]));
   const passed = used.map((id) => byId.get(id)).filter((r): r is NonNullable<typeof r> => !!r);
-  const signalsText = passed.map((s) => `- url: ${s.url}\n  quote: ${oneLine(s.quote)}`).join('\n');
+  // Each signal carries who wrote it; untagged (pre-tuning-4) rows show as `unknown`.
+  const signalsText = passed.map((s) => `- url: ${s.url}\n  voice: ${s.voice ?? 'unknown'}\n  quote: ${oneLine(s.quote)}`).join('\n');
 
   const count = Math.ceil(cfg.ideaCount / chosen.length);
   // What competitors already sell (gate kills on `generic`) and what already has a case, so ideation steers away.

@@ -11,8 +11,8 @@ const render = () =>
   });
 
 describe('ideate prompt', () => {
-  it('is v6 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v6');
+  it('is v7 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v7');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -41,5 +41,23 @@ describe('ideate prompt', () => {
   });
   it('asks for variety of industry, buyer and mechanism', () => {
     expect(render()).toContain('Ideas must vary in industry, buyer and mechanism. Monitoring/alerting is only one of many possible mechanisms.');
+  });
+  it('says a new buyer or channel is not a differentiator and asks for known incumbents and the functional gap (option a)', () => {
+    const text = render();
+    expect(text).toContain(
+      'A new buyer, channel, distribution wedge or packaging of an existing product is NOT a differentiator. ' +
+        'If the only difference between your idea and something already sold is who buys it or how it is sold, do not propose it.',
+    );
+    expect(text).toContain(
+      'For each idea, list the incumbents you know (check `<already-sold>` first, then your own knowledge) in `knownIncumbents` ' +
+        '(empty only if you truly know of none), and state in `functionalGap` the specific function or capability they leave unserved. ' +
+        'The gap must be about what the product does, not who it is for.',
+    );
+  });
+  it('counts only operator, neutral or unknown signals as evidence; vendor signals never count', () => {
+    const text = render();
+    expect(text).toContain('at least 3 signals from at least 3 different websites');
+    expect(text).toContain('counting only signals whose voice is `operator`, `neutral` or `unknown`');
+    expect(text).toContain('they may inform what already exists, but they never count as evidence of pain');
   });
 });
