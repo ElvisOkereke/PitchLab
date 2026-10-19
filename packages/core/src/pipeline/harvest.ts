@@ -15,6 +15,17 @@ import type { RunConfig, StageDeps } from './types';
 const BATCH = 25;
 const QUERIES_PER_SOURCE = 2;
 const PHRASE_SOURCES = new Set(['hn', 'stackexchange', 'github']);
+/** A sector seed researches at most this many sectors (one research call each). */
+const MAX_RESEARCH_SECTORS = 8;
+
+/**
+ * Seeded sectors (exact `CA_US.sectors` strings) whose operators talk on developer forums. Open and sector seeds query
+ * the tech-forum sources (hn, stackexchange, github, wordpress) only when at least one chosen sector is in this list.
+ */
+export const SOFTWARE_ADJACENT_SECTORS = [
+  'web design agencies', 'digital marketing agencies', 'managed IT providers', 'ecommerce brands (Shopify)',
+] as const;
+const SOFTWARE_ADJACENT = new Set<string>(SOFTWARE_ADJACENT_SECTORS);
 
 const extractSchema = z.object({
   signals: z.array(z.object({
@@ -65,31 +76,40 @@ export async function harvest(
   if (!market) throw new Error(`Unknown market: ${cfg.marketId}`);
   const countries = market.countries.join(', ');
 
-  // Build phrase queries from the seed.
+  // Build phrase queries and the research calls (one focus each) from the seed.
   let phraseQueries: string[] = [];
-  let focus: string;
-  if (cfg.seedType === 'open') {
-    phraseQueries = pick(market.sectors, 6, random).flatMap((s) => phrasesFor(s, random).map((p) => `${s} ${p}`));
-    focus = `Pain across these sectors: ${market.sectors.join(', ')}.`;
-  } else if (cfg.seedType === 'sector') {
-    const sectors = cfg.sectors ?? [];
-    phraseQueries = sectors.flatMap((s) => phrasesFor(s, random).map((p) => `${s} ${p}`));
-    focus = `Pain in these sectors: ${sectors.join(', ')}.`;
+  let research: { focus: string; maxSearches: number }[];
+  let useTechForums = cfg.seedType !== 'idea';
+  if (cfg.seedType === 'open' || cfg.seedType === 'sector') {
+    const sectors = cfg.seedType === 'open' ? pick(market.sectors, 6, random) : (cfg.sectors ?? []);
+    const phrases = sectors.map((s) => phrasesFor(s, random));
+    phraseQueries = sectors.flatMap((s, i) => phrases[i]!.map((p) => `${s} ${p}`));
+    // One research call per sector (at most 8), so non-tech sectors are researched directly.
+    const perSector = cfg.researchSearchesPerSector ?? 3;
+    research = sectors.slice(0, MAX_RESEARCH_SECTORS).map((s, i) => ({
+      focus: `Pain in this sector: ${s}. Typical owner complaints include: ${phrases[i]!.slice(0, 3).join(', ')}.`,
+      maxSearches: perSector,
+    }));
+    useTechForums = sectors.some((s) => SOFTWARE_ADJACENT.has(s));
+    if (!useTechForums) log('harvest: no software-adjacent sector, skipping tech-forum sources');
   } else if (cfg.seedType === 'lens') {
     const rows = await db.select().from(lenses).where(inArray(lenses.id, cfg.lensIds ?? []));
     const hints = rows.map((l) => l.promptHint);
     phraseQueries = hints.flatMap((h) => pick(market.sectors, 4, random).map((s) => `${s} ${h}`));
-    focus = `Pain relevant to: ${hints.join(' ')}`;
+    research = [{ focus: `Pain relevant to: ${hints.join(' ')}`, maxSearches: cfg.maxSearchesPerCall }];
   } else {
     const idea = clean(cfg.ideaText ?? '', 2000);
-    focus = `Find the problem described in the idea below, who suffers it, and evidence that it happens.
-${wrapUntrusted('idea', idea)}`;
+    research = [{
+      focus: `Find the problem described in the idea below, who suffers it, and evidence that it happens.
+${wrapUntrusted('idea', idea)}`,
+      maxSearches: 2 * cfg.maxSearchesPerCall,
+    }];
   }
 
   const items: RawItem[] = [];
 
-  // (a) free sources
-  if (cfg.seedType !== 'idea') {
+  // (a) free sources (tech forums): skipped for idea seeds, and for open/sector seeds with no software-adjacent sector
+  if (useTechForums) {
     for (const source of sources) {
       let queries: string[];
       if (PHRASE_SOURCES.has(source.id)) queries = pick(phraseQueries, QUERIES_PER_SOURCE, random);
@@ -111,19 +131,22 @@ ${wrapUntrusted('idea', idea)}`;
     }
   }
 
-  // (b) LLM web research
+  // (b) LLM web research: calls run concurrently (the router limits concurrency); any failure fails the stage.
   const researchPrompt = loadPrompt('harvest-research');
-  const maxSearches = cfg.seedType === 'idea' ? 2 * cfg.maxSearchesPerCall : cfg.maxSearchesPerCall;
-  const research = await router.research(
+  const bannedDomains = BANNED_DOMAINS.join(', ');
+  const results = await Promise.all(research.map(({ focus, maxSearches }) => router.research(
     'harvest',
-    { system: RESEARCH_SYSTEM, prompt: researchPrompt.render({ countries, focus, bannedDomains: BANNED_DOMAINS.join(', ') }), maxSearches },
+    { system: RESEARCH_SYSTEM, prompt: researchPrompt.render({ countries, focus, bannedDomains }), maxSearches },
     { runId: run.id, promptVersion: researchPrompt.version },
-  );
-  for (const s of research.sources) {
-    const text = decodeEntities(s.citedText ?? '');
-    if (!text.trim() || isBannedSource(s.url)) continue;
-    // Free sources decode entities in cleanText; web-search citations get the same decoding here.
-    items.push(sanitizeItem({ source: 'web', url: s.url, title: decodeEntities(s.title ?? s.url), text, publishedAt: null }));
+  )));
+  // Processed in sector order, so item order is deterministic.
+  for (const result of results) {
+    for (const s of result.sources) {
+      const text = decodeEntities(s.citedText ?? '');
+      if (!text.trim() || isBannedSource(s.url)) continue;
+      // Free sources decode entities in cleanText; web-search citations get the same decoding here.
+      items.push(sanitizeItem({ source: 'web', url: s.url, title: decodeEntities(s.title ?? s.url), text, publishedAt: null }));
+    }
   }
 
   // (c) extraction

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { signals, dataCalls } from '../../src/db/schema';
-import { harvest } from '../../src/pipeline/harvest';
+import { CA_US } from '../../src/db/seed';
+import { harvest, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { DEFAULT_WP_SLUGS } from '../../src/tools/sources/wordpress';
 import { fetchPage } from '../../src/tools/fetch-page';
@@ -26,7 +27,7 @@ describe('harvest', () => {
     const db = await testDb();
     const queries: string[] = [];
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }, { text: '', sources: [] }] }, structured: { extract: [extract, extract] } });
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));
     const deps = { db, router, sources: [hn(queries)], fetchPage, log: () => {} };
     const a = await harvest(deps, run);
     const b = await harvest(deps, run);
@@ -34,7 +35,7 @@ describe('harvest', () => {
     expect(b.signalIds).toEqual(a.signalIds);
     expect(await db.select().from(signals)).toHaveLength(1);
     expect(queries).toHaveLength(4);
-    expect(queries[0]).toMatch(/^web agencies /);
+    expect(queries[0]).toMatch(/^web design agencies /);
     expect(await db.select().from(dataCalls)).toHaveLength(4);
   });
 
@@ -100,7 +101,7 @@ describe('harvest', () => {
     const db = await testDb();
     const broken: SignalSource = { id: 'stackexchange', search: async () => { throw new Error('HTTP 503'); } };
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [extract] } });
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));
     const out = await harvest({ db, router, sources: [broken, hn()], fetchPage, log: () => {} }, run);
     expect(out.signalIds).toHaveLength(1);
     const calls = await db.select().from(dataCalls);
@@ -115,7 +116,7 @@ describe('harvest', () => {
       search: async () => [{ source: 'hn', url: 'https://www.linkedin.com/posts/x', title: 'T', text: 'Our contact form silently stopped sending email.', publishedAt: null }],
     };
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: {} });
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));
     const out = await harvest({ db, router, sources: [src], fetchPage, log: () => {} }, run);
     expect(out.signalIds).toEqual([]);
     expect(router.calls.filter((c) => c.kind === 'structured')).toHaveLength(0);
@@ -131,7 +132,7 @@ describe('harvest', () => {
       ],
     };
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] } });
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web agencies'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));
     await harvest({ db, router, sources: [src], fetchPage, log: () => {} }, run);
     const prompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
     expect(prompt).toContain('<items>');
@@ -147,10 +148,132 @@ describe('harvest', () => {
     const db = await testDb();
     const queries: string[] = [];
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] } });
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['dental clinics'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['managed IT providers'] }));
     await harvest({ db, router, sources: [hn(queries)], fetchPage, log: () => {} }, run, { random: () => 0.99 });
     expect(queries).toHaveLength(2);
-    for (const q of queries) expect(q).toMatch(/^dental clinics (no-show patients|insurance claim denied)$/);
+    for (const q of queries) expect(q).toMatch(/^managed IT providers (ticket backlog|manual patch reporting)$/);
+  });
+
+  describe('per-sector research and tech forums only for software-adjacent sectors', () => {
+    // random 0.99 leaves pick() order untouched, so an open seed chooses the first 6 seeded sectors.
+    const FIRST_SIX = ['web design agencies', 'digital marketing agencies', 'managed IT providers', 'HVAC', 'plumbing', 'electrical'];
+    const researchOf = (i: number) => ({ text: '', sources: [{ url: `https://s.test/${i}`, title: `S${i}`, citedText: `Owners lose hours to problem ${i} every week.` }] });
+    /** Wraps a fake router to record each research call's maxSearches. */
+    const spying = (router: ReturnType<typeof fakeRouter>) => {
+      const maxSearches: number[] = [];
+      return Object.assign(router, {
+        maxSearches,
+        research: ((orig) => (stage: Parameters<typeof orig>[0], args: Parameters<typeof orig>[1], ctx: Parameters<typeof orig>[2]) => {
+          maxSearches.push(args.maxSearches);
+          return orig(stage, args, ctx);
+        })(router.research.bind(router)),
+      });
+    };
+
+    it('makes one research call per chosen sector (open seed), naming the sector and 3 of its phrases, items in sector order', async () => {
+      const db = await testDb();
+      const router = spying(fakeRouter({
+        research: { harvest: FIRST_SIX.map((_, i) => researchOf(i)) },
+        structured: { extract: [{ signals: [] }] },
+      }));
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+      await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run, { random: () => 0.99 });
+      const research = router.calls.filter((c) => c.kind === 'research');
+      expect(research).toHaveLength(6);
+      research.forEach((c, i) => expect(c.prompt).toContain(`Pain in this sector: ${FIRST_SIX[i]}. Typical owner complaints include: `));
+      expect(research[0]!.prompt).toContain('Typical owner complaints include: client site maintenance, chasing client content, scope creep unpaid.');
+      expect(research[3]!.prompt).toContain('Typical owner complaints include: missed maintenance renewals, dispatch scheduling chaos, unpaid service invoices.');
+      expect(research[0]!.prompt).toContain('Prefer sources written by or for owners and operators in the sector');
+      expect(router.maxSearches).toEqual([3, 3, 3, 3, 3, 3]);
+      const extractPrompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
+      const positions = FIRST_SIX.map((_, i) => extractPrompt.indexOf(`https://s.test/${i}`));
+      expect(positions.every((p) => p >= 0)).toBe(true);
+      expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    });
+
+    it('uses researchSearchesPerSector for each sector call, and caps a sector seed at 8 research calls', async () => {
+      const db = await testDb();
+      const sectors = ['HVAC', 'plumbing', 'electrical', 'roofing', 'landscaping', 'dental clinics', 'physiotherapy clinics', 'veterinary clinics', 'auto repair'];
+      const router = spying(fakeRouter({ research: { harvest: sectors.map((_, i) => researchOf(i)) }, structured: { extract: [{ signals: [] }] } }));
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors, researchSearchesPerSector: 2 }));
+      await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
+      const research = router.calls.filter((c) => c.kind === 'research');
+      expect(research).toHaveLength(8);
+      expect(research.some((c) => c.prompt.includes('auto repair'))).toBe(false);
+      expect(router.maxSearches).toEqual(Array(8).fill(2));
+    });
+
+    it('falls back to 3 searches per sector for a stored config without researchSearchesPerSector', async () => {
+      const db = await testDb();
+      const router = spying(fakeRouter({ research: { harvest: [researchOf(0)] }, structured: { extract: [{ signals: [] }] } }));
+      const { researchSearchesPerSector: _drop, ...old } = defaultRunConfig({ seedType: 'sector', sectors: ['HVAC'] });
+      const run = await insertRun(db, old);
+      await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
+      expect(router.maxSearches).toEqual([3]);
+    });
+
+    it('skips the tech-forum sources when no chosen sector is software-adjacent, and says so', async () => {
+      const db = await testDb();
+      const queries: string[] = [];
+      const wpSeen: string[] = [];
+      const wp = { id: 'wordpress', search: async (q: string) => { wpSeen.push(q); return []; } } as SignalSource;
+      const logs: string[] = [];
+      const router = fakeRouter({ research: { harvest: [researchOf(0), researchOf(1)] }, structured: { extract: [{ signals: [] }] } });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['HVAC', 'dental clinics'] }));
+      await harvest({ db, router, sources: [hn(queries), wp], fetchPage, log: (m) => logs.push(m) }, run);
+      expect(queries).toHaveLength(0);
+      expect(wpSeen).toHaveLength(0);
+      expect(await db.select().from(dataCalls)).toHaveLength(0);
+      expect(logs).toContain('harvest: no software-adjacent sector, skipping tech-forum sources');
+    });
+
+    it('queries the tech-forum sources when a software-adjacent sector is chosen', async () => {
+      const db = await testDb();
+      const queries: string[] = [];
+      const logs: string[] = [];
+      const router = fakeRouter({ research: { harvest: [researchOf(0), researchOf(1)] }, structured: { extract: [{ signals: [] }] } });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['HVAC', 'ecommerce brands (Shopify)'] }));
+      await harvest({ db, router, sources: [hn(queries)], fetchPage, log: (m) => logs.push(m) }, run);
+      expect(queries).toHaveLength(2);
+      expect(logs.some((l) => l.includes('skipping tech-forum'))).toBe(false);
+    });
+
+    it('still queries the tech-forum sources for lens seeds', async () => {
+      const db = await testDb();
+      const queries: string[] = [];
+      const router = fakeRouter({ research: { harvest: [researchOf(0)] }, structured: { extract: [{ signals: [] }] } });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'lens', lensIds: ['silent-failure'] }));
+      await harvest({ db, router, sources: [hn(queries)], fetchPage, log: () => {} }, run);
+      expect(queries).toHaveLength(2);
+      expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(1);
+    });
+
+    it('idea seeds still make one research call with 2 x maxSearchesPerCall', async () => {
+      const db = await testDb();
+      const router = spying(fakeRouter({ research: { harvest: [researchOf(0)] }, structured: { extract: [{ signals: [] }] } }));
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying', maxSearchesPerCall: 4 }));
+      await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
+      expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(1);
+      expect(router.maxSearches).toEqual([8]);
+    });
+
+    it('fails the stage when one sector\'s research fails, storing nothing', async () => {
+      const db = await testDb();
+      const router = fakeRouter({ research: { harvest: [researchOf(0), researchOf(1), researchOf(2)] }, structured: { extract: [{ signals: [] }] } });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+      await expect(harvest({ db, router, sources: [], fetchPage, log: () => {} }, run, { random: () => 0.99 })).rejects.toThrow(/no scripted research response/);
+      expect(router.calls.filter((c) => c.kind === 'structured')).toHaveLength(0);
+      expect(await db.select().from(signals)).toHaveLength(0);
+    });
+
+    it('defaultRunConfig includes researchSearchesPerSector: 3', () => {
+      expect(defaultRunConfig({ seedType: 'open' }).researchSearchesPerSector).toBe(3);
+    });
+
+    it('SOFTWARE_ADJACENT_SECTORS names seeded sectors exactly', () => {
+      for (const s of SOFTWARE_ADJACENT_SECTORS) expect(CA_US.sectors).toContain(s);
+      expect([...SOFTWARE_ADJACENT_SECTORS]).toEqual(['web design agencies', 'digital marketing agencies', 'managed IT providers', 'ecommerce brands (Shopify)']);
+    });
   });
 
   it('uses the wordpress source slugs when present, else the defaults', async () => {
@@ -158,7 +281,7 @@ describe('harvest', () => {
     const router = () => fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] } });
     const seen: string[] = [];
     const wp = (slugs?: string[]) => ({ id: 'wordpress', ...(slugs ? { slugs } : {}), search: async (q: string) => { seen.push(q); return []; } }) as SignalSource;
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['dental clinics'] }));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));
     await harvest({ db, router: router(), sources: [wp(['custom-a', 'custom-b'])], fetchPage, log: () => {} }, run);
     expect(seen.sort()).toEqual(['custom-a', 'custom-b']);
     seen.length = 0;

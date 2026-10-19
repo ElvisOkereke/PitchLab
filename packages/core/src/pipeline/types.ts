@@ -12,6 +12,8 @@ export type RunConfig = {
   ideaCount: number;
   advanceCount: number;
   maxSearchesPerCall: number;
+  /** Web searches per sector research call (open/sector seeds). Optional so configs stored before tuning-3 still load; code defaults to 3. */
+  researchSearchesPerSector?: number;
   minSignals: number;
   dedupeThreshold: number;
 };
@@ -22,6 +24,7 @@ export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, '
     ideaCount: 12,
     advanceCount: 3,
     maxSearchesPerCall: 5,
+    researchSearchesPerSector: 3,
     minSignals: 3,
     dedupeThreshold: 0.88,
     ...partial,
