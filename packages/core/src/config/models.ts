@@ -1,5 +1,7 @@
 export const MODEL_STAGES = [
   'extract', 'harvest', 'ideate', 'screen', 'gate', 'competitors', 'case', 'verify', 'score', 'embed',
+  // Validation pack (Plan 3)
+  'pack', 'prospect', 'outreach', 'landing',
 ] as const;
 
 export type ModelStage = (typeof MODEL_STAGES)[number];
@@ -17,6 +19,10 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
   verify: 'claude-sonnet-5-5',
   score: 'gemini-3.1-pro',
   embed: 'text-embedding-3-small',
+  pack: 'claude-opus-5-5',
+  prospect: 'claude-sonnet-5-5',
+  outreach: 'claude-sonnet-5-5',
+  landing: 'claude-sonnet-5-5',
 };
 
 /**
@@ -27,7 +33,7 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
 export const NO_FORCED_TOOL_CHOICE: ReadonlySet<string> = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
 
 /** Stages that use the Anthropic web-search server tool, so must run on a claude model. */
-const WEB_SEARCH_STAGES = ['harvest', 'competitors', 'case'] as const satisfies readonly ModelStage[];
+const WEB_SEARCH_STAGES = ['harvest', 'competitors', 'case', 'prospect'] as const satisfies readonly ModelStage[];
 
 export function isModelStage(value: string): value is ModelStage {
   return (MODEL_STAGES as readonly string[]).includes(value);

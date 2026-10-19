@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { DEFAULT_MODELS, adapterFor, family, validateModelConfig } from '../../src/config/models';
+import { DEFAULT_MODELS, MODEL_STAGES, adapterFor, family, validateModelConfig } from '../../src/config/models';
 import { costOf } from '../../src/config/prices';
 
 describe('model config', () => {
@@ -17,6 +17,32 @@ describe('model config', () => {
 
   it('rejects a non-claude research stage', () => {
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, case: 'gpt-6-sol' })).toThrow(/case/);
+  });
+
+  it('has validation-pack stages with their defaults', () => {
+    expect(MODEL_STAGES).toEqual(expect.arrayContaining(['pack', 'prospect', 'outreach', 'landing']));
+    expect(DEFAULT_MODELS).toMatchObject({
+      pack: 'claude-opus-5-5', prospect: 'claude-sonnet-5-5', outreach: 'claude-sonnet-5-5', landing: 'claude-sonnet-5-5',
+    });
+  });
+
+  it('requires the prospect stage to be a claude model (web search)', () => {
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, prospect: 'gpt-6-sol' })).toThrow(/prospect.*claude/);
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, prospect: 'gemini-3.1-pro' })).toThrow(/prospect/);
+  });
+
+  it('lets pack, outreach and landing run on any family', () => {
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, pack: 'gpt-6-sol', outreach: 'gemini-3.1-pro', landing: 'gpt-6-sol' })).not.toThrow();
+  });
+
+  it('every stage has a default model, and every default model has a price', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (const stage of MODEL_STAGES) {
+      expect(DEFAULT_MODELS[stage], stage).toBeTruthy();
+      expect(costOf(DEFAULT_MODELS[stage], { inputTokens: 1_000_000, outputTokens: 0, searchRequests: 0 }), stage).toBeGreaterThan(0);
+    }
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('classifies families by prefix and picks the adapter', () => {
