@@ -1,5 +1,5 @@
 import { and, cosineDistance, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
-import { AiScoresSchema, CRITERIA } from '../case/schema';
+import { CRITERIA, ScreenScoresSchema, type AiScores } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, ideas } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -13,8 +13,35 @@ const MAX_WINNER_SIMILARITY = 0.8;
 export const MAX_PER_MECHANISM = 2;
 /** A candidate this close to an idea that already has a case (any run) is a regenerated copy and is skipped. */
 export const MAX_CASE_SIMILARITY = 0.82;
+/** A candidate this close to an idea (any run) the gate already killed is skipped: it would die the same way. */
+export const MAX_KILLED_SIMILARITY = 0.75;
+
+/** Mean of the 7 criteria with novelty counted twice: (sum of the 7 values + novelty) / 8. */
+export function weightedScreenTotal(scores: AiScores): number {
+  return (CRITERIA.reduce((s, c) => s + scores[c].value, 0) + scores.novelty.value) / (CRITERIA.length + 1);
+}
+
+/** 0.25 per competitor the screen model already knows, capped at 1. */
+export function crowdPenalty(knownCompetitors: number): number {
+  return Math.min(1, 0.25 * knownCompetitors);
+}
 
 type Scored = { id: string; title: string; total: number; index: number; embedding: number[] | null; mechanism: string | null };
+
+/** The most similar other idea (by embedding) matching `extra`, or null; NaN similarities are ignored. */
+async function closest(db: Db, s: Scored & { embedding: number[] }, extra: 'has_case' | 'gated_out'): Promise<{ id: string; sim: number } | null> {
+  const similarity = sql<number>`1 - (${cosineDistance(ideas.embedding, s.embedding)})`;
+  const base = and(ne(ideas.id, s.id), isNotNull(ideas.embedding), sql`${similarity} <> 'NaN'::float8`);
+  const query = db.select({ id: ideas.id, sim: similarity }).from(ideas);
+  const [hit] = await (extra === 'has_case'
+    ? query.innerJoin(cases, eq(cases.ideaId, ideas.id)).where(base)
+    : query.where(and(base, eq(ideas.status, 'gated_out')))
+  )
+    .orderBy(desc(similarity))
+    .limit(1);
+  const sim = hit ? Number(hit.sim) : NaN;
+  return Number.isFinite(sim) ? { id: hit!.id, sim } : null;
+}
 
 /** Why a ranked candidate must not advance, or null when it may. */
 async function skipReason(db: Db, s: Scored, perMechanism: Map<string, number>, advancedVecs: number[][]): Promise<string | null> {
@@ -22,18 +49,15 @@ async function skipReason(db: Db, s: Scored, perMechanism: Map<string, number>, 
     return `${MAX_PER_MECHANISM} ideas with mechanism ${s.mechanism} already advanced`;
   }
   if (!s.embedding) return null;
-  if (advancedVecs.some((v) => cosine(s.embedding!, v) > MAX_WINNER_SIMILARITY)) return 'near-twin of an idea already advanced in this run';
-  const similarity = sql<number>`1 - (${cosineDistance(ideas.embedding, s.embedding)})`;
-  const [hit] = await db
-    .select({ id: ideas.id, sim: similarity })
-    .from(ideas)
-    .innerJoin(cases, eq(cases.ideaId, ideas.id))
-    .where(and(ne(ideas.id, s.id), isNotNull(ideas.embedding), sql`${similarity} <> 'NaN'::float8`))
-    .orderBy(desc(similarity))
-    .limit(1);
-  const sim = hit ? Number(hit.sim) : NaN;
-  if (Number.isFinite(sim) && sim >= MAX_CASE_SIMILARITY) {
-    return `similarity ${sim.toFixed(3)} to idea ${hit!.id}, which already has a case`;
+  const withVec = { ...s, embedding: s.embedding };
+  if (advancedVecs.some((v) => cosine(withVec.embedding, v) > MAX_WINNER_SIMILARITY)) return 'near-twin of an idea already advanced in this run';
+  const caseHit = await closest(db, withVec, 'has_case');
+  if (caseHit && caseHit.sim >= MAX_CASE_SIMILARITY) {
+    return `similarity ${caseHit.sim.toFixed(3)} to idea ${caseHit.id}, which already has a case`;
+  }
+  const killHit = await closest(db, withVec, 'gated_out');
+  if (killHit && killHit.sim >= MAX_KILLED_SIMILARITY) {
+    return `similarity ${killHit.sim.toFixed(3)} to idea ${killHit.id}, which the gate already killed`;
   }
   return null;
 }
@@ -63,10 +87,14 @@ export async function screen(
   for (const [index, idea] of generated.entries()) {
     const scores = await router.structured(
       'screen',
-      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaBlock(idea)) }), schema: AiScoresSchema, schemaName: 'screen_scores' },
+      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaBlock(idea)) }), schema: ScreenScoresSchema, schemaName: 'screen_scores' },
       { runId: run.id, promptVersion: prompt.version },
     );
-    const total = CRITERIA.reduce((s, c) => s + scores[c].value, 0) / CRITERIA.length;
+    // Rank by the novelty-weighted mean minus a penalty for every product the model already knows sells this.
+    const weighted = weightedScreenTotal(scores);
+    const penalty = crowdPenalty(scores.knownCompetitors.length);
+    const total = weighted - penalty;
+    log(`screen: "${capField(idea.title, 120)}" weighted ${weighted.toFixed(2)}, penalty ${penalty.toFixed(2)} (${scores.knownCompetitors.length} known competitors), total ${total.toFixed(2)}`);
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
     scored.push({ id: idea.id, title: idea.title, total, index, embedding: idea.embedding, mechanism: idea.mechanism });
   }
@@ -74,7 +102,8 @@ export async function screen(
   // Top advanceCount by score, in rank order, skipping (→ screened_out) a candidate when
   //   (a) MAX_PER_MECHANISM generated ideas with its mechanism already advanced (a null mechanism is never capped),
   //   (b) it is a near-twin (cosine > 0.8, embeddings from dedupe) of an idea already advanced in this run, or
-  //   (c) it is close (cosine >= 0.82) to an idea from any run that already has a case (a regenerated copy).
+  //   (c) it is close (cosine >= 0.82) to an idea from any run that already has a case (a regenerated copy), or
+  //   (d) it is close (cosine >= 0.75) to an idea from any run (this one included) that the gate already killed.
   // An idea without an embedding is never skipped for similarity. Owner ideas are never skipped and use no slot.
   scored.sort((a, b) => b.total - a.total || a.index - b.index);
   const advancedVecs = owner.flatMap((i) => (i.embedding ? [i.embedding] : []));
