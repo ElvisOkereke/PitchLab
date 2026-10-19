@@ -29,6 +29,13 @@
       "when": 1792433473263,
       "tag": "0003_signal_voice_idea_gap",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792436232721,
+      "tag": "0004_validation_pack",
+      "breakpoints": true
     }
   ]
 }

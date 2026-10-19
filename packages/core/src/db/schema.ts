@@ -190,3 +190,113 @@ export const dataCalls = pgTable('data_calls', {
   ok: boolean('ok').notNull(),
   createdAt: createdAt(),
 });
+
+// ---- Validation pack (Plan 3, migration 0004) -----------------------------------------------------
+
+/** CASL basis of a prospect email (spec §11.6): published by the prospect themself (strong), a third party (weak), or unknown. */
+export const CASL_BASES = ['self_published', 'third_party', 'unknown'] as const;
+export type CaslBasis = (typeof CASL_BASES)[number];
+export const PROSPECT_SOURCES = ['web_research', 'places', 'csv', 'manual'] as const;
+export type ProspectSourceId = (typeof PROSPECT_SOURCES)[number];
+export const PROSPECT_STATUSES = ['new', 'drafted', 'sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribed'] as const;
+export type ProspectStatus = (typeof PROSPECT_STATUSES)[number];
+export const OUTREACH_KINDS = ['cold', 'followup1', 'followup2'] as const;
+export type OutreachKind = (typeof OUTREACH_KINDS)[number];
+export const OUTREACH_EVENT_TYPES = ['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe', 'note'] as const;
+export type OutreachEventType = (typeof OUTREACH_EVENT_TYPES)[number];
+
+export const caslBasis = pgEnum('casl_basis', CASL_BASES);
+export const prospectSource = pgEnum('prospect_source', PROSPECT_SOURCES);
+export const prospectStatus = pgEnum('prospect_status', PROSPECT_STATUSES);
+export const outreachKind = pgEnum('outreach_kind', OUTREACH_KINDS);
+export const outreachEventType = pgEnum('outreach_event_type', OUTREACH_EVENT_TYPES);
+export const landingEventType = pgEnum('landing_event_type', ['visit', 'submit']);
+
+/** One generated pack (MVP spec, pilot plan, interview kit, checklist) per case. */
+export const validationPacks = pgTable('validation_packs', {
+  id: id(),
+  caseId: uuid('case_id').notNull().unique().references(() => cases.id),
+  sections: jsonb('sections').$type<unknown>().notNull(),
+  model: text('model').notNull(),
+  promptVersion: text('prompt_version').notNull(),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const prospects = pgTable('prospects', {
+  id: id(),
+  caseId: uuid('case_id').notNull().references(() => cases.id),
+  name: text('name').notNull(),
+  website: text('website').notNull(),
+  /** Registrable domain of `website` (tldts), lowercase; one prospect per (case, domain). */
+  domain: text('domain').notNull(),
+  location: text('location').notNull(),
+  country: text('country'),
+  sizeNote: text('size_note'),
+  fitReason: text('fit_reason').notNull(),
+  contactName: text('contact_name'),
+  contactRole: text('contact_role'),
+  email: text('email'),
+  /** The page the email was found on (CASL provenance). */
+  emailSourceUrl: text('email_source_url'),
+  emailCapturedAt: timestamp('email_captured_at', { withTimezone: true }),
+  caslBasis: caslBasis('casl_basis').notNull().default('unknown'),
+  source: prospectSource('source').notNull(),
+  status: prospectStatus('status').notNull().default('new'),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('prospects_case_domain_uq').on(t.caseId, t.domain)]);
+
+export const outreachDrafts = pgTable('outreach_drafts', {
+  id: id(),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  kind: outreachKind('kind').notNull(),
+  subject: text('subject').notNull(),
+  body: text('body').notNull(),
+  model: text('model').notNull(),
+  promptVersion: text('prompt_version').notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('outreach_drafts_prospect_kind_uq').on(t.prospectId, t.kind)]);
+
+export const outreachEvents = pgTable('outreach_events', {
+  id: id(),
+  prospectId: uuid('prospect_id').notNull().references(() => prospects.id),
+  type: outreachEventType('type').notNull(),
+  note: text('note'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: createdAt(),
+});
+
+/** Addresses that must never be exported again (unsubscribes). Stored lowercased. */
+export const suppressions = pgTable('suppressions', {
+  email: text('email').primaryKey(),
+  reason: text('reason').notNull(),
+  createdAt: createdAt(),
+}, (t) => [check('suppressions_email_lower', sql`${t.email} = lower(${t.email})`)]);
+
+export const landingPages = pgTable('landing_pages', {
+  id: id(),
+  caseId: uuid('case_id').notNull().unique().references(() => cases.id),
+  slug: text('slug').notNull(),
+  html: text('html').notNull(),
+  copy: jsonb('copy').$type<unknown>().notNull(),
+  publishedUrl: text('published_url'),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Populated later by the hosted form endpoint. */
+export const landingEvents = pgTable('landing_events', {
+  id: id(),
+  landingPageId: uuid('landing_page_id').notNull().references(() => landingPages.id),
+  type: landingEventType('type').notNull(),
+  email: text('email'),
+  company: text('company'),
+  note: text('note'),
+  createdAt: createdAt(),
+});
+
+export const settings = pgTable('settings', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').$type<unknown>().notNull(),
+  createdAt: createdAt(),
+});
