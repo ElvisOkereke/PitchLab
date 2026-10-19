@@ -47,6 +47,26 @@ describe('fetchPage', () => {
     expect(f.mock.calls[0][1].headers['User-Agent']).toBe('BusinessCaseGen/0.1 (research; contact: owner)');
   });
 
+  it('returns the raw html of an html page, capped at 500 KB', async () => {
+    const page = '<title>T</title><p>Mail <a href="mailto:a@b.com">us</a></p>';
+    const r = await fetchPage('https://a.test', { fetchImpl: htmlFetch(page) });
+    expect(r.html).toBe(page);
+    expect(r.text).toContain('Mail');
+
+    const big = `<p>${'é'.repeat(400_000)}</p>`; // ~800 KB of UTF-8, under the 2 MB fetch cap
+    const capped = await fetchPage('https://a.test', { fetchImpl: htmlFetch(big) });
+    expect(capped.ok).toBe(true);
+    expect(Buffer.byteLength(capped.html!, 'utf8')).toBeLessThanOrEqual(500_000);
+    expect(Buffer.byteLength(capped.html!, 'utf8')).toBeGreaterThan(499_990);
+    expect(capped.html!.startsWith('<p>éé')).toBe(true);
+    expect(capped.html).not.toContain(String.fromCharCode(0xfffd));
+  });
+
+  it('has no html for text/plain pages or failures', async () => {
+    expect((await fetchPage('https://a.test', { fetchImpl: typedFetch('text/plain') })).html).toBeUndefined();
+    expect((await fetchPage('https://a.test', { fetchImpl: statusFetch(500) })).html).toBeUndefined();
+  });
+
   it('passes text/plain through', async () => {
     const r = await fetchPage('https://a.test', { fetchImpl: typedFetch('text/plain') });
     expect(r.ok).toBe(true);

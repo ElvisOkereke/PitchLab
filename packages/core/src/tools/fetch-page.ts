@@ -12,6 +12,8 @@ export interface PageResult {
   finalUrl: string;
   title: string;
   text: string;
+  /** Raw HTML of a successful text/html page, cut to at most HTML_MAX_BYTES of UTF-8 (absent otherwise). Untrusted. */
+  html?: string;
   reason?: PageFailure;
 }
 export interface FetchPageOpts {
@@ -23,6 +25,19 @@ export interface FetchPageOpts {
 
 const USER_AGENT = 'BusinessCaseGen/0.1 (research; contact: owner)';
 const MAX_REDIRECTS = 5;
+/** Cap on the raw `html` returned with a page (500 KB). */
+export const HTML_MAX_BYTES = 500_000;
+const REPLACEMENT_CHAR = String.fromCharCode(0xfffd);
+
+/** `s` cut to at most `max` bytes of UTF-8, never ending in a split character. */
+function capUtf8(s: string, max: number): string {
+  const buf = Buffer.from(s, 'utf8');
+  if (buf.length <= max) return s;
+  let out = buf.subarray(0, max).toString('utf8');
+  // A character split at the cut decodes to U+FFFD replacement chars: drop them.
+  while (out.endsWith(REPLACEMENT_CHAR)) out = out.slice(0, -1);
+  return out;
+}
 
 const fail = (reason: PageFailure, status: number, finalUrl: string): PageResult => ({
   ok: false, status, finalUrl, title: '', text: '', reason,
@@ -202,7 +217,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
 
       const body = await readCapped(res, maxBytes);
       const { title, text } = isHtml ? extract(body) : { title: '', text: body.trim() };
-      return { ok: true, status: res.status, finalUrl: parsed.href, title, text };
+      return { ok: true, status: res.status, finalUrl: parsed.href, title, text, ...(isHtml ? { html: capUtf8(body, HTML_MAX_BYTES) } : {}) };
     }
     return fail('network', 0, current); // too many redirects
   } catch (err) {

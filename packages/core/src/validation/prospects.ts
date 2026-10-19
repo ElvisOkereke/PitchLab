@@ -355,7 +355,7 @@ export function placesSource(opts: { apiKey: string | undefined; fetchImpl?: typ
 
 /** RFC 4180-style records: quoted fields may hold commas, newlines and doubled quotes. CRLF or LF row ends. */
 function parseCsvRecords(text: string): string[][] {
-  const s = text.replace(/^﻿/, '');
+  const s = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text; // byte-order mark
   const records: string[][] = [];
   let record: string[] = [];
   let field = '';

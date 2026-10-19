@@ -194,7 +194,7 @@ describe('placesSource', () => {
 describe('parseProspectCsv', () => {
   it('parses a happy-path file with optional columns and CASL basis', () => {
     const csv = [
-      '﻿Name,Website,Email,Email_Source_URL,Contact_Name,Contact_Role,Location',
+      `${String.fromCharCode(0xfeff)}Name,Website,Email,Email_Source_URL,Contact_Name,Contact_Role,Location`,
       'Acme Freight,https://acme-freight.com,Ops@Acme-Freight.com,https://www.acme-freight.com/contact,Jo Smith,Ops lead,"Toronto, ON"',
       'Northline,northline.ca,dispatch@northline.ca,https://somedirectory.com/northline,,,Calgary',
       'Bare Co,bare.com,hello@bare.com,,,,',
