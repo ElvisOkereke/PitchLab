@@ -314,6 +314,25 @@ describe('deepCase', () => {
     ]);
   });
 
+  it('stores each evidence signal\'s voice when the row has one (legacy rows carry no voice key)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const sigs = await db.insert(signals).values([
+      { marketId: 'ca-us', source: 'web', url: 'https://forum.example/t/1', title: 't', quote: 'op quote', quoteHash: 'vo1', voice: 'operator' as const },
+      { marketId: 'ca-us', source: 'web', url: 'https://old.example/t/2', title: 't', quote: 'old quote', quoteHash: 'vo2' },
+    ]).returning({ id: signals.id, url: signals.url });
+    const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id), status: 'advanced' });
+    const d = draft();
+    d.usedSignalUrls = sigs.map((s) => s.url);
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.evidence.signals).toEqual([
+      { quote: 'op quote', url: 'https://forum.example/t/1', sourceName: 'forum.example', voice: 'operator' },
+      { quote: 'old quote', url: 'https://old.example/t/2', sourceName: 'old.example' },
+    ]);
+    expect(CaseSectionsSchema.safeParse(row.sections).success).toBe(true);
+  });
+
   it('stores only the signals the writer says it used, ignoring urls that were not provided', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

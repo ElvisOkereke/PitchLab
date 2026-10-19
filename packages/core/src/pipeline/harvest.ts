@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
-import { lenses, markets, signals } from '../db/schema';
+import { lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
@@ -35,6 +35,8 @@ const extractSchema = z.object({
     sector: z.string().nullable(),
     painType: z.string().nullable(),
     isPain: z.boolean(),
+    /** Who wrote it (extract-signals.v3); the gate's evidence rule ignores `vendor` signals. */
+    voice: z.enum(SIGNAL_VOICES),
   })),
 });
 
@@ -154,7 +156,7 @@ ${wrapUntrusted('idea', idea)}`,
 
   // (c) extraction
   const extractPrompt = loadPrompt('extract-signals');
-  const kept: { item: RawItem; quote: string; hash: string; sector: string | null; painType: string | null }[] = [];
+  const kept: { item: RawItem; quote: string; hash: string; sector: string | null; painType: string | null; voice: SignalVoice }[] = [];
   for (let i = 0; i < items.length; i += BATCH) {
     const batch = items.slice(i, i + BATCH);
     const rendered = wrapUntrusted('items', JSON.stringify(batch.map((it) => ({ url: it.url, title: it.title, text: it.text }))));
@@ -171,7 +173,7 @@ ${wrapUntrusted('idea', idea)}`,
       const seen = (it: RawItem) => collapse(neutralizeUntrusted(it.text));
       const item = batch.find((it) => it.url === s.url && seen(it).includes(quote));
       if (!item) continue;
-      kept.push({ item, quote, hash: md5(normalizeQuote(quote)), sector: s.sector, painType: s.painType });
+      kept.push({ item, quote, hash: md5(normalizeQuote(quote)), sector: s.sector, painType: s.painType, voice: s.voice });
     }
   }
   if (kept.length === 0) {
@@ -179,6 +181,8 @@ ${wrapUntrusted('idea', idea)}`,
     return { signalIds: [] };
   }
 
+  // A signal already in the DB (same url + quote hash) keeps its existing row, voice included: a re-extraction never
+  // re-tags it, and legacy rows stay untagged (NULL voice, which the gate still counts).
   await db.insert(signals).values(kept.map((k) => ({
     runId: run.id,
     marketId: cfg.marketId,
@@ -189,6 +193,7 @@ ${wrapUntrusted('idea', idea)}`,
     quoteHash: k.hash,
     sector: k.sector,
     painType: k.painType,
+    voice: k.voice,
     publishedAt: k.item.publishedAt,
   }))).onConflictDoNothing({ target: [signals.url, signals.quoteHash] });
 

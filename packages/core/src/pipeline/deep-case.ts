@@ -173,7 +173,9 @@ export async function deepCase(
       const sections: CaseSections = {
         summary: { ...draft.summary, gateFlags },
         evidence: {
-          signals: sigRows.map((s) => ({ quote: s.quote, url: s.url, sourceName: sourceName(s.url, s.source) })),
+          signals: sigRows.map((s) => ({
+            quote: s.quote, url: s.url, sourceName: sourceName(s.url, s.source), ...(s.voice ? { voice: s.voice } : {}),
+          })),
           claims: evidenceClaims,
         },
         numbers: { inputs, results: computeNumbers(inputs) },

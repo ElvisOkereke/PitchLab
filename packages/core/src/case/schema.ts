@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { NumberResults } from '../calc/numbers';
 import { NumberInputsSchema } from '../calc/schema';
+import { SIGNAL_VOICES } from '../db/schema';
 
 /** AI-scored screening criteria (`gut` is owner-only and added elsewhere). */
 export const CRITERIA = ['pain', 'roi', 'evidence', 'speed', 'autonomy', 'novelty', 'reach'] as const;
@@ -40,7 +41,10 @@ const claimsSchema = z.array(z.object({ text: nonEmpty, sourceUrl: nonEmpty, quo
 /** Evidence signals are rebuilt by code from the idea's real signal rows, so the draft only carries claims. */
 const EvidenceDraftSchema = z.object({ claims: claimsSchema });
 const EvidenceSchema = z.object({
-  signals: z.array(z.object({ quote: z.string(), url: z.string(), sourceName: z.string() })),
+  /** `voice` is copied from the signal row when tagged (tuning-4); absent for untagged signals and older cases. */
+  signals: z.array(z.object({
+    quote: z.string(), url: z.string(), sourceName: z.string(), voice: z.enum(SIGNAL_VOICES).optional(),
+  })),
   claims: claimsSchema,
 });
 

@@ -229,7 +229,9 @@ function evidence(c: CaseRow, claimRows: ClaimRow[], flags: Flags): string[] {
   if (signals.length === 0) out.push('_No harvested signals._');
   for (const s of signals) {
     const status = flags.signal.get(linkKey(s.url, s.quote));
-    out.push(`- "${quoteLine(s.quote)}" (${line(s.sourceName)}, ${link(s.url)}) ${status ? STATUS_EMOJI[status] : 'not checked'}`);
+    // Who wrote the signal, when it was tagged (tuning-4); untagged and older signals show no label.
+    const voice = s.voice ? ` (voice: ${line(s.voice)})` : '';
+    out.push(`- "${quoteLine(s.quote)}" (${line(s.sourceName)}, ${link(s.url)})${voice} ${status ? STATUS_EMOJI[status] : 'not checked'}`);
   }
   out.push('', '### Claims', '');
   const listed = claimRows.filter((cl) => LISTED_SECTIONS.has(cl.section));

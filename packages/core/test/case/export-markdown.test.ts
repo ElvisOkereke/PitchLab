@@ -90,6 +90,21 @@ describe('caseToMarkdown', () => {
     expect(md).toContain('_No claims recorded._');
   });
 
+  it('shows each signal\'s voice when known and omits it for untagged (legacy) signals', () => {
+    const kase = caseFixture({ mutate: (s) => {
+      s.evidence.signals = [
+        { quote: 'We lose a day a week to this', url: 'https://forum.example/t/1', sourceName: 'forum.example', voice: 'operator' },
+        { quote: 'Our product fixes this', url: 'https://vendor.example/blog', sourceName: 'vendor.example', voice: 'vendor' },
+        { quote: 'Our forms die after plugin updates', url: 'https://news.example/item/1', sourceName: 'Hacker News' },
+      ];
+    } });
+    const md = caseToMarkdown(kase, [], []);
+    expect(md).toContain('- "We lose a day a week to this" (forum.example, [forum.example](https://forum.example/t/1)) (voice: operator) not checked');
+    expect(md).toContain('- "Our product fixes this" (vendor.example, [vendor.example](https://vendor.example/blog)) (voice: vendor) not checked');
+    expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) not checked');
+    expect(md.match(/\(voice: /g)).toHaveLength(2);
+  });
+
   it('marks a signal or competitor without a verification claim (e.g. beyond the cap) as not checked', () => {
     const md = caseToMarkdown(caseFixture(), [], []);
     expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) not checked');
