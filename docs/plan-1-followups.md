@@ -20,10 +20,30 @@ Taken from the Plan 1 build ledger (subagent-driven development, 2026-10-17) and
 
 Open after tuning-3:
 - `lens` seeds still use a single research call (not per sector).
-- The screen's crowdedness list (`knownCompetitors`) is model knowledge, not searched: a cheap pre-check, not evidence.
+- ~~The screen's crowdedness list (`knownCompetitors`) is model knowledge, not searched.~~ Removed in tuning-4.
 - **D5:** the gate counts evidence before verification, so a harvested quote that isn't on its page still counted
   toward the `evidence` rule. Consider re-checking evidence after verify.
 - GitHub-API verification has not yet been exercised on a real case (no GitHub URLs in run 3 or the owner-idea runs).
+
+## Tuning-4 (2026-10-19, branch `tuning-4`): run-4 recommendations
+- [x] **Generator and gate disagree on buyer choice (run 4, Read 5):** owner chose option (a). `ideate.v7` says a new
+  buyer, channel, distribution wedge or packaging is not a differentiator and asks for `knownIncumbents` and
+  `functionalGap`; `gate.v2` judges that claimed gap.
+- [x] **Crowd penalty added nothing (Read 2):** removed; screen ranks by `(7 criteria + novelty) / 8` (`screen.v3`).
+- [x] **Signals mostly from vendor blogs (Read 3):** extraction tags `voice` (operator / neutral / vendor); only operator
+  and neutral count toward the gate's evidence rule (untagged legacy signals don't either, after the security round);
+  harvest research prefers owner communities and neutral bodies (`harvest-research.v5`).
+
+Open after tuning-4:
+- **D5 still open:** the gate still counts a signal's source before verification checks the quote is on its page.
+- `functionalGap` and `knownIncumbents` are model claims, not verified evidence. They are labelled as unverified in every
+  prompt, but nothing checks them; only the gate's competitor research tests the gap.
+- Voice is the extraction model's judgement from the page itself; a vendor page written in an owner's voice can still be
+  tagged `operator`. Spot-check voices in run 5.
+- Untagged legacy signals no longer count: re-gating or re-running old ideas fails `evidence` until their signals are
+  re-harvested (re-harvest backfills a NULL voice).
+- Ideate principle 3 ("the best buyer may not be the obvious buyer") and "a clearly different mechanism for a different
+  buyer is fine" are kept verbatim next to the new rule; check in run 5 that ideation reads them as compatible.
 
 ## Waiting on owner feedback (§12.2 tuning)
 - Should lead-form examples be dropped from the benchmark quality bar in the ideate prompt?

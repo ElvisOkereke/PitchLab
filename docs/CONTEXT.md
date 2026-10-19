@@ -13,8 +13,10 @@
   **Tuning-3 built on branch `tuning-3`** (funnel + per-sector research + D1–D4; 368 tests green) and run live
   2026-10-19 (`docs/runs/2026-10-19-run-4.md`): 39 signals, 13 ideas, 5 at gate, **0 passed** (generic 4, autonomy 3);
   ideas fully off the old clusters, but the crowd penalty saturated (12/13 at cap) and web signals are mostly vendor
-  blogs. **Owner decision needed:** 3 of 4 `generic` kills call a new buyer/channel "positioning", which ideate's
-  "non-obvious buyer" principle pushes; align the generator and gate. Then merge, then Plan 2 (Dashboard).
+  blogs. **Tuning-4 built on branch `tuning-4`** (owner chose option (a); 368 → 399 tests green, migration 0003):
+  ideate names incumbents + the functional gap and is told a new buyer/channel is not a differentiator, the gate
+  judges that claimed gap, the crowd penalty is gone, and signals are tagged operator/neutral/vendor with only
+  operator + neutral counting as evidence. Not yet run live. Next: run 5, then merge, then Plan 2 (Dashboard).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -218,3 +220,18 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   any past idea. Crowd penalty hit the cap for 12/13 ideas and changed no pick; novelty weight swapped 2 picks, incl.
   the only `generic` pass (Repair-Request Clock, killed on autonomy). No case; no defect; $4.91, 0 × 429. Owner
   decision: 3 of 4 generic kills reject "same product, new buyer" as positioning, contradicting ideate principle 3.
+- **2026-10-19:** Owner decisions after run 4 (Read 1, 2, 3, 5, 6): **option (a)** (a new buyer or channel for an existing
+  product is not a differentiator; ideation must name the incumbents and the functional gap, and the gate judges that
+  gap), **drop the crowd penalty** (keep novelty ×2), **operator-voice evidence**. Built on `tuning-4`
+  (`docs/superpowers/plans/2026-10-19-tuning-4.md`; TDD, 368 → 399 tests, typecheck green; no live run). Migration 0003
+  (additive): `signals.voice`, `ideas.functional_gap`, `ideas.known_incumbents`. Prompts: `ideate.v7` (knownIncumbents ≤ 8,
+  functionalGap ≤ 600; each signal shows its voice; only operator/neutral signals count toward minSignals), `gate.v2`
+  (`generic` fails when an incumbent already provides the claimed function or the gap is only buyer/channel/packaging;
+  the claim lines are unverified and must be checked against the research), `screen.v3` (7 scores only, total
+  `(7 criteria + novelty) / 8`), `extract-signals.v3` (voice per signal), `harvest-research.v5` (owners, communities and
+  neutral bodies first). **"Operator-voice only" is implemented as operator + neutral:** trade associations, regulators,
+  statistics offices, journalists and analysts count as independent evidence; counting operators alone would starve a rule
+  that needs several distinct sites. A security review then made voice **fail closed**: untagged (NULL, pre-tuning-4)
+  signals do not count either (gate reasoning: "excluded N vendor, M untagged"), and a re-harvest backfills a NULL voice
+  (never overwrites one). Consequence: re-gating old ideas fails `evidence` until their signals are re-harvested (all 121
+  signals in the local DB are untagged). Owner ideas store no incumbents or gap.
