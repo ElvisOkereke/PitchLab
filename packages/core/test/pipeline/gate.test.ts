@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { gateVerdicts, ideas, signals } from '../../src/db/schema';
 import { StructuredOutputError } from '../../src/llm/router';
-import { gate } from '../../src/pipeline/gate';
+import { countEvidence, countEvidenceForSignals, gate } from '../../src/pipeline/gate';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { getIdea, insertIdea, insertRun, testDb } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
@@ -141,6 +141,96 @@ describe('gate', () => {
     const router = fakeRouter({});
     expect(await gate(deps(db, router), run, { ideaIds: [] })).toEqual({ passed: [], advisory: [] });
     expect(router.calls).toHaveLength(0);
+  });
+
+  it('loads gate.v2, whose generic check judges the claimed functional gap and incumbents', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await insertIdea(db, run.id, { knownIncumbents: ['Cass', 'nVision'], functionalGap: 'Neither audits accessorial fees' });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v2')).toBe(true);
+    const judge = router.calls.find((c) => c.stage === 'gate')!.prompt;
+    expect(judge).toContain(
+      'The idea claims the functional gap and incumbents shown in its description. Mark `generic` as failed when the competitor research ' +
+        'shows an incumbent already provides that function, or when the claimed gap is only about who buys the product or how it is sold ' +
+        '(a positioning, packaging or channel difference). Pass `generic` only when the research shows a real functional gap or no incumbent serving this function.',
+    );
+    expect(judge).toContain('If the idea claims no functional gap, judge `generic` on the competitor research alone.');
+    for (const { prompt } of router.calls) {
+      expect(prompt).toContain('Known incumbents: Cass; nVision\nFunctional gap: Neither audits accessorial fees');
+    }
+  });
+
+  it('judges an owner idea without a claimed gap as before (no incumbent or gap lines)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'owner');
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(out).toEqual({ passed: [idea.id], advisory: [] });
+    for (const { prompt } of router.calls) {
+      expect(prompt).not.toContain('Known incumbents:');
+      expect(prompt).not.toContain('Functional gap:');
+    }
+  });
+
+  describe('evidence by voice: vendor signals never count', () => {
+    async function evidenceOf(sigs: { url: string; voice: 'operator' | 'neutral' | 'vendor' | null }[], minSignals = 3) {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals }));
+      const rows = await db.insert(signals).values(sigs.map((s, i) => ({
+        marketId: 'ca-us', source: 'web', url: s.url, title: 't', quote: `q${i}`, quoteHash: `hv${i}`, voice: s.voice,
+      }))).returning({ id: signals.id });
+      const idea = await insertIdea(db, run.id, { signalIds: rows.map((s) => s.id) });
+      const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+      await gate(deps(db, router), run, { ideaIds: [idea.id] });
+      return (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
+    }
+
+    it('5 vendor-only signals count as 0 units', async () => {
+      const ev = await evidenceOf(['a', 'b', 'c', 'd', 'e'].map((d) => ({ url: `https://${d}.com/blog`, voice: 'vendor' as const })));
+      expect(ev.pass).toBe(false);
+      expect(ev.reasoning).toBe('0 independent sources; excluded 5 vendor sources');
+      expect(ev.sources).toEqual([]);
+    });
+
+    it('counts operator, neutral and untagged (legacy) signals', async () => {
+      const ev = await evidenceOf([
+        { url: 'https://a.com/1', voice: 'operator' }, { url: 'https://b.com/1', voice: 'neutral' }, { url: 'https://c.com/1', voice: null },
+      ]);
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com');
+      expect(ev.promptVersion).toBe('evidence-rule.v2');
+    });
+
+    it('lists the excluded vendor sources in the reasoning and keeps them out of the verdict sources', async () => {
+      const ev = await evidenceOf([
+        { url: 'https://a.com/1', voice: 'operator' },
+        { url: 'https://vendor-one.com/case-study', voice: 'vendor' },
+        { url: 'https://b.com/1', voice: 'neutral' },
+        { url: 'https://vendor-two.com/pricing', voice: 'vendor' },
+        { url: 'https://c.com/1', voice: null },
+      ]);
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com; excluded 2 vendor sources');
+      expect(ev.sources).toEqual(['https://a.com/1', 'https://b.com/1', 'https://c.com/1']);
+    });
+
+    it('a vendor page on the same domain as an operator post does not add or remove a unit', async () => {
+      const ev = await evidenceOf([{ url: 'https://a.com/forum/1', voice: 'operator' }, { url: 'https://a.com/shop', voice: 'vendor' }], 1);
+      expect(ev.reasoning).toBe('1 independent sources: a.com; excluded 1 vendor source');
+    });
+
+    it('countEvidenceForSignals filters by voice and delegates to countEvidence', () => {
+      const rows = [
+        { url: 'https://a.com/1', voice: 'operator' as const }, { url: 'https://v.com/1', voice: 'vendor' as const }, { url: 'https://b.com/1', voice: null },
+      ];
+      expect(countEvidenceForSignals(rows)).toEqual({
+        ...countEvidence(['https://a.com/1', 'https://b.com/1']), counted: ['https://a.com/1', 'https://b.com/1'], excludedVendor: 1,
+      });
+    });
   });
 
   describe('hybrid evidence counting', () => {

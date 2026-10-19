@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { parse } from 'tldts';
 import { z } from 'zod';
-import { gateVerdicts, ideas, signals } from '../db/schema';
+import { gateVerdicts, ideas, signals, type SignalVoice } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
@@ -68,6 +68,24 @@ export function countEvidence(urls: string[]): { units: number; breakdown: strin
   return { units, breakdown: parts.join(', ') };
 }
 
+/**
+ * countEvidence over signal rows, counting only independent voices: `operator`, `neutral` and NULL (legacy, untagged).
+ * `vendor` signals (written by companies already selling a fix) are excluded and counted in `excludedVendor`.
+ * `counted` lists the urls that were passed to countEvidence.
+ */
+export function countEvidenceForSignals(rows: { url: string; voice: SignalVoice | null }[]): {
+  units: number; breakdown: string; counted: string[]; excludedVendor: number;
+} {
+  const counted = rows.filter((r) => r.voice !== 'vendor').map((r) => r.url);
+  return { ...countEvidence(counted), counted, excludedVendor: rows.length - counted.length };
+}
+
+/** "N independent sources: <breakdown>[; excluded K vendor source(s)]" for the evidence verdict. */
+function evidenceReasoning(e: ReturnType<typeof countEvidenceForSignals>): string {
+  const vendor = e.excludedVendor ? `; excluded ${e.excludedVendor} vendor source${e.excludedVendor === 1 ? '' : 's'}` : '';
+  return `${e.units} independent sources${e.breakdown ? `: ${e.breakdown}` : ''}${vendor}`;
+}
+
 export async function gate(
   { db, router, log }: StageDeps,
   run: { id: string; config: RunConfig },
@@ -106,8 +124,8 @@ export async function gate(
     const sigRows = idea.signalIds.length
       ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
       : [];
-    const urls = sigRows.map((s) => s.url);
-    const evidence = countEvidence(urls);
+    // Vendor-voiced signals never count toward the evidence rule (tuning-4); legacy untagged signals still do.
+    const evidence = countEvidenceForSignals(sigRows);
     const evidencePass = evidence.units >= run.config.minSignals;
 
     const sourceUrls = research.sources.map((s) => s.url);
@@ -137,8 +155,8 @@ export async function gate(
     results.set('evidence', evidencePass);
     values.push({
       ideaId: idea.id, check: 'evidence', pass: evidencePass,
-      reasoning: `${evidence.units} independent sources: ${evidence.breakdown}`,
-      sources: urls, model: 'rule', promptVersion: 'evidence-rule.v1',
+      reasoning: evidenceReasoning(evidence),
+      sources: evidence.counted, model: 'rule', promptVersion: 'evidence-rule.v2',
     });
     const failed = ORDER.filter((c) => !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';
