@@ -21,6 +21,8 @@ const schema = z.object({
   MODEL_OVERRIDES: modelOverrides.default({}),
   GITHUB_TOKEN: z.string().min(1).optional(),
   STACKEXCHANGE_KEY: z.string().min(1).optional(),
+  /** Optional: enables the Google Places prospect source (Text Search, New). */
+  GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;
