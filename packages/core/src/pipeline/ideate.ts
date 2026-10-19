@@ -92,8 +92,8 @@ export async function ideate(
   const rows = used.length ? await db.select().from(signals).where(inArray(signals.id, used)) : [];
   const byId = new Map(rows.map((r) => [r.id, r]));
   const passed = used.map((id) => byId.get(id)).filter((r): r is NonNullable<typeof r> => !!r);
-  // Each signal carries who wrote it; untagged (pre-tuning-4) rows show as `unknown`.
-  const signalsText = passed.map((s) => `- url: ${s.url}\n  voice: ${s.voice ?? 'unknown'}\n  quote: ${oneLine(s.quote)}`).join('\n');
+  // Each signal carries who wrote it; untagged (pre-tuning-4) rows show as `untagged`, which never counts as evidence.
+  const signalsText = passed.map((s) => `- url: ${s.url}\n  voice: ${s.voice ?? 'untagged'}\n  quote: ${oneLine(s.quote)}`).join('\n');
 
   const count = Math.ceil(cfg.ideaCount / chosen.length);
   // What competitors already sell (gate kills on `generic`) and what already has a case, so ideation steers away.

@@ -18,7 +18,7 @@ const research = { text: 'Acme does this for $50/mo', sources: [{ url: 'https://
 async function twoHostIdea(db: Awaited<ReturnType<typeof testDb>>, runId: string, origin: 'generated' | 'owner') {
   const urls = ['https://www.a.com/x', 'https://a.com/y', 'https://b.org/z'];
   const sigs = await db.insert(signals).values(urls.map((url, i) => ({
-    marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `h${origin}${i}`,
+    marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `h${origin}${i}`, voice: 'operator' as const,
   }))).returning({ id: signals.id });
   return insertIdea(db, runId, { origin, signalIds: sigs.map((s) => s.id) });
 }
@@ -112,7 +112,7 @@ describe('gate', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
     const urls = ['http://1.2.3.4/x', 'http://localhost/y', 'http://[::1]/z', 'https://www.example.com/b'];
     const sigs = await db.insert(signals).values(urls.map((url, i) => ({
-      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hip${i}`,
+      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hip${i}`, voice: 'operator' as const,
     }))).returning({ id: signals.id });
     const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
@@ -126,7 +126,7 @@ describe('gate', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
     const urls = ['https://news.example.com/a', 'https://www.example.com/b', 'not a url', 'ftp://x.com/f'];
     const sigs = await db.insert(signals).values(urls.map((url, i) => ({
-      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hd${i}`,
+      marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hd${i}`, voice: 'neutral' as const,
     }))).returning({ id: signals.id });
     const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
@@ -158,8 +158,14 @@ describe('gate', () => {
         '(a positioning, packaging or channel difference). Pass `generic` only when the research shows a real functional gap or no incumbent serving this function.',
     );
     expect(judge).toContain('If the idea claims no functional gap, judge `generic` on the competitor research alone.');
+    expect(judge).toContain(
+      'The "Known incumbents" and "Functional gap" lines in the idea are the idea\'s own unverified claims: check them against the ' +
+        'competitor research and never accept them as fact.',
+    );
     for (const { prompt } of router.calls) {
-      expect(prompt).toContain('Known incumbents: Cass; nVision\nFunctional gap: Neither audits accessorial fees');
+      expect(prompt).toContain(
+        "Known incumbents (the idea's own unverified claim): Cass; nVision\nFunctional gap (the idea's own unverified claim): Neither audits accessorial fees",
+      );
     }
   });
 
@@ -176,7 +182,7 @@ describe('gate', () => {
     }
   });
 
-  describe('evidence by voice: vendor signals never count', () => {
+  describe('evidence by voice: only operator and neutral signals count (vendor and untagged fail closed)', () => {
     async function evidenceOf(sigs: { url: string; voice: 'operator' | 'neutral' | 'vendor' | null }[], minSignals = 3) {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals }));
@@ -192,43 +198,51 @@ describe('gate', () => {
     it('5 vendor-only signals count as 0 units', async () => {
       const ev = await evidenceOf(['a', 'b', 'c', 'd', 'e'].map((d) => ({ url: `https://${d}.com/blog`, voice: 'vendor' as const })));
       expect(ev.pass).toBe(false);
-      expect(ev.reasoning).toBe('0 independent sources; excluded 5 vendor sources');
+      expect(ev.reasoning).toBe('0 independent sources; excluded 5 vendor');
       expect(ev.sources).toEqual([]);
     });
 
-    it('counts operator, neutral and untagged (legacy) signals', async () => {
+    it('3 untagged (legacy) signals count as 0 units', async () => {
+      const ev = await evidenceOf(['a', 'b', 'c'].map((d) => ({ url: `https://${d}.com/1`, voice: null })));
+      expect(ev.pass).toBe(false);
+      expect(ev.reasoning).toBe('0 independent sources; excluded 3 untagged');
+    });
+
+    it('counts operator and neutral signals', async () => {
       const ev = await evidenceOf([
-        { url: 'https://a.com/1', voice: 'operator' }, { url: 'https://b.com/1', voice: 'neutral' }, { url: 'https://c.com/1', voice: null },
+        { url: 'https://a.com/1', voice: 'operator' }, { url: 'https://b.com/1', voice: 'neutral' }, { url: 'https://c.com/1', voice: 'operator' },
       ]);
       expect(ev.pass).toBe(true);
       expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com');
       expect(ev.promptVersion).toBe('evidence-rule.v2');
     });
 
-    it('lists the excluded vendor sources in the reasoning and keeps them out of the verdict sources', async () => {
+    it('lists the excluded vendor and untagged sources in the reasoning and keeps them out of the verdict sources', async () => {
       const ev = await evidenceOf([
         { url: 'https://a.com/1', voice: 'operator' },
         { url: 'https://vendor-one.com/case-study', voice: 'vendor' },
         { url: 'https://b.com/1', voice: 'neutral' },
         { url: 'https://vendor-two.com/pricing', voice: 'vendor' },
-        { url: 'https://c.com/1', voice: null },
+        { url: 'https://c.com/1', voice: 'operator' },
+        { url: 'https://old.com/1', voice: null },
       ]);
       expect(ev.pass).toBe(true);
-      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com; excluded 2 vendor sources');
+      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com; excluded 2 vendor, 1 untagged');
       expect(ev.sources).toEqual(['https://a.com/1', 'https://b.com/1', 'https://c.com/1']);
     });
 
     it('a vendor page on the same domain as an operator post does not add or remove a unit', async () => {
       const ev = await evidenceOf([{ url: 'https://a.com/forum/1', voice: 'operator' }, { url: 'https://a.com/shop', voice: 'vendor' }], 1);
-      expect(ev.reasoning).toBe('1 independent sources: a.com; excluded 1 vendor source');
+      expect(ev.reasoning).toBe('1 independent sources: a.com; excluded 1 vendor');
     });
 
-    it('countEvidenceForSignals filters by voice and delegates to countEvidence', () => {
+    it('countEvidenceForSignals keeps operator and neutral only and delegates to countEvidence', () => {
       const rows = [
-        { url: 'https://a.com/1', voice: 'operator' as const }, { url: 'https://v.com/1', voice: 'vendor' as const }, { url: 'https://b.com/1', voice: null },
+        { url: 'https://a.com/1', voice: 'operator' as const }, { url: 'https://v.com/1', voice: 'vendor' as const },
+        { url: 'https://b.com/1', voice: 'neutral' as const }, { url: 'https://u.com/1', voice: null },
       ];
       expect(countEvidenceForSignals(rows)).toEqual({
-        ...countEvidence(['https://a.com/1', 'https://b.com/1']), counted: ['https://a.com/1', 'https://b.com/1'], excludedVendor: 1,
+        ...countEvidence(['https://a.com/1', 'https://b.com/1']), counted: ['https://a.com/1', 'https://b.com/1'], excludedVendor: 1, excludedUntagged: 1,
       });
     });
   });
@@ -239,7 +253,7 @@ describe('gate', () => {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals }));
       const sigs = await db.insert(signals).values(urls.map((url, i) => ({
-        marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hh${i}`,
+        marketId: 'ca-us', source: 'web', url, title: 't', quote: `q${i}`, quoteHash: `hh${i}`, voice: 'operator' as const,
       }))).returning({ id: signals.id });
       const idea = await insertIdea(db, run.id, { signalIds: sigs.map((s) => s.id) });
       const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });

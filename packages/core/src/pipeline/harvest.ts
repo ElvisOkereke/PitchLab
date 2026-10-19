@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -181,9 +181,15 @@ ${wrapUntrusted('idea', idea)}`,
     return { signalIds: [] };
   }
 
-  // A signal already in the DB (same url + quote hash) keeps its existing row, voice included: a re-extraction never
-  // re-tags it, and legacy rows stay untagged (NULL voice, which the gate still counts).
-  await db.insert(signals).values(kept.map((k) => ({
+  // One row per url + quote hash (first extraction wins): ON CONFLICT DO UPDATE may not touch a row twice in one insert.
+  const firsts = new Map<string, (typeof kept)[number]>();
+  for (const k of kept) {
+    const key = `${k.item.url}\n${k.hash}`;
+    if (!firsts.has(key)) firsts.set(key, k);
+  }
+  // A signal already in the DB (same url + quote hash) keeps its existing row. Only its voice may change, and only from
+  // NULL: a re-harvest backfills untagged legacy rows (which the gate never counts) but never overwrites a voice.
+  await db.insert(signals).values([...firsts.values()].map((k) => ({
     runId: run.id,
     marketId: cfg.marketId,
     source: k.item.source,
@@ -195,7 +201,10 @@ ${wrapUntrusted('idea', idea)}`,
     painType: k.painType,
     voice: k.voice,
     publishedAt: k.item.publishedAt,
-  }))).onConflictDoNothing({ target: [signals.url, signals.quoteHash] });
+  }))).onConflictDoUpdate({
+    target: [signals.url, signals.quoteHash],
+    set: { voice: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('voice')}, excluded.${sql.identifier('voice')})` },
+  });
 
   const ids = new Set<string>();
   for (const k of kept) {

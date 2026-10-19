@@ -226,7 +226,7 @@ describe('ideate', () => {
     expect((await ideate(t.deps, t.run, { signalIds: [] })).ideaIds).toHaveLength(1);
   });
 
-  it('shows each signal\'s voice, "unknown" for untagged legacy rows, and the incumbent / functional-gap rules', async () => {
+  it('shows each signal\'s voice, "untagged" for legacy rows, and the incumbent / functional-gap rules', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
     const t = await setup(config, { structured: { ideate: [mk(1, [])] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
@@ -236,7 +236,8 @@ describe('ideate', () => {
     }))).returning({ id: signals.id });
     await ideate(t.deps, t.run, { signalIds: [t.rows[0]!.id, ...voiced.map((r) => r.id)] });
     const p = t.router.calls[0]!.prompt;
-    expect(p).toContain('- url: https://x.test/a\n  voice: unknown\n  quote: quote a');
+    expect(p).toContain('- url: https://x.test/a\n  voice: untagged\n  quote: quote a');
+    expect(p).not.toContain('voice: unknown');
     expect(p).toContain('- url: https://operator.test/x\n  voice: operator\n  quote: quote by operator');
     expect(p).toContain('- url: https://neutral.test/x\n  voice: neutral\n  quote: quote by neutral');
     expect(p).toContain('- url: https://vendor.test/x\n  voice: vendor\n  quote: quote by vendor');

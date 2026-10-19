@@ -54,10 +54,12 @@ describe('ideate prompt', () => {
         'The gap must be about what the product does, not who it is for.',
     );
   });
-  it('counts only operator, neutral or unknown signals as evidence; vendor signals never count', () => {
+  it('counts only operator and neutral signals as evidence; vendor and untagged signals never count (fail closed)', () => {
     const text = render();
     expect(text).toContain('at least 3 signals from at least 3 different websites');
-    expect(text).toContain('counting only signals whose voice is `operator`, `neutral` or `unknown`');
+    expect(text).toContain('counting only signals whose voice is `operator` or `neutral`');
     expect(text).toContain('they may inform what already exists, but they never count as evidence of pain');
+    expect(text).toContain('Signals with voice `untagged` were never classified and never count as evidence of pain either.');
+    expect(text).not.toContain('unknown');
   });
 });

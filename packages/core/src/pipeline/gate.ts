@@ -69,21 +69,30 @@ export function countEvidence(urls: string[]): { units: number; breakdown: strin
 }
 
 /**
- * countEvidence over signal rows, counting only independent voices: `operator`, `neutral` and NULL (legacy, untagged).
- * `vendor` signals (written by companies already selling a fix) are excluded and counted in `excludedVendor`.
- * `counted` lists the urls that were passed to countEvidence.
+ * countEvidence over signal rows, counting only independent voices: `operator` and `neutral`. Fails closed: `vendor`
+ * signals (written by companies already selling a fix) and untagged ones (NULL voice, extracted before tuning-4 and not
+ * re-harvested since) are excluded and counted in `excludedVendor` / `excludedUntagged`. `counted` lists the urls that
+ * were passed to countEvidence.
  */
 export function countEvidenceForSignals(rows: { url: string; voice: SignalVoice | null }[]): {
-  units: number; breakdown: string; counted: string[]; excludedVendor: number;
+  units: number; breakdown: string; counted: string[]; excludedVendor: number; excludedUntagged: number;
 } {
-  const counted = rows.filter((r) => r.voice !== 'vendor').map((r) => r.url);
-  return { ...countEvidence(counted), counted, excludedVendor: rows.length - counted.length };
+  const counted = rows.filter((r) => r.voice === 'operator' || r.voice === 'neutral').map((r) => r.url);
+  return {
+    ...countEvidence(counted),
+    counted,
+    excludedVendor: rows.filter((r) => r.voice === 'vendor').length,
+    excludedUntagged: rows.filter((r) => r.voice == null).length,
+  };
 }
 
-/** "N independent sources: <breakdown>[; excluded K vendor source(s)]" for the evidence verdict. */
+/** "N independent sources: <breakdown>[; excluded K vendor, M untagged]" (zero counts left out) for the evidence verdict. */
 function evidenceReasoning(e: ReturnType<typeof countEvidenceForSignals>): string {
-  const vendor = e.excludedVendor ? `; excluded ${e.excludedVendor} vendor source${e.excludedVendor === 1 ? '' : 's'}` : '';
-  return `${e.units} independent sources${e.breakdown ? `: ${e.breakdown}` : ''}${vendor}`;
+  const excluded = [
+    ...(e.excludedVendor ? [`${e.excludedVendor} vendor`] : []),
+    ...(e.excludedUntagged ? [`${e.excludedUntagged} untagged`] : []),
+  ];
+  return `${e.units} independent sources${e.breakdown ? `: ${e.breakdown}` : ''}${excluded.length ? `; excluded ${excluded.join(', ')}` : ''}`;
 }
 
 export async function gate(
@@ -124,7 +133,7 @@ export async function gate(
     const sigRows = idea.signalIds.length
       ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
       : [];
-    // Vendor-voiced signals never count toward the evidence rule (tuning-4); legacy untagged signals still do.
+    // Only operator- and neutral-voiced signals count toward the evidence rule; vendor and untagged ones never do (tuning-4).
     const evidence = countEvidenceForSignals(sigRows);
     const evidencePass = evidence.units >= run.config.minSignals;
 

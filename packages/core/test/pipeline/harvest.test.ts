@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { signals, dataCalls } from '../../src/db/schema';
 import { CA_US } from '../../src/db/seed';
@@ -121,7 +122,30 @@ describe('harvest', () => {
       }
     });
 
-    it('keeps the existing row (and its voice) when the same url + quote is extracted again', async () => {
+    it('backfills the voice of an existing untagged row when the same url + quote is extracted again', async () => {
+      const db = await testDb();
+      const quote = 'lose hours every week re-keying invoices';
+      const [old] = await db.insert(signals).values({
+        marketId: 'ca-us', source: 'web', url: 'https://x.test/a', title: 'A', quote, quoteHash: createHash('md5').update(quote).digest('hex'),
+      }).returning();
+      expect(old!.voice).toBeNull();
+      const router = fakeRouter({ research: { harvest: [researchA] }, structured: { extract: [extractA('vendor')] } });
+      const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, await ideaRun(db));
+      expect(out.signalIds).toEqual([old!.id]);
+      const rows = await db.select().from(signals);
+      expect(rows.map((r) => ({ id: r.id, voice: r.voice }))).toEqual([{ id: old!.id, voice: 'vendor' }]);
+    });
+
+    it('stores a quote extracted twice in one batch once, without a conflict error', async () => {
+      const db = await testDb();
+      const twice = { signals: [...extractA('operator').signals, ...extractA('vendor').signals] };
+      const router = fakeRouter({ research: { harvest: [researchA] }, structured: { extract: [twice] } });
+      const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, await ideaRun(db));
+      expect(out.signalIds).toHaveLength(1);
+      expect((await db.select().from(signals)).map((r) => r.voice)).toEqual(['operator']);
+    });
+
+    it('never overwrites an existing voice when the same url + quote is extracted again', async () => {
       const db = await testDb();
       const router = fakeRouter({ research: { harvest: [researchA, researchA] }, structured: { extract: [extractA('operator'), extractA('vendor')] } });
       const deps = { db, router, sources: [], fetchPage, log: () => {} };
