@@ -122,3 +122,10 @@ Open after tuning-4:
 - Sector matching for the tech-forum switch is exact and case-sensitive, so "Web design agencies" would skip the forums. Sector seeds with more than 8 sectors research only the first 8.
 - "(N claims)" in "For you to check" also merges unchecked items that have no claim row, so the wording is slightly off for those.
 - When one sector's research call fails, the other concurrent calls keep running and are still paid for.
+
+## Run-5 follow-ups (generator tuning, parked while validation and dashboard are built)
+- Autonomy is now the main gate killer (4 of 5 entrants). Feed ideation every gate-kill reason (not only generic) and add a rule matching the autonomy check: do not propose services that need human judgement or manual labour per customer.
+- Voice tagging: keep problem catalogs (scored lists of problems) out of operator voice; tags are noisy for agency blogs. One mis-tagged GitHub signal let 4 of 5 entrants reach the 3-source minimum.
+- WordPress forum queries should follow the chosen sectors instead of a fixed plugin list. Legal, marketing and IT services produced no ideas in run 5.
+- 5 of 8 ideas cited the same 5 signals: raise signals per sector or require each idea to cite a different subset.
+- Spot-check found wrong incumbent facts (NCS, Paidnice): the gate relies on the competitor research, so treat idea-stage incumbent lists as hints only.
