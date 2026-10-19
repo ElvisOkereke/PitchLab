@@ -19,12 +19,6 @@ export const AiScoresSchema = z.object({
 });
 export type AiScores = z.infer<typeof AiScoresSchema>;
 
-/** What the screen stage asks for: the AI scores plus real products the model knows already sell something similar. */
-export const ScreenScoresSchema = AiScoresSchema.extend({
-  knownCompetitors: z.array(z.string().max(120)).max(8),
-});
-export type ScreenScores = z.infer<typeof ScreenScoresSchema>;
-
 // ---- Case sections -------------------------------------------------------------------------------
 // The LLM writes a CaseDraft; code adds summary.gateFlags and numbers.results to make CaseSections.
 // No transforms (R9): CaseDraftSchema is passed to router.structured.

@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CRITERIA, ScreenScoresSchema } from '../../src/case/schema';
-import { crowdPenalty, MAX_KILLED_SIMILARITY, screen, weightedScreenTotal } from '../../src/pipeline/screen';
+import { CRITERIA } from '../../src/case/schema';
+import { loadPrompt } from '../../src/llm/prompts';
+import * as screenModule from '../../src/pipeline/screen';
+import { MAX_KILLED_SIMILARITY, screen, weightedScreenTotal } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { getIdea, insertCase, insertIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
-const scores = (v: number, opts: { novelty?: number; competitors?: number } = {}) => ({
-  ...Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'novelty' && opts.novelty !== undefined ? opts.novelty : v, note: 'n' }])),
-  knownCompetitors: Array.from({ length: opts.competitors ?? 0 }, (_, i) => `Competitor ${i}`),
-});
+const scores = (v: number, opts: { novelty?: number } = {}) =>
+  Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'novelty' && opts.novelty !== undefined ? opts.novelty : v, note: 'n' }]));
 const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
 /** A unit vector whose cosine with unit(axis) is exactly `sim` (the rest goes on an otherwise unused axis). */
 const atSimilarity = (sim: number, axis = 0, spare = 5) => {
@@ -134,37 +134,59 @@ describe('screen', () => {
     expect(prompt).not.toContain('p'.repeat(2001));
   });
 
-  describe('ranking: novelty weight and crowdedness penalty', () => {
-    it('weightedScreenTotal counts novelty twice; crowdPenalty is 0.25 per competitor, capped at 1', () => {
+  describe('ranking: novelty weight, no crowd penalty (screen.v3)', () => {
+    it('weightedScreenTotal counts novelty twice: (sum of the 7 criteria + novelty) / 8', () => {
       expect(weightedScreenTotal(scores(3, { novelty: 5 }) as never)).toBeCloseTo((6 * 3 + 5 + 5) / 8);
       expect(weightedScreenTotal(scores(4) as never)).toBe(4);
-      expect(crowdPenalty(0)).toBe(0);
-      expect(crowdPenalty(1)).toBe(0.25);
-      expect(crowdPenalty(4)).toBe(1);
-      expect(crowdPenalty(8)).toBe(1);
     });
 
-    it('ranks an idea listing 4 competitors below one listing none, with equal raw scores', async () => {
+    it('no longer exports a crowd penalty, and screen.v3 asks for no competitor list', () => {
+      expect('crowdPenalty' in screenModule).toBe(false);
+      const p = loadPrompt('screen');
+      expect(p.version).toBe('screen.v3');
+      const text = p.render({ idea: '<idea>x</idea>' });
+      expect(text).not.toContain('knownCompetitors');
+      expect(text).not.toMatch(/competitor/i);
+      for (const c of CRITERIA) expect(text).toContain(`- ${c}:`);
+    });
+
+    it('ranks by the weighted score alone and stores it as the screen total', async () => {
       const db = await testDb();
-      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
-      const crowded = await insertIdea(db, run.id, { title: 'Crowded' });
-      const open = await insertIdea(db, run.id, { title: 'Open' });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const ideasIn = [await insertIdea(db, run.id, { title: 'Low' }), await insertIdea(db, run.id, { title: 'High' }), await insertIdea(db, run.id, { title: 'Mid' })];
+      const given = [scores(2, { novelty: 4 }), scores(4, { novelty: 3 }), scores(3, { novelty: 3 })];
       const logs: string[] = [];
-      const router = fakeRouter({ structured: { screen: [scores(4, { competitors: 4 }), scores(4)] } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [crowded.id, open.id] });
-      expect(out.ideaIds).toEqual([open.id]);
-      expect((await getIdea(db, crowded.id)).screenTotal).toBe(3);
-      expect((await getIdea(db, open.id)).screenTotal).toBe(4);
-      expect((await getIdea(db, crowded.id)).screenScores).toEqual(scores(4, { competitors: 4 }));
-      expect(logs.some((l) => l.includes('Crowded') && l.includes('weighted 4.00') && l.includes('penalty 1.00'))).toBe(true);
+      const router = fakeRouter({ structured: { screen: given.map((s) => ({ ...s })) } });
+      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: ideasIn.map((i) => i.id) });
+      expect(out.ideaIds).toEqual([ideasIn[1]!.id, ideasIn[2]!.id]);
+      for (const [i, idea] of ideasIn.entries()) {
+        const row = await getIdea(db, idea.id);
+        expect(row.screenTotal).toBeCloseTo(weightedScreenTotal(given[i] as never));
+        expect(row.screenScores).toEqual(given[i]);
+      }
+      expect(logs.some((l) => l.includes('"High"') && l.includes('total 3.75'))).toBe(true);
+      expect(logs.some((l) => l.includes('penalty'))).toBe(false);
     });
 
-    it('caps the penalty at 1.0 for 8 competitors', async () => {
+    it('ties on equal raw scores go to input order', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const ids = [];
+      for (let i = 0; i < 4; i++) ids.push((await insertIdea(db, run.id)).id);
+      const router = fakeRouter({ structured: { screen: [scores(3), scores(3), scores(3), scores(3)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: ids });
+      expect(out.ideaIds).toEqual([ids[0], ids[1]]);
+    });
+
+    it('ignores a stray knownCompetitors list in a model response (old screen.v2 shape)', async () => {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
       const idea = await insertIdea(db, run.id);
-      await screen(deps(db, fakeRouter({ structured: { screen: [scores(5, { competitors: 8 })] } })), run, { ideaIds: [idea.id] });
-      expect((await getIdea(db, idea.id)).screenTotal).toBe(4);
+      const router = fakeRouter({ structured: { screen: [{ ...scores(4), knownCompetitors: ['A', 'B', 'C', 'D'] }] } });
+      await screen(deps(db, router), run, { ideaIds: [idea.id] });
+      const row = await getIdea(db, idea.id);
+      expect(row.screenTotal).toBe(4);
+      expect(row.screenScores).toEqual(scores(4));
     });
 
     it('ranks novelty 5 above novelty 1 when everything else is equal', async () => {
@@ -177,11 +199,6 @@ describe('screen', () => {
       expect(out.ideaIds).toEqual([novel.id]);
       expect((await getIdea(db, plain.id)).screenTotal).toBeCloseTo((6 * 3 + 1 + 1) / 8); // 2.5
       expect((await getIdea(db, novel.id)).screenTotal).toBeCloseTo((6 * 3 + 5 + 5) / 8); // 3.5
-    });
-
-    it('ScreenScoresSchema rejects more than 8 competitor names', () => {
-      expect(ScreenScoresSchema.safeParse(scores(3, { competitors: 8 })).success).toBe(true);
-      expect(ScreenScoresSchema.safeParse(scores(3, { competitors: 9 })).success).toBe(false);
     });
   });
 

@@ -1,5 +1,5 @@
 import { and, cosineDistance, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
-import { CRITERIA, ScreenScoresSchema, type AiScores } from '../case/schema';
+import { AiScoresSchema, CRITERIA, type AiScores } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, ideas } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -16,14 +16,13 @@ export const MAX_CASE_SIMILARITY = 0.82;
 /** A candidate this close to an idea (any run) the gate already killed is skipped: it would die the same way. */
 export const MAX_KILLED_SIMILARITY = 0.75;
 
-/** Mean of the 7 criteria with novelty counted twice: (sum of the 7 values + novelty) / 8. */
+/**
+ * The screen total: mean of the 7 criteria with novelty counted twice, (sum of the 7 values + novelty) / 8.
+ * (Tuning-4 removed the crowd penalty: it saturated on almost every idea. Old screenScores rows may still hold a
+ * `knownCompetitors` list; it is ignored.)
+ */
 export function weightedScreenTotal(scores: AiScores): number {
   return (CRITERIA.reduce((s, c) => s + scores[c].value, 0) + scores.novelty.value) / (CRITERIA.length + 1);
-}
-
-/** 0.25 per competitor the screen model already knows, capped at 1. */
-export function crowdPenalty(knownCompetitors: number): number {
-  return Math.min(1, 0.25 * knownCompetitors);
 }
 
 type Scored = { id: string; title: string; total: number; index: number; embedding: number[] | null; mechanism: string | null };
@@ -87,14 +86,12 @@ export async function screen(
   for (const [index, idea] of generated.entries()) {
     const scores = await router.structured(
       'screen',
-      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaBlock(idea)) }), schema: ScreenScoresSchema, schemaName: 'screen_scores' },
+      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaBlock(idea)) }), schema: AiScoresSchema, schemaName: 'screen_scores' },
       { runId: run.id, promptVersion: prompt.version },
     );
-    // Rank by the novelty-weighted mean minus a penalty for every product the model already knows sells this.
-    const weighted = weightedScreenTotal(scores);
-    const penalty = crowdPenalty(scores.knownCompetitors.length);
-    const total = weighted - penalty;
-    log(`screen: "${capField(idea.title, 120)}" weighted ${weighted.toFixed(2)}, penalty ${penalty.toFixed(2)} (${scores.knownCompetitors.length} known competitors), total ${total.toFixed(2)}`);
+    // Rank by the novelty-weighted mean.
+    const total = weightedScreenTotal(scores);
+    log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}`);
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
     scored.push({ id: idea.id, title: idea.title, total, index, embedding: idea.embedding, mechanism: idea.mechanism });
   }
