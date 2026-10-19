@@ -61,6 +61,10 @@ export const runStages = pgTable('run_stages', {
   createdAt: createdAt(),
 }, (t) => [primaryKey({ columns: [t.runId, t.stage] })]);
 
+/** Who wrote a signal (extract-signals.v3): someone in the affected business, an independent third party, or a seller. */
+export const SIGNAL_VOICES = ['operator', 'neutral', 'vendor'] as const;
+export type SignalVoice = (typeof SIGNAL_VOICES)[number];
+
 export const signals = pgTable('signals', {
   id: id(),
   runId: uuid('run_id').references(() => runs.id),
@@ -73,6 +77,8 @@ export const signals = pgTable('signals', {
   sector: text('sector'),
   painType: text('pain_type'),
   publishedAt: timestamp('published_at', { withTimezone: true }),
+  /** One of SIGNAL_VOICES (type-level only, no DB constraint); null for signals extracted before tuning-4 (untagged). */
+  voice: text('voice', { enum: SIGNAL_VOICES }),
   embedding: vector('embedding', { dimensions: 1536 }),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('signals_url_quote_hash_uq').on(t.url, t.quoteHash)]);
@@ -91,6 +97,10 @@ export const ideas = pgTable('ideas', {
   mechanism: text('mechanism'),
   /** Short noun phrase for the buyer, e.g. "property manager"; null for ideas from before tuning-2. */
   buyerType: text('buyer_type'),
+  /** The function incumbents leave unserved, as claimed by ideate (a model claim, not verified); null for owner ideas and ideas before tuning-4. */
+  functionalGap: text('functional_gap'),
+  /** Incumbents ideate says it knows (model claim); null for owner ideas and ideas before tuning-4. */
+  knownIncumbents: jsonb('known_incumbents').$type<string[]>(),
   signalIds: uuid('signal_ids').array().notNull(),
   embedding: vector('embedding', { dimensions: 1536 }),
   screenScores: jsonb('screen_scores').$type<unknown>(),

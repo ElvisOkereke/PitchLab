@@ -31,6 +31,21 @@ describe('db', () => {
     expect(plain.reviewNote).toBeNull();
   });
 
+  it('stores signal voice and idea functional gap / known incumbents, all nullable (migration 0003)', async () => {
+    const db = await testDb();
+    const base = { marketId: 'ca-us', source: 'web', title: 't', quote: 'q' };
+    const [tagged] = await db.insert(signals).values({ ...base, url: 'https://v.example/1', quoteHash: 'v1', voice: 'vendor' }).returning();
+    const [legacy] = await db.insert(signals).values({ ...base, url: 'https://v.example/2', quoteHash: 'v2' }).returning();
+    expect(tagged.voice).toBe('vendor');
+    expect(legacy.voice).toBeNull();
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
+    const idea = { runId: run.id, origin: 'generated' as const, title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], status: 'candidate' as const };
+    const [claimed] = await db.insert(ideas).values({ ...idea, functionalGap: 'no one reconciles X', knownIncumbents: ['Acme', 'Globex'] }).returning();
+    const [plain] = await db.insert(ideas).values(idea).returning();
+    expect(claimed).toMatchObject({ functionalGap: 'no one reconciles X', knownIncumbents: ['Acme', 'Globex'] });
+    expect(plain).toMatchObject({ functionalGap: null, knownIncumbents: null });
+  });
+
   it('rejects duplicate signal url+quote', async () => {
     const db = await testDb();
     const s = { marketId: 'ca-us', source: 'hn', url: 'https://x', title: 't', quote: 'q', quoteHash: 'h' };
