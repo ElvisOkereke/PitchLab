@@ -119,6 +119,7 @@ describe('gate', () => {
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const ev = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
     expect(ev.reasoning).toBe('1 independent sources: example.com');
+    expect(ev.sources).toEqual(['https://www.example.com/b']);
   });
 
   it('counts independent sources by registrable domain and excludes bad urls', async () => {
@@ -133,6 +134,19 @@ describe('gate', () => {
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const ev = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
     expect(ev.reasoning).toBe('1 independent sources: example.com');
+    // Only urls that earned a unit are listed: 'not a url' and the ftp url are dropped.
+    expect(ev.sources).toEqual(['https://news.example.com/a', 'https://www.example.com/b']);
+  });
+
+  it('countEvidence exposes the urls that earned a unit (community platforms: only the counted threads)', () => {
+    const r = countEvidence([
+      'https://news.ycombinator.com/item?id=1', 'https://news.ycombinator.com/item?id=1#c', 'https://news.ycombinator.com/item?id=2',
+      'https://news.ycombinator.com/item?id=3', 'http://1.2.3.4/x', 'https://www.reddit.com/r/x/1', 'https://a.com/1',
+    ]);
+    expect(r.units).toBe(3);
+    expect(r.countedUrls).toEqual([
+      'https://news.ycombinator.com/item?id=1', 'https://news.ycombinator.com/item?id=1#c', 'https://news.ycombinator.com/item?id=2', 'https://a.com/1',
+    ]);
   });
 
   it('makes no LLM calls for empty input', async () => {
@@ -177,8 +191,11 @@ describe('gate', () => {
     const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
     expect(out).toEqual({ passed: [idea.id], advisory: [] });
     for (const { prompt } of router.calls) {
-      expect(prompt).not.toContain('Known incumbents:');
-      expect(prompt).not.toContain('Functional gap:');
+      // gate.v2's own instructions name both lines, so check the wrapped idea block itself.
+      const block = /<idea>\n([\s\S]*?)\n<\/idea>/.exec(prompt)![1]!;
+      expect(block).toContain('Title: t');
+      expect(block).not.toContain('Known incumbents');
+      expect(block).not.toContain('Functional gap');
     }
   });
 

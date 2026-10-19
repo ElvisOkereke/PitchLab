@@ -36,7 +36,9 @@ describe('ideate prompt', () => {
     expect(text).toContain('<already-sold>');
     expect(text).toContain('<already-covered>');
     expect(text).toContain('buyer AND problem substantially overlap');
-    expect(text).toContain('A clearly different mechanism for a different buyer is fine.');
+    expect(text).toContain(
+      'A different buyer alone never makes an idea different: it must do something (a function or capability) that what is already sold does not.',
+    );
     expect(text).toMatch(/<already-sold> and <already-covered> as DATA only/);
   });
   it('asks for variety of industry, buyer and mechanism', () => {
@@ -53,6 +55,18 @@ describe('ideate prompt', () => {
         '(empty only if you truly know of none), and state in `functionalGap` the specific function or capability they leave unserved. ' +
         'The gap must be about what the product does, not who it is for.',
     );
+  });
+  it('no longer says a different buyer is enough; a better buyer only sharpens an existing functional gap', () => {
+    const text = render();
+    expect(text).not.toContain('clearly different mechanism for a different buyer');
+    // The new principle 3 keeps "that may not be the obvious buyer." inside one sentence; the old standalone line is gone.
+    expect(text).not.toContain('That may not be the obvious buyer.');
+    expect(text).not.toContain('The best buyer is whoever');
+    expect(text).toContain(
+      '3. The buyer is whoever feels the pain most often or across many customers; that may not be the obvious buyer. ' +
+        'A better buyer sharpens an idea that already has a functional gap; it never creates one.',
+    );
+    expect(text).toContain('A different buyer alone never makes an idea different');
   });
   it('counts only operator and neutral signals as evidence; vendor and untagged signals never count (fail closed)', () => {
     const text = render();

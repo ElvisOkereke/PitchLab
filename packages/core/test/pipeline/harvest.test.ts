@@ -178,6 +178,8 @@ describe('harvest', () => {
           'tell you what already exists, not how much the problem hurts: use them only to learn what is already sold, and expect them to be tagged as vendor.',
       );
       expect(p).toContain('reddit.com');
+      expect(p).toContain('trade forums, associations, trade publications, local business news, review pages');
+      expect(p).not.toContain('industry blogs');
     });
   });
 

@@ -31,14 +31,14 @@ Generate exactly {{count}} ideas, or fewer: fewer good ideas is better than padd
 Hard requirements for every idea (omit any idea that cannot meet them):
 - Evidence: it must cite at least {{minSignals}} signals from at least {{minSignals}} different websites (different domains) in the list above, counting only signals whose voice is `operator` or `neutral`. Signals with voice `vendor` come from companies already selling a fix: they may inform what already exists, but they never count as evidence of pain. Signals with voice `untagged` were never classified and never count as evidence of pain either. If the evidence for an idea comes from fewer websites, leave the idea out.
 - Diversity: each new idea must have a different buyer AND a different problem from every idea in <prior-ideas> and from the other ideas you return.
-- Not already sold or covered: do not propose an idea whose buyer AND problem substantially overlap anything in <already-sold> (competitors already sell it) or <already-covered> (already written up). A clearly different mechanism for a different buyer is fine.
+- Not already sold or covered: do not propose an idea whose buyer AND problem substantially overlap anything in <already-sold> (competitors already sell it) or <already-covered> (already written up). A different buyer alone never makes an idea different: it must do something (a function or capability) that what is already sold does not.
 - A real functional difference: A new buyer, channel, distribution wedge or packaging of an existing product is NOT a differentiator. If the only difference between your idea and something already sold is who buys it or how it is sold, do not propose it.
 - Incumbents and gap: For each idea, list the incumbents you know (check `<already-sold>` first, then your own knowledge) in `knownIncumbents` (empty only if you truly know of none), and state in `functionalGap` the specific function or capability they leave unserved. The gap must be about what the product does, not who it is for.
 
 The quality bar. The strongest ideas share these five strengths. Aim for them:
 1. A costly problem that buyers feel but existing tools don't solve, often invisible, manual, or falling between systems.
 2. A clear argument for why current approaches fall short.
-3. The best buyer is whoever feels the pain most often or across many customers. That may not be the obvious buyer.
+3. The buyer is whoever feels the pain most often or across many customers; that may not be the obvious buyer. A better buyer sharpens an idea that already has a functional gap; it never creates one.
 4. Delivery can be mostly automated, so one engine serves many clients.
 5. No licensing or regulation is needed, and a pilot is fast.
 

@@ -48,34 +48,42 @@ function parseSource(url: string): { domain: string; thread: string } | null {
   }
 }
 
-/** Hybrid evidence units: community platforms count distinct threads (max 2 each), every other domain once. */
-export function countEvidence(urls: string[]): { units: number; breakdown: string } {
+/**
+ * Hybrid evidence units: community platforms count distinct threads (max 2 each), every other domain once.
+ * `countedUrls` (input order) are the urls behind those units: unparseable, banned, IP and dotless urls are dropped, and
+ * on a community platform only urls of its first 2 distinct threads are kept; every url of another counted domain is kept.
+ */
+export function countEvidence(urls: string[]): { units: number; breakdown: string; countedUrls: string[] } {
   const byDomain = new Map<string, Set<string>>();
+  const parsed: { url: string; domain: string; thread: string }[] = [];
   for (const url of urls) {
     const s = parseSource(url);
     if (!s) continue;
+    parsed.push({ url, ...s });
     const set = byDomain.get(s.domain) ?? new Set<string>();
-    set.add(s.thread);
+    // A capped platform keeps only its first THREADS_PER_PLATFORM threads, so countedUrls matches the units.
+    if (!COMMUNITY.has(s.domain) || set.size < THREADS_PER_PLATFORM || set.has(s.thread)) set.add(s.thread);
     byDomain.set(s.domain, set);
   }
   let units = 0;
   const parts: string[] = [];
   for (const [domain, threads] of byDomain) {
-    const n = COMMUNITY.has(domain) ? Math.min(threads.size, THREADS_PER_PLATFORM) : 1;
+    const n = COMMUNITY.has(domain) ? threads.size : 1;
     units += n;
     parts.push(n > 1 ? `${domain} ×${n} threads` : domain);
   }
-  return { units, breakdown: parts.join(', ') };
+  const countedUrls = parsed.filter((p) => byDomain.get(p.domain)!.has(p.thread)).map((p) => p.url);
+  return { units, breakdown: parts.join(', '), countedUrls };
 }
 
 /**
  * countEvidence over signal rows, counting only independent voices: `operator` and `neutral`. Fails closed: `vendor`
  * signals (written by companies already selling a fix) and untagged ones (NULL voice, extracted before tuning-4 and not
  * re-harvested since) are excluded and counted in `excludedVendor` / `excludedUntagged`. `counted` lists the urls that
- * were passed to countEvidence.
+ * were passed to countEvidence (voice-eligible); `countedUrls` those that earned a unit.
  */
 export function countEvidenceForSignals(rows: { url: string; voice: SignalVoice | null }[]): {
-  units: number; breakdown: string; counted: string[]; excludedVendor: number; excludedUntagged: number;
+  units: number; breakdown: string; countedUrls: string[]; counted: string[]; excludedVendor: number; excludedUntagged: number;
 } {
   const counted = rows.filter((r) => r.voice === 'operator' || r.voice === 'neutral').map((r) => r.url);
   return {
@@ -165,7 +173,7 @@ export async function gate(
     values.push({
       ideaId: idea.id, check: 'evidence', pass: evidencePass,
       reasoning: evidenceReasoning(evidence),
-      sources: evidence.counted, model: 'rule', promptVersion: 'evidence-rule.v2',
+      sources: evidence.countedUrls, model: 'rule', promptVersion: 'evidence-rule.v2',
     });
     const failed = ORDER.filter((c) => !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';

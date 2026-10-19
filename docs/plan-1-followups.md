@@ -42,8 +42,7 @@ Open after tuning-4:
   tagged `operator`. Spot-check voices in run 5.
 - Untagged legacy signals no longer count: re-gating or re-running old ideas fails `evidence` until their signals are
   re-harvested (re-harvest backfills a NULL voice).
-- Ideate principle 3 ("the best buyer may not be the obvious buyer") and "a clearly different mechanism for a different
-  buyer is fine" are kept verbatim next to the new rule; check in run 5 that ideation reads them as compatible.
+- [x] ideate.v7 wording aligned with the gate in tuning-4 review.
 
 ## Waiting on owner feedback (§12.2 tuning)
 - Should lead-form examples be dropped from the benchmark quality bar in the ideate prompt?
