@@ -97,3 +97,9 @@ Open after tuning-3:
   - Every stage is idempotent on re-run (R20).
 - **Output:** Markdown export escapes all case text, and secrets come only from env.
 - Gate thread keys: canonicalise per platform (HN item id, SO/SE question id, GitHub issue path) and drop tracking params; optionally make THREADS_PER_PLATFORM configurable.
+
+## Tuning-3 review follow-ups (minor)
+- Percentage-price matcher (`FEE_BEFORE`) is loose. Allow only whitespace or a colon between the fee word and the number, and drop "rate", "share", "cut" and "takes". Add negatives: "churn rate 5%", "market share 20%", "cut costs by 30%".
+- Sector matching for the tech-forum switch is exact and case-sensitive, so "Web design agencies" would skip the forums. Sector seeds with more than 8 sectors research only the first 8.
+- "(N claims)" in "For you to check" also merges unchecked items that have no claim row, so the wording is slightly off for those.
+- When one sector's research call fails, the other concurrent calls keep running and are still paid for.
