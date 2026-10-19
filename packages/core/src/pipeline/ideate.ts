@@ -4,6 +4,7 @@ import type { Db } from '../db/client';
 import { ideas, lenses, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { loadAlreadySold } from './already-sold';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_SIGNALS = 40;
@@ -84,6 +85,11 @@ export async function ideate(
   const signalsText = passed.map((s) => `- url: ${s.url}\n  quote: ${oneLine(s.quote)}`).join('\n');
 
   const count = Math.ceil(cfg.ideaCount / chosen.length);
+  // What competitors already sell (gate kills on `generic`) and what already has a case, so ideation steers away.
+  const { sold, covered } = await loadAlreadySold(db);
+  const asList = (items: string[]) => (items.length ? items.map((s) => `- ${s}`).join('\n') : '(none yet)');
+  const alreadySold = wrapUntrusted('already-sold', asList(sold));
+  const alreadyCovered = wrapUntrusted('already-covered', asList(covered));
   const prompt = loadPrompt('ideate');
   const pending: IdeaInsert[] = [];
   for (const lens of chosen) {
@@ -99,6 +105,8 @@ export async function ideate(
           lensHint: lens.promptHint,
           signals: wrapUntrusted('signals', signalsText),
           priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
+          alreadySold,
+          alreadyCovered,
           count: String(count),
           minSignals: String(cfg.minSignals),
         }),
