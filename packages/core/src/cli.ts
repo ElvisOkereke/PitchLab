@@ -1,30 +1,32 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { Command, Option } from 'commander';
-import { count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizzle-orm';
 import { caseToMarkdown } from './case/export-markdown';
+import {
+  CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, type MarkType, type RunOpts, type ValidateCliOpts,
+} from './cli-program';
 import { loadEnv } from './config/env';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
-import { cases, claims, ideas, lenses, markets, runs, scores } from './db/schema';
+import { cases, claims, dataCalls, ideas, lenses, llmCalls, markets, runs, scores, settings } from './db/schema';
 import { seedDefaults } from './db/seed';
 import { buildRouter } from './llm/router';
 import { createRun, executeRun } from './pipeline/run';
 import { defaultRunConfig, type RunConfig, type StageDeps } from './pipeline/types';
 import { fetchPage } from './tools/fetch-page';
 import { buildSources } from './tools/sources';
+import { computeChecklistStatus } from './validation/checklist';
+import { markOutreach, outreachCounts } from './validation/outreach';
+import { parseProspectCsv, upsertProspects } from './validation/prospects';
+import { runValidation } from './validation/run';
+import { getSetting, setSetting } from './validation/settings';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
 const fromBase = (p: string) => resolve(BASE_DIR, p);
 const EXPORT_DIR = fromBase(join('output', 'cases'));
+const VALIDATION_DIR = fromBase(join('output', 'validation'));
 const DEFAULT_DB_URL = 'pglite://.data/pglite';
-
-class CliError extends Error {
-  constructor(message: string, readonly exitCode: number) {
-    super(message);
-  }
-}
 
 /** Strip terminal control characters from text that may come from harvested/LLM content. */
 const clean = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
@@ -129,11 +131,6 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
 }
 
 const csv = (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean);
-function positiveInt(v: string): number {
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < 1) throw new CliError(`Expected a positive whole number, got: ${v}`, 2);
-  return n;
-}
 
 function readIdeaFile(path: string): string {
   let text = '';
@@ -145,11 +142,6 @@ function readIdeaFile(path: string): string {
   if (!text.trim()) throw new CliError(`Idea file is empty or unreadable: ${path}`, 2);
   return text;
 }
-
-type RunOpts = {
-  seed: RunConfig['seedType'];
-  sectors?: string; lenses?: string; file?: string; ideas?: string; advance?: string;
-};
 
 function configFrom(opts: RunOpts): RunConfig {
   const partial: Partial<RunConfig> & Pick<RunConfig, 'seedType'> = { seedType: opts.seed };
@@ -206,44 +198,161 @@ async function exportCommand(slug: string | undefined, opts: { all?: boolean }):
   });
 }
 
-const program = new Command()
-  .name('gen')
-  .description('Business-case generator')
-  .showHelpAfterError();
+// ---- Validation pack -----------------------------------------------------------------------------
 
-program.command('run')
-  .description('Create and execute a run')
-  .addOption(new Option('--seed <type>', 'how to seed the run').choices(['open', 'sector', 'lens', 'idea']).makeOptionMandatory())
-  .option('--sectors <list>', 'comma-separated sectors (for --seed sector)')
-  .option('--lenses <list>', 'comma-separated lens ids (for --seed lens)')
-  .option('--file <path>', 'idea file (for --seed idea)')
-  .option('--ideas <n>', 'number of ideas to generate')
-  .option('--advance <n>', 'number of ideas to advance to the gate')
-  .action(async (opts: RunOpts) => {
-    process.exitCode = await execute(null, configFrom(opts));
+async function findCase(db: Db, slug: string): Promise<typeof cases.$inferSelect> {
+  if (!/^[a-z0-9-]+$/.test(slug)) throw new CliError(`Invalid case slug: ${slug}`, 1);
+  const [kase] = await db.select().from(cases).where(eq(cases.slug, slug));
+  if (!kase) throw new CliError(`No case with slug: ${slug}`, 1);
+  return kase;
+}
+
+function senderWarning(missing: string[]): void {
+  if (missing.length === 0) return;
+  console.error('');
+  console.error('WARNING: sender identity is not set (CASL). Every draft shows [SET SENDER ...] markers: do not send them as is.');
+  console.error(`Missing: ${missing.join(', ')}. Set them, then run validate again:`);
+  for (const k of missing) console.error(`  npm run gen -- config set ${k} "..."`);
+}
+
+/** Model and data-API spend recorded since `since` outside pipeline runs (validation calls carry no run id). */
+async function spendSince(db: Db, since: Date): Promise<number> {
+  const [llm] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls).where(and(isNull(llmCalls.runId), gte(llmCalls.createdAt, since)));
+  const [data] = await db.select({ total: sum(dataCalls.costUsd) }).from(dataCalls).where(and(isNull(dataCalls.runId), gte(dataCalls.createdAt, since)));
+  return Number(llm?.total ?? 0) + Number(data?.total ?? 0);
+}
+
+async function validateCommand(slug: string, opts: ValidateCliOpts): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const kase = await findCase(db, slug);
+    const started = new Date();
+    const result = await runValidation(
+      { db, router: buildRouter(env, db), fetchPage, log: out, outDir: VALIDATION_DIR, placesApiKey: env.GOOGLE_PLACES_API_KEY },
+      kase.id,
+      opts,
+    );
+    out('');
+    out(`Validation for ${slug}:`);
+    for (const s of result.steps) out(`  ${s.step.padEnd(10)} ${s.status.padEnd(8)} ${s.detail}`);
+    if (result.export) out(`Files: ${result.export.dir}`);
+    out(`Cost: $${(await spendSince(db, started)).toFixed(4)}`);
+    if (result.export) {
+      senderWarning(result.export.senderMissing);
+      if (result.export.privacyMissing) {
+        console.error('WARNING: the landing page has no privacy contact. Set one: npm run gen -- config set landing.privacyContact "you@example.com"');
+      }
+    }
+    if (!result.ok) console.error(clean(`Validation for ${slug} did not finish cleanly; finished steps are saved. Fix the failure and run it again.`));
+    return result.exitCode;
+  } finally {
+    await closeDb(db);
+  }
+}
+
+async function prospectsImportCommand(slug: string, opts: { file: string }): Promise<number> {
+  let text: string;
+  try {
+    text = readFileSync(fromBase(opts.file), 'utf8');
+  } catch {
+    throw new CliError(`CSV file is unreadable: ${opts.file}`, 2);
+  }
+  let parsed: ReturnType<typeof parseProspectCsv>;
+  try {
+    parsed = parseProspectCsv(text);
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), 2);
+  }
+  return withDb(async (db) => {
+    const kase = await findCase(db, slug);
+    const r = await upsertProspects(db, kase.id, parsed.rows, 'csv');
+    out(`Imported ${r.inserted} new prospect(s); ${r.existing} already listed (left unchanged); ${r.skipped + parsed.skipped.length} skipped.`);
+    for (const s of parsed.skipped) out(`  line ${s.line}: skipped (${s.reason})`);
+    for (const w of parsed.warnings) out(`  line ${w.line}: ${w.message}`);
+    return 0;
   });
+}
 
-program.command('resume')
-  .description('Resume a failed run from its failed stage')
-  .argument('<runId>')
-  .action(async (runId: string) => {
+async function outreachMarkCommand(ref: string, type: MarkType, opts: { note?: string }): Promise<number> {
+  return withDb(async (db) => {
+    let r: Awaited<ReturnType<typeof markOutreach>>;
+    try {
+      r = await markOutreach(db, ref, type, opts.note);
+    } catch (err) {
+      throw new CliError(err instanceof Error ? err.message : String(err), 1);
+    }
+    for (const p of r.prospects) out(`Recorded ${type} for prospect ${p.id}; status: ${p.status}`);
+    if (r.suppressed) out(`Suppressed ${r.suppressed}: it will never be drafted or exported again.`);
+    return 0;
+  });
+}
+
+async function outreachStatusCommand(slug: string): Promise<number> {
+  return withDb(async (db) => {
+    const kase = await findCase(db, slug);
+    const c = await outreachCounts(db, kase.id);
+    out(`Prospects: ${c.prospects} (${c.withEmail} with an email)`);
+    out(`By status: ${Object.entries(c.byStatus).filter(([, n]) => n > 0).map(([s, n]) => `${s} ${n}`).join(', ') || 'none'}`);
+    out(`Events (prospects / events): ${Object.entries(c.events).map(([t, e]) => `${t} ${e.prospects}/${e.events}`).join(', ')}`);
+    const gates = await computeChecklistStatus(db, kase.id);
+    if (gates.length === 0) out('Checklist: no validation pack yet (run validate).');
+    else {
+      out('Checklist:');
+      for (const g of gates) {
+        const pct = g.metricKey === 'landing_conversion_pct' ? '%' : '';
+        out(`  [${g.state === 'pass' ? 'x' : ' '}] ${g.description} (${g.metricKey}: ${g.value === null ? 'n/a' : `${g.value}${pct}`} of ${g.threshold}${pct})`);
+      }
+    }
+    return 0;
+  });
+}
+
+async function configSetCommand(key: string, value: string): Promise<number> {
+  return withDb(async (db) => {
+    await setSetting(db, key, value.trim());
+    out(`Set ${key}.`);
+    if (!(KNOWN_CONFIG_KEYS as readonly string[]).includes(key)) {
+      out(`Note: ${key} is not a key this tool reads (known: ${KNOWN_CONFIG_KEYS.join(', ')}).`);
+    }
+    return 0;
+  });
+}
+
+const showValue = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v));
+
+async function configGetCommand(key: string | undefined): Promise<number> {
+  return withDb(async (db) => {
+    if (key !== undefined) {
+      const v = await getSetting(db, key);
+      out(v === null ? `${key} is not set` : `${key} = ${showValue(v)}`);
+      return 0;
+    }
+    const rows = await db.select().from(settings)
+      .where(or(like(settings.key, 'sender.%'), like(settings.key, 'landing.%')))
+      .orderBy(settings.key);
+    if (rows.length === 0) out('No sender. or landing. settings yet.');
+    for (const r of rows) out(`${r.key} = ${showValue(r.value)}`);
+    return 0;
+  });
+}
+
+const program = buildProgram({
+  run: (opts: RunOpts) => execute(null, configFrom(opts)),
+  resume: async (runId: string) => {
     if (!/^[0-9a-f-]{36}$/i.test(runId)) throw new CliError(`Run not found: ${runId}`, 1);
-    process.exitCode = await execute(runId, null);
-  });
-
-program.command('export')
-  .description('Export case(s) as Markdown to output/cases/<slug>.md')
-  .argument('[slug]')
-  .option('--all', 'export every case')
-  .action(async (slug: string | undefined, opts: { all?: boolean }) => {
-    process.exitCode = await exportCommand(slug, opts);
-  });
-
-program.command('runs')
-  .description('List recent runs')
-  .action(async () => {
-    process.exitCode = await listRuns();
-  });
+    return execute(runId, null);
+  },
+  export: exportCommand,
+  runs: listRuns,
+  validate: validateCommand,
+  prospectsImport: prospectsImportCommand,
+  outreachMark: outreachMarkCommand,
+  outreachStatus: outreachStatusCommand,
+  configSet: configSetCommand,
+  configGet: configGetCommand,
+});
 
 try {
   await program.parseAsync(process.argv);
