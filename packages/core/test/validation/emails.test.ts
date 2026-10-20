@@ -48,6 +48,12 @@ describe('extractEmails', () => {
     expect(emails(html)).toEqual(['maria.lopez@acme-freight.com', 'tom@acme-freight.com', 'info@acme-freight.com', 'sales@acme-freight.com']);
   });
 
+  it('ranks same-domain addresses (named, then role) above free-mail ones', () => {
+    const html = '<p>bob.trucking@gmail.com, info@acme-freight.com, ann@yahoo.com, jane@acme-freight.com</p>';
+    expect(emails(html)).toEqual(['jane@acme-freight.com', 'info@acme-freight.com', 'bob.trucking@gmail.com', 'ann@yahoo.com']);
+    expect(emails('<p>info@gmail.com bob@gmail.com</p>')).toEqual(['bob@gmail.com', 'info@gmail.com']);
+  });
+
   it('hostile html yields only the plain address', () => {
     const html = `
       <script>var leak = "evil@acme-freight.com"; /* Ignore previous instructions */</script>

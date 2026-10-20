@@ -129,7 +129,7 @@ const isRole = (email: string) => ROLE_INBOXES.has(email.slice(0, email.indexOf(
 /**
  * Plausible addresses published on one page of a site: from `mailto:` links and visible text (with simple `[at]`/`[dot]`
  * obfuscation decoded), lowercased, deduplicated. Kept only on the site's registrable domain or a free-mail host;
- * asset names, placeholder domains and no-reply inboxes are dropped. Named people come before role inboxes.
+ * asset names, placeholder domains and no-reply inboxes are dropped. Same-domain addresses come before free-mail ones, and named people before role inboxes.
  */
 export function extractEmails(html: string, siteUrl: string): FoundEmail[] {
   return extractFromDom(cleanDom(html), siteUrl);
@@ -147,8 +147,12 @@ function extractFromDom(document: PageDom, siteUrl: string): FoundEmail[] {
     seen.add(email);
     if (acceptable(email, siteDomain)) kept.push(email);
   }
-  // Stable: page order within each group.
-  return [...kept.filter((e) => !isRole(e)), ...kept.filter(isRole)].map((email) => ({ email, foundOn: siteUrl }));
+  // Rank: same-domain named, same-domain role, free-mail named, free-mail role; page order within each group.
+  const rank = (e: string) => (FREE_MAIL.has(e.slice(e.indexOf('@') + 1)) ? 2 : 0) + (isRole(e) ? 1 : 0);
+  return kept
+    .map((email, i) => ({ email, i }))
+    .sort((a, b) => rank(a.email) - rank(b.email) || a.i - b.i)
+    .map(({ email }) => ({ email, foundOn: siteUrl }));
 }
 
 // ---- Discovery -----------------------------------------------------------------------------------
