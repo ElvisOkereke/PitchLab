@@ -47,6 +47,8 @@ describe('claimNextRun', () => {
   });
 });
 
+// TEST_DATABASE_URL must point at a THROWAWAY database: the test migrates it, inserts runs, claims them (including
+// any queued runs already there) and deletes the runs it created. Never point it at the dashboard's database.
 describe.runIf(process.env.TEST_DATABASE_URL)('on real Postgres', () => {
   it('10 parallel claims over 3 queued runs return 3 distinct ids', async () => {
     const db = await createDb(process.env.TEST_DATABASE_URL!);

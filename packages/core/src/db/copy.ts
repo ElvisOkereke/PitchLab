@@ -5,6 +5,8 @@ import * as schema from './schema';
 
 // One-time copy of the local PGlite database into Postgres (the dashboard and the worker share one Postgres; PGlite
 // is single-process). Reads the source only; writes are idempotent (onConflictDoNothing), so a re-run inserts nothing.
+// Meant for an empty target: on a pre-populated target a conflicting row keeps the target's version, so a child row can
+// fail its foreign key, or counts can match ("ok") while row contents differ.
 
 /** Every table exported from schema.ts (tables added later are picked up without a list edit). */
 export const allTables: PgTable[] = (Object.values(schema) as unknown[]).filter((v): v is PgTable => is(v, PgTable));

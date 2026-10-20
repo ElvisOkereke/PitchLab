@@ -1,6 +1,10 @@
 // npm run db:copy -- [--from pglite://.data/pglite] [--to <postgres url>] [--dry-run]
 // One-time copy of the local PGlite database into Postgres. Never writes to the source. The target URL (it holds a
 // password) is never printed.
+// Use an EMPTY target (a fresh `docker compose up -d db`). Rows are inserted with ON CONFLICT DO NOTHING, so a target
+// that already holds rows (e.g. seeded markets/lenses edited differently, or rows from another source) keeps its own
+// version of any conflicting row: a child row can then fail its foreign key, or every count can match ("ok") while
+// some rows differ from the source.
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
