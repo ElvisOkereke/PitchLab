@@ -4,7 +4,7 @@ import { outreachDrafts, outreachEvents, prospects, suppressions } from '../../s
 import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { setSetting } from '../../src/validation/settings';
-import { DraftEmailsSchema, hasNoLinksOrAddresses } from '../../src/validation/schema';
+import { DraftEmailsSchema, hasNoLinksOrAddresses, removeLinksAndAddresses } from '../../src/validation/schema';
 import {
   SENDER_MARKERS, UNSUBSCRIBE_LINE, applyFooter, exportableOutreach, generateDrafts, markOutreach, nextStatus, outreachCounts,
   senderFooter,
@@ -110,12 +110,26 @@ describe('DraftEmailsSchema', () => {
     expect(bad('Talk soon.Thanks')).toBe(true);
   });
 
+  it('hosts preceded by dots, @ or _ are caught by the guard and removed by the snippet sanitiser (P3-R18)', () => {
+    const hostile = ['Details...evil.com/pay', 'write to @evil.com', 'login at secure_login.evil.com', 'see _evil.com/pay', 'see .evil.com'];
+    for (const s of hostile) {
+      expect(hasNoLinksOrAddresses(s), s).toBe(false);
+      expect(removeLinksAndAddresses(s), s).not.toMatch(/evil/);
+    }
+    // Ordinary punctuation still passes.
+    for (const s of ['Details... then we talk.', 'snake_case notes', 'See you at 9 a.m., e.g. Friday.', 'Price: 3.50 per load.']) {
+      expect(hasNoLinksOrAddresses(s), s).toBe(true);
+    }
+  });
+
   it('stays fast on huge hostile input (P3-R17)', () => {
     const huge = 'a'.repeat(400_000) + '.a'.repeat(200_000) + '@'.repeat(100_000) + 'x.'.repeat(100_000) + '1';
     const t0 = Date.now();
     hasNoLinksOrAddresses(huge);
     hasNoLinksOrAddresses('a-'.repeat(500_000));
     hasNoLinksOrAddresses('a.b@'.repeat(250_000));
+    hasNoLinksOrAddresses('_.@'.repeat(300_000) + '.'.repeat(100_000) + 'a');
+    removeLinksAndAddresses('x_'.repeat(250_000) + '...'.repeat(100_000));
     expect(Date.now() - t0).toBeLessThan(2000);
   });
 

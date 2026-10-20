@@ -219,17 +219,29 @@ export const HOST_IN_TEXT = /(?<![@\w.-])(?:[a-z0-9-]+\.)+(?:xn--[a-z0-9-]+|[a-z
 /** A dotted-quad IPv4 literal, optional /path. */
 export const IPV4_IN_TEXT = /\b\d{1,3}(?:\.\d{1,3}){3}\b(?:\/\S*)?/g;
 
-const GUARD_PATTERNS = [LINK_IN_TEXT, EMAIL_IN_TEXT, HOST_IN_TEXT, IPV4_IN_TEXT];
-const GUARD_TESTERS = GUARD_PATTERNS.map((re) => new RegExp(re.source, re.flags.replace('g', '')));
+const tester = (re: RegExp) => new RegExp(re.source, re.flags.replace('g', ''));
+/** Patterns run on guardText(); hosts and IPv4 literals run on hostText(guardText()). */
+const TEXT_PATTERNS = [LINK_IN_TEXT, EMAIL_IN_TEXT];
+const HOST_PATTERNS = [HOST_IN_TEXT, IPV4_IN_TEXT];
+const TEXT_TESTERS = TEXT_PATTERNS.map(tester);
+const HOST_TESTERS = HOST_PATTERNS.map(tester);
 
 /** Text as the guard sees it: NFKC (full-width letters and dots), ideographic dots → '.', invisible characters removed, \n line ends. */
 export function guardText(s: string): string {
   return stripInvisible(s.normalize('NFKC').replace(/[．。｡]/g, '.')).replace(/\r\n?/g, '\n');
 }
 
+/**
+ * The copy the host patterns run on (P3-R18): `@`, `_` and every run of dots not preceded by a label character become
+ * spaces, so "...evil.com", "@evil.com", "secure_login.evil.com", "_evil.com" and ".evil.com" start a token the host
+ * pattern sees. Linear (one O(1) lookbehind per position).
+ */
+const hostText = (n: string) => n.replace(/[@_]|(?<![a-z0-9-])\.+/gi, ' ');
+
 /** guardText(s) with every link, email address, host and IPv4 literal replaced by a space. Callers cap `s` first. */
 export function removeLinksAndAddresses(s: string): string {
-  return GUARD_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), guardText(s));
+  const withoutLinks = TEXT_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), guardText(s));
+  return HOST_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), hostText(withoutLinks));
 }
 
 /**
@@ -239,7 +251,9 @@ export function removeLinksAndAddresses(s: string): string {
  */
 export function hasNoLinksOrAddresses(s: string): boolean {
   const n = guardText(s);
-  return GUARD_TESTERS.every((re) => !re.test(n));
+  if (TEXT_TESTERS.some((re) => re.test(n))) return false;
+  const h = hostText(n);
+  return HOST_TESTERS.every((re) => !re.test(h));
 }
 const NO_LINKS_MESSAGE =
   'must not contain any link (URL, "www.", or a domain such as example.com) or email address; write company and product ' +
