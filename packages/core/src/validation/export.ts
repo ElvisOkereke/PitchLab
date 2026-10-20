@@ -7,7 +7,7 @@ import { stripInvisible } from '../llm/untrusted';
 import { OUTREACH_KINDS, cases, landingPages, outreachDrafts, prospects, suppressions, validationPacks, type OutreachKind } from '../db/schema';
 import { computeChecklistStatus, type GateStatus } from './checklist';
 import { landingOptions, renderLandingHtml } from './landing';
-import { applyFooter, exportableOutreach, outreachCounts, senderFooter, type OutreachCounts } from './outreach';
+import { applyFooter, exportableOutreach, outreachCounts, senderFooter, usableAddressCount, type OutreachCounts } from './outreach';
 import { DEFAULT_CHECKLIST_GATES, LandingCopySchema, PackSectionsSchema, type PackDocs } from './schema';
 
 // All LLM- and web-derived text is escaped for its output format (R13): Markdown via the case export helpers, HTML by
@@ -62,7 +62,19 @@ const fmtThreshold = (g: GateStatus) => {
   return `${fmtNumber(g, g.threshold)}${note}`;
 };
 
-function checklistSection(status: GateStatus[]): string[] {
+/**
+ * The reality check next to the emails_sent gate: how many addresses could be emailed now (same rule as outreach.csv).
+ * Gate thresholds are set before any prospect exists; the first live run asked for 50 emails with 13 addresses found.
+ */
+function usableNote(g: GateStatus, usable: number): string {
+  if (g.metricKey !== 'emails_sent') return '';
+  const shortfall = usable < g.threshold
+    ? `, fewer than the gate needs: add prospects with \`npm run gen -- prospects import <case> --file <csv>\``
+    : '';
+  return ` (you currently have ${usable} usable ${usable === 1 ? 'address' : 'addresses'}${shortfall})`;
+}
+
+function checklistSection(status: GateStatus[], usable: number): string[] {
   const passed = status.filter((g) => g.state === 'pass').length;
   return [
     '## Validation checklist',
@@ -71,7 +83,9 @@ function checklistSection(status: GateStatus[]): string[] {
     '',
     table(
       ['Gate', 'Metric', 'Current', 'Threshold', 'Status'],
-      status.map((g) => [cell(g.description), g.metricKey, fmtValue(g), fmtThreshold(g), g.state === 'pass' ? '✅ pass' : 'pending']),
+      status.map((g) => [
+        `${cell(g.description)}${usableNote(g, usable)}`, g.metricKey, fmtValue(g), fmtThreshold(g), g.state === 'pass' ? '✅ pass' : 'pending',
+      ]),
     ),
   ];
 }
@@ -186,7 +200,7 @@ function outreachSummary(c: OutreachCounts): string[] {
 
 function packMarkdown(
   title: string, docs: PackDocs | null, meta: { model: string; promptVersion: string } | null, status: GateStatus[],
-  counts: OutreachCounts, senderMissing: string[],
+  counts: OutreachCounts, senderMissing: string[], usable: number,
 ): string {
   const out = [`# Validation pack: ${line(title)}`, '', ...senderWarning(senderMissing)];
   if (!docs || !meta) {
@@ -196,7 +210,7 @@ function packMarkdown(
   out.push(`_Model: ${line(meta.model)} · Prompt: ${line(meta.promptVersion)}_`, '');
   if (docs.reviewNotes?.length) out.push('> **Review notes:**', ...docs.reviewNotes.map((n) => `> - ${line(n)}`), '');
   out.push(
-    ...checklistSection(status), '',
+    ...checklistSection(status, usable), '',
     ...outreachSummary(counts), '',
     ...mvpSection(docs.mvpSpec), '',
     ...pilotSection(docs.pilotPlan), '',
@@ -254,7 +268,8 @@ export async function exportValidation(
   const docs = parsed?.success ? parsed.data : null;
   const status = await computeChecklistStatus(db, caseId);
   const counts = await outreachCounts(db, caseId);
-  write('pack.md', packMarkdown(kase.title, docs, packRow ?? null, status, counts, senderMissing));
+  const usable = await usableAddressCount(db, caseId, { includeWeak: opts.includeWeak, pilotDomain });
+  write('pack.md', packMarkdown(kase.title, docs, packRow ?? null, status, counts, senderMissing, usable));
 
   // prospects.csv — suppressed / unsubscribed addresses and the pilot site's prospects' addresses are left out (rows kept).
   const allProspects = await db.select().from(prospects).where(eq(prospects.caseId, caseId)).orderBy(prospects.createdAt, prospects.id);

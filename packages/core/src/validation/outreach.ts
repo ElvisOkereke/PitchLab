@@ -320,6 +320,17 @@ export async function exportableOutreach(
     .filter((x) => Object.keys(x.drafts).length > 0);
 }
 
+/**
+ * Distinct addresses of a case the owner could email now, by the same rule as outreach.csv (drafts aside): self-published
+ * (any basis with includeWeak), not suppressed, not unsubscribed / not interested, not on the pilot site domain.
+ */
+export async function usableAddressCount(
+  db: Db, caseId: string, opts: { includeWeak?: boolean; pilotDomain?: string | null } = {},
+): Promise<number> {
+  const { eligible } = await draftable(db, caseId, opts.includeWeak ?? false, opts.pilotDomain ?? null);
+  return new Set(eligible.map((p) => p.email!.toLowerCase())).size;
+}
+
 // ---- Tracking ------------------------------------------------------------------------------------
 
 const PROGRESS: Partial<Record<ProspectStatus, number>> = { new: 0, drafted: 1, sent: 2, replied: 3, positive: 4, meeting: 5 };

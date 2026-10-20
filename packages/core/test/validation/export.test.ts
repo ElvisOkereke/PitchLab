@@ -356,6 +356,38 @@ describe('exportValidation', () => {
     expect(md).not.toMatch(/5% conversion[^\n]*differs/);
   });
 
+  it('pack.md shows how many usable addresses exist next to the emails_sent gate', async () => {
+    const db = await testDb();
+    const kase = await aCase(db, 'freight', pack());
+    const drafted = await aProspect(db, kase.id);
+    await addDrafts(db, drafted.id);
+    await aProspect(db, kase.id); // self-published, no drafts yet: still a usable address
+    await aProspect(db, kase.id, { caslBasis: 'unknown' }); // weak: only with --include-weak
+    const supp = await aProspect(db, kase.id);
+    await db.insert(suppressions).values({ email: supp.email!, reason: 'unsubscribe' });
+    await aProspect(db, kase.id, { status: 'unsubscribed' });
+    await aProspect(db, kase.id, { status: 'not_interested' });
+    await aProspect(db, kase.id, { email: null, emailSourceUrl: null, caslBasis: 'unknown' });
+    const pilot = await aProspect(db, kase.id);
+    const sentRow = (md: string) => md.split('\n').find((l) => l.includes('Send 3 emails'))!;
+
+    const out = tmp();
+    await exportValidation(db, kase.id, out);
+    let md = readFileSync(join(out, 'freight', 'pack.md'), 'utf8');
+    expect(sentRow(md)).toContain('you currently have 3 usable addresses');
+    expect(md.match(/usable address/g)).toHaveLength(1); // only on the emails_sent gate
+
+    await exportValidation(db, kase.id, out, { pilotDomain: pilot.domain });
+    md = readFileSync(join(out, 'freight', 'pack.md'), 'utf8');
+    expect(sentRow(md)).toContain('you currently have 2 usable addresses');
+    expect(sentRow(md)).toMatch(/fewer than the gate needs/);
+
+    await exportValidation(db, kase.id, out, { pilotDomain: pilot.domain, includeWeak: true });
+    md = readFileSync(join(out, 'freight', 'pack.md'), 'utf8');
+    expect(sentRow(md)).toContain('you currently have 3 usable addresses');
+    expect(sentRow(md)).not.toMatch(/fewer than the gate needs/);
+  });
+
   it('works for a case with no pack, prospects or landing page yet', async () => {
     const db = await testDb();
     const kase = await aCase(db);
