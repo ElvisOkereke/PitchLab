@@ -87,6 +87,11 @@ describe('fetchPage', () => {
       expect((await fetchPage(url, { fetchImpl: direct })).reason, url).toBe('blocked_host');
     }
     expect(direct).not.toHaveBeenCalled();
+    // Several trailing dots: the ".." fail-closed rule applies before any dot is stripped, so no request is made.
+    for (const url of ['https://gamersgetaway.ca..', 'https://example.com..', 'https://example.com.../x', 'http://localhost../']) {
+      expect((await fetchPage(url, { fetchImpl: direct })).reason, url).toBe('blocked_host');
+    }
+    expect(direct).not.toHaveBeenCalled();
     // A look-alike domain is not blocked.
     expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });

@@ -129,7 +129,11 @@ async function checkHost(
   u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean,
 ): Promise<'ok' | 'blocked_host' | 'network' | 'timeout'> {
   if (u.username || u.password) return 'blocked_host';
-  let host = u.hostname.toLowerCase().replace(/\.$/, '');
+  const rawHost = u.hostname.toLowerCase();
+  // The never-fetch / ".." rules see the raw hostname (an empty label, e.g. "example.com..", fails closed) before any
+  // trailing dot is stripped; then ALL trailing dots go before the local-name checks.
+  if (isNeverFetchHost(rawHost)) return 'blocked_host';
+  let host = rawHost.replace(/\.+$/, '');
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   if (host === 'localhost' || ['.localhost', '.local', '.internal'].some((s) => host.endsWith(s))) return 'blocked_host';
   if (isNeverFetchHost(host)) return 'blocked_host';
