@@ -4,7 +4,7 @@ import { outreachDrafts, outreachEvents, prospects, suppressions } from '../../s
 import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { setSetting } from '../../src/validation/settings';
-import { DraftEmailsSchema } from '../../src/validation/schema';
+import { DraftEmailsSchema, hasNoLinksOrAddresses } from '../../src/validation/schema';
 import {
   SENDER_MARKERS, UNSUBSCRIBE_LINE, applyFooter, exportableOutreach, generateDrafts, markOutreach, nextStatus, outreachCounts,
   senderFooter,
@@ -90,10 +90,33 @@ describe('DraftEmailsSchema', () => {
     expect(DraftEmailsSchema.safeParse({ ...drafts(), cold: { subject: 'pay at acme.io', body: 'ok' } }).success).toBe(false);
     for (const body of [
       'Dr. Smith, approx. 20 loads, e.g. Friday', 'Mr. Lee at 9 a.m. vs. 5 p.m., i.e. the U.S. office', 'Rates rose 4.5% in Q3.',
-      'We help brokers. Co-ops too. Info: reply here.', 'Talk soon.Thanks',
+      'We help brokers. Co-ops too. Info: reply here.',
     ]) {
       expect(bad(body), body).toBe(false);
     }
+  });
+
+  it('matches any host shape (no TLD list), IPv4 literals and look-alike dots; abbreviations pass (P3-R17)', () => {
+    const bad = (body: string) => !hasNoLinksOrAddresses(body);
+    for (const body of [
+      't.co/x', 'see x.com/evil', 'evil.de/pay', 'pay at 203.0.113.5/pay', 'ip 10.0.0.1', 'evil．com', 'evil。com', 'evil｡com',
+      'xn--e1afmkfd.xn--p1ai', 'ＥＶＩＬ．ＣＯＭ', 'shop.example.museum', 'a​.evil.io',
+    ]) {
+      expect(bad(body), JSON.stringify(body)).toBe(true);
+    }
+    expect(bad('Dr. Smith, approx. 20 loads, e.g. Friday, i.e. daily, 9 a.m. U.S. time')).toBe(false);
+    expect(bad('Version 2.5 ships in Q4; 3.14 is pi.')).toBe(false);
+    // Accepted false positive (the re-ask corrects it): a missing space after a period reads as a host.
+    expect(bad('Talk soon.Thanks')).toBe(true);
+  });
+
+  it('stays fast on huge hostile input (P3-R17)', () => {
+    const huge = 'a'.repeat(400_000) + '.a'.repeat(200_000) + '@'.repeat(100_000) + 'x.'.repeat(100_000) + '1';
+    const t0 = Date.now();
+    hasNoLinksOrAddresses(huge);
+    hasNoLinksOrAddresses('a-'.repeat(500_000));
+    hasNoLinksOrAddresses('a.b@'.repeat(250_000));
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 
   it('re-asserts the guard on the final text before storing, even if a router skipped validation (P3-R15)', async () => {
@@ -341,6 +364,27 @@ describe('generateDrafts', () => {
     expect(site).not.toContain('BODY TEXT'); // page body never reaches the prompt
     expect(site).not.toContain('‮');
     expect(site.trim().length).toBeLessThanOrEqual(400 + 'Title: \nDescription: '.length);
+  });
+
+  it('a 1 MB hostile homepage title is truncated before sanitising and finishes quickly (P3-R17)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    await aProspect(db, kase.id);
+    const title = `${'a'.repeat(300_000)}${'.a'.repeat(200_000)}${'b@'.repeat(150_000)}`; // ~1 MB
+    const description = `Buy at evil．com ${'x.'.repeat(200_000)}`;
+    const fetchPage = vi.fn(async (url: string) => ({
+      ok: true, status: 200, finalUrl: url, title, text: '',
+      html: `<html><head><meta name="description" content="${description}"></head></html>`,
+    }));
+    const router = fakeRouter({ structured: { outreach: [drafts()] } });
+    const t0 = Date.now();
+    await generateDrafts({ ...deps(db, router), fetchPage: fetchPage as never }, kase.id);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    const prompt = router.calls[0]!.prompt;
+    const start = prompt.indexOf('<prospect-site>\n');
+    const site = prompt.slice(start, prompt.indexOf('</prospect-site>'));
+    expect(site.length).toBeLessThan(600);
+    expect(site).not.toMatch(/evil/);
   });
 
   it('the sender footer may carry a URL or address: validation covers only the model-written part (P3-R14)', async () => {

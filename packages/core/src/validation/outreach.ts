@@ -13,7 +13,7 @@ import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
-import { DraftEmailsSchema, EMAIL_IN_TEXT, HOST_IN_TEXT, LINK_IN_TEXT, hasNoLinksOrAddresses } from './schema';
+import { DraftEmailsSchema, hasNoLinksOrAddresses, removeLinksAndAddresses } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
 
@@ -142,8 +142,8 @@ async function siteSnippet(fetchPage: StageDeps['fetchPage'] | undefined, p: Pro
     }
   }
   // P3-R14: only the title and meta description (never page body), links and addresses removed, ≤ SNIPPET_MAX chars in all.
-  const plain = (s: string, max: number) =>
-    capField(stripInvisible(s).replace(LINK_IN_TEXT, ' ').replace(EMAIL_IN_TEXT, ' ').replace(HOST_IN_TEXT, ' '), max);
+  // P3-R17: cut before sanitising, so a hostile page cannot make the patterns run over megabytes.
+  const plain = (s: string, max: number) => capField(removeLinksAndAddresses(s.slice(0, max * 4)), max);
   const title = plain(page.title, SNIPPET_TITLE_MAX);
   description = plain(description, SNIPPET_MAX - title.length);
   if (!title && !description) return null;

@@ -202,28 +202,44 @@ export type PackDocs = z.infer<typeof PackSectionsSchema>;
 
 // ---- Outreach drafts (outreach.v1) ---------------------------------------------------------------
 
-/** A link in text: an http(s)/ftp URL or a bare `www.` host. Global: use with replace/match only. */
-export const LINK_IN_TEXT = /\b(?:(?:https?|ftp):\/\/|www\.)[^\s<>"']*/gi;
-/** An email address in text. Global: use with replace/match only. */
-export const EMAIL_IN_TEXT = /[a-z0-9._%+'-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
+// Link guard patterns (rulings P3-R14, R15, R17). Every pattern is linear on hostile input: a match can only start where
+// the lookbehind allows (the start of a token), so no start position re-scans the same run of characters. Run them on
+// guardText() output. All global: use with replace / match only (the testers below are non-global copies).
 
-/** Common TLDs for scheme-less host tokens ("acme.io", "example.com/pay"). */
-const HOST_TLDS = [
-  'com', 'net', 'org', 'io', 'co', 'ca', 'us', 'uk', 'app', 'dev', 'ai', 'biz', 'info', 'me', 'xyz', 'ly', 'to', 'tv', 'cc', 'gg', 'sh',
-  'cloud', 'online', 'site', 'store', 'shop', 'tech',
-];
-/** A scheme-less host-shaped token, not part of an email address (P3-R15). Global: use with replace/match only. */
-export const HOST_IN_TEXT = new RegExp(String.raw`(?<!@)\b[a-z0-9-]{2,}(?:\.[a-z0-9-]+)*\.(?:${HOST_TLDS.join('|')})\b(?:\/\S*)?`, 'gi');
+/** A link: an http(s)/ftp URL or a bare `www.` host. */
+export const LINK_IN_TEXT = /\b(?:(?:https?|ftp):\/\/|www\.)[^\s<>"']*/gi;
+/** An email address (starting at the start of its local part). */
+export const EMAIL_IN_TEXT = /(?<![a-z0-9._%+'-])[a-z0-9._%+'-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
+/**
+ * A scheme-less host (P3-R17, no TLD list): `label(.label)+` with `[a-z0-9-]+` labels (one character allowed) whose
+ * final label is 2–24 letters or an `xn--` punycode label, optional /path; not preceded by `@`, a word character, `.` or
+ * `-`. One-letter final labels (e.g., i.e., U.S., a.m.) never match; "loads.Then" (no space) is an accepted false positive.
+ */
+export const HOST_IN_TEXT = /(?<![@\w.-])(?:[a-z0-9-]+\.)+(?:xn--[a-z0-9-]+|[a-z]{2,24})\b(?:\/\S*)?/gi;
+/** A dotted-quad IPv4 literal, optional /path. */
+export const IPV4_IN_TEXT = /\b\d{1,3}(?:\.\d{1,3}){3}\b(?:\/\S*)?/g;
+
+const GUARD_PATTERNS = [LINK_IN_TEXT, EMAIL_IN_TEXT, HOST_IN_TEXT, IPV4_IN_TEXT];
+const GUARD_TESTERS = GUARD_PATTERNS.map((re) => new RegExp(re.source, re.flags.replace('g', '')));
+
+/** Text as the guard sees it: NFKC (full-width letters and dots), ideographic dots → '.', invisible characters removed, \n line ends. */
+export function guardText(s: string): string {
+  return stripInvisible(s.normalize('NFKC').replace(/[．。｡]/g, '.')).replace(/\r\n?/g, '\n');
+}
+
+/** guardText(s) with every link, email address, host and IPv4 literal replaced by a space. Callers cap `s` first. */
+export function removeLinksAndAddresses(s: string): string {
+  return GUARD_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), guardText(s));
+}
 
 /**
- * Rulings P3-R14/R15: model-written email text never carries a link, a host name or an email address (prospect-site
- * text could otherwise steer a draft the owner sends). Checked on normalised text (invisible characters removed, line
- * ends unified), so a zero-width character inside "https://" cannot dodge it. The sender's own contact details are
- * added by code after validation, in the footer.
+ * Model-written email text never carries a link, a host name, an IP address or an email address (prospect-site text
+ * could otherwise steer a draft the owner sends). Checked on guardText(), so zero-width characters, full-width or
+ * ideographic dots cannot dodge it. The sender's own contact details are added by code after validation, in the footer.
  */
 export function hasNoLinksOrAddresses(s: string): boolean {
-  const n = stripInvisible(s).replace(/\r\n?/g, '\n');
-  return !n.match(LINK_IN_TEXT) && !n.match(EMAIL_IN_TEXT) && !n.match(HOST_IN_TEXT);
+  const n = guardText(s);
+  return GUARD_TESTERS.every((re) => !re.test(n));
 }
 const NO_LINKS_MESSAGE =
   'must not contain any link (URL, "www.", or a domain such as example.com) or email address; write company and product ' +
