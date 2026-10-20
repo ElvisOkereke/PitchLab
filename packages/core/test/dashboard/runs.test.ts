@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { cases, ideas, runStages, runs } from '../../src/db/schema';
 import {
-  MAX_QUEUED, QueueRunInputSchema, RunConfigSchema, listRuns, queueGateKillRerun, queueRun, requeueRun,
+  MAX_QUEUED, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, listRuns, queueGateKillRerun, queueRun, requeueRun,
 } from '../../src/dashboard/runs';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
@@ -149,5 +149,16 @@ describe('listRuns', () => {
     expect(ra.stages.map((s) => [s.stage, s.status])).toEqual([['harvest', 'done'], ['ideate', 'failed']]);
     expect(ra.stages[0]).not.toHaveProperty('output');
     void cases; void ideas;
+  });
+});
+
+describe('countRunsByStatus', () => {
+  it('counts every run status, zero when absent', async () => {
+    expect(await countRunsByStatus(db)).toEqual({ queued: 0, running: 0, succeeded: 0, failed: 0 });
+    const cfg = defaultRunConfig({ seedType: 'open' });
+    await insertRun(db, cfg);
+    await insertRun(db, cfg);
+    await db.insert(runs).values([{ config: cfg, status: 'running' }, { config: cfg, status: 'failed', error: 'x' }]);
+    expect(await countRunsByStatus(db)).toEqual({ queued: 2, running: 1, succeeded: 0, failed: 1 });
   });
 });

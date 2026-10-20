@@ -43,7 +43,9 @@ describe('every page under app/(app) requires the owner', () => {
 
   it('finds the pages', () => {
     const names = files.map((f) => relative(appDir, f).replaceAll('\\', '/'));
-    expect(names).toEqual(expect.arrayContaining(['layout.tsx', 'page.tsx', 'cases/[slug]/page.tsx', 'cases/[slug]/export.md/route.ts']));
+    expect(names).toEqual(expect.arrayContaining([
+      'layout.tsx', 'page.tsx', 'cases/[slug]/page.tsx', 'cases/[slug]/export.md/route.ts', 'leaderboard/page.tsx', 'command/page.tsx',
+    ]));
   });
 
   it.each(files.map((f) => [relative(appDir, f).replaceAll('\\', '/'), f]))('%s calls requireOwner() first', async (name, file) => {

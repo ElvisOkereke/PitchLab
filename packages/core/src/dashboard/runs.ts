@@ -1,7 +1,7 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { cases, ideas, lenses, markets, runStages, runs } from '../db/schema';
+import { cases, ideas, lenses, markets, runStages, runStatus, runs } from '../db/schema';
 import { STAGES, defaultRunConfig, type RunConfig } from '../pipeline/types';
 import { scrubError } from '../tools/scrub';
 
@@ -181,6 +181,14 @@ const stageOrder = (s: string) => {
   const i = (STAGES as readonly string[]).indexOf(s);
   return i === -1 ? STAGES.length : i;
 };
+
+export type RunStatus = (typeof runStatus.enumValues)[number];
+
+/** How many runs are in each status (command center, and the Runs page's auto-refresh while work is pending). */
+export async function countRunsByStatus(db: Db): Promise<Record<RunStatus, number>> {
+  const rows = await db.select({ status: runs.status, n: count() }).from(runs).groupBy(runs.status);
+  return Object.fromEntries(runStatus.enumValues.map((s) => [s, rows.find((r) => r.status === s)?.n ?? 0])) as Record<RunStatus, number>;
+}
 
 /** Page ≥ 1 (anything else → 1). */
 export const clampPage = (page: unknown) => Math.min(Math.max(intOr(page, 1), 1), PAGE_CEILING);

@@ -653,6 +653,57 @@ blockquote {
   margin-left: 4px;
 }
 
+/* ---- Leaderboard and command center --------------------------------------------------------- */
+
+.leaderboard th,
+.leaderboard td {
+  white-space: nowrap;
+}
+
+.leaderboard thead a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+.by-toggle {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.by-toggle a {
+  min-height: 32px;
+}
+
+.by-toggle a[aria-current='true'] {
+  font-weight: 700;
+}
+
+.command-page {
+  display: grid;
+  gap: var(--gap);
+}
+
+.command-page h1 {
+  margin-bottom: 0;
+}
+
+.command-page .card h2 {
+  margin-top: 0;
+}
+
+@media (min-width: 900px) {
+  .command-page {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  .command-page h1 {
+    grid-column: 1 / -1;
+  }
+}
+
 /* Phones: a .stacked table shows each row as a card with labelled cells (labels from data-label). */
 @media (max-width: 767px) {
   table.stacked thead {
