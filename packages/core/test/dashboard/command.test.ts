@@ -91,6 +91,15 @@ describe('command center data', () => {
     expect([...times].sort((a, b) => b - a)).toEqual(times);
   });
 
+  it('cuts a huge legacy run error to 16 KB before scrubbing it (D2-R3)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await db.update(runs).set({ status: 'failed', error: 'e '.repeat(100_000), finishedAt: new Date('2026-10-19T00:00:00Z') }).where(eq(runs.id, run.id));
+    const { listRuns } = await import('../../src/dashboard/runs');
+    expect((await listRuns(db, { page: 1, pageSize: 5 })).rows[0]!.error!.length).toBeLessThanOrEqual(16_384);
+    expect((await needsYou(db, new Date('2026-10-19T12:00:00Z')))[0]!.label.length).toBeLessThan(200);
+  });
+
   it('scrubs credentials from legacy stored run errors in labels and run rows (D2-R1)', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

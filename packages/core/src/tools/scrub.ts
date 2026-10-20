@@ -24,7 +24,8 @@ const ASSIGNMENT = new RegExp(
   `(?<![A-Za-z])((?:${KEYWORDS})["']?\\s*[:=]\\s*)(?:"[^"\\r\\n]{0,500}"|'[^'\\r\\n]{0,500}'|["'][^\\r\\n]*|[^\\s&,;"']+)`,
   'gi',
 );
-const JWT = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
+/** Anchored by lookbehind (not \b, which lets "eyJ" start after "-" inside a run and goes quadratic). */
+const JWT = /(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g;
 /** Provider key shapes, including short ones the generic rule below would miss. */
 const KEY_SHAPES = [
   /\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/g,
@@ -39,18 +40,22 @@ const LONG_RUN = /(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{24,}/g;
 const LETTER = /[A-Za-z]/;
 const DIGIT = /[0-9]/;
 
-/** `scheme://host/path` with userinfo (up to the last `@` before the path), query and fragment removed. */
-function cleanUrl(scheme: string, rest: string): string {
+/**
+ * `scheme://host/path` with userinfo (up to the last `@` before the path), query and fragment removed. `url` is the
+ * whole match (query and fragment included) and `rest` the part between `://` and the first `?`/`#`.
+ */
+function cleanUrl(url: string, scheme: string, rest: string): string {
   const slash = rest.indexOf('/');
   const hasPath = slash !== -1;
   try {
-    const u = new URL(`${scheme}://${rest}`);
-    if (u.host || !rest.includes('@')) return `${u.protocol}//${u.host}${hasPath ? u.pathname : ''}`;
+    const u = new URL(url);
+    if (u.host || !url.includes('@')) return `${u.protocol}//${u.host}${hasPath ? u.pathname : ''}`;
   } catch {
-    // Not a URL the WHATWG parser accepts: fall back to the plain split below.
+    // Not a URL the WHATWG parser accepts: fall back below.
   }
-  const authority = hasPath ? rest.slice(0, slash) : rest;
-  return `${scheme}://${authority.slice(authority.lastIndexOf('@') + 1)}${hasPath ? rest.slice(slash) : ''}`;
+  // D2-R3: fail closed. An unparseable URL with an @ anywhere may hold an unencoded password ("u:pa/ss@", "u:p#w@").
+  if (url.includes('@')) return `${scheme}://${R}`;
+  return `${scheme}://${rest}`;
 }
 
 /**
@@ -61,7 +66,7 @@ function cleanUrl(scheme: string, rest: string): string {
  */
 export function scrubSecrets(text: string): string {
   let s = text
-    .replace(URL_PARTS, (_m, scheme: string, rest: string) => cleanUrl(scheme, rest))
+    .replace(URL_PARTS, (m: string, scheme: string, rest: string) => cleanUrl(m, scheme, rest))
     .replace(AUTH_HEADER, `$1${R}`)
     .replace(BEARER, `$1${R}`)
     .replace(ASSIGNMENT, `$1${R}`)
@@ -70,7 +75,15 @@ export function scrubSecrets(text: string): string {
   return s.replace(LONG_RUN, (m) => (LETTER.test(m) && DIGIT.test(m) ? R : m));
 }
 
+/** Longest error text kept; cut BEFORE scrubbing so a huge message never reaches the patterns (D2-R3). */
+export const ERROR_TEXT_MAX = 16_384;
+
+/** Stored or legacy error text, cut to ERROR_TEXT_MAX and scrubbed (dashboard read sites). */
+export function scrubError(text: string): string {
+  return scrubSecrets(text.slice(0, ERROR_TEXT_MAX));
+}
+
 /** The scrubbed message of anything thrown. Every site that persists or surfaces an error message uses this. */
 export function errorMessage(err: unknown): string {
-  return scrubSecrets(err instanceof Error ? err.message : String(err));
+  return scrubError(err instanceof Error ? err.message : String(err));
 }

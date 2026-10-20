@@ -5,7 +5,7 @@ import type { Db } from './db/client';
 import { runs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
-import { errorMessage, scrubSecrets } from './tools/scrub';
+import { errorMessage, scrubError } from './tools/scrub';
 
 // A minimal executor for runs queued from the dashboard. No leases: a worker killed mid-run leaves the run `running`
 // until `gen resume <id>` (leases come in Plan 4).
@@ -74,7 +74,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 async function failRun(db: Db, id: string, error: string): Promise<void> {
-  await db.update(runs).set({ status: 'failed', error: scrubSecrets(error).slice(0, ERROR_MAX), finishedAt: new Date() }).where(eq(runs.id, id));
+  await db.update(runs).set({ status: 'failed', error: scrubError(error).slice(0, ERROR_MAX), finishedAt: new Date() }).where(eq(runs.id, id));
 }
 
 /**

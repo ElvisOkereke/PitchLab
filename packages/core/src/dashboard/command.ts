@@ -1,7 +1,7 @@
 import { and, count, desc, eq, gte, isNull, lt, max, ne, notExists, or, sql, sum } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { cases, dataCalls, llmCalls, outreachEvents, prospects, runs, scores, stageEvents } from '../db/schema';
-import { scrubSecrets } from '../tools/scrub';
+import { scrubError } from '../tools/scrub';
 
 // ---- Toronto days ("today" / "this week" are America/Toronto days; weeks start Monday) --------------
 
@@ -105,7 +105,7 @@ export async function needsYou(db: Db, now: Date): Promise<NeedsYouItem[]> {
     ...failed.map((r) => ({
       kind: 'failed_run' as const,
       // D2-R1: scrub first (legacy rows were stored unscrubbed), then cut.
-      label: `Run failed${r.stage ? ` at ${r.stage}` : ''}: ${scrubSecrets(r.error ?? 'unknown error').slice(0, ERROR_SHOWN)}`,
+      label: `Run failed${r.stage ? ` at ${r.stage}` : ''}: ${scrubError(r.error ?? 'unknown error').slice(0, ERROR_SHOWN)}`,
       href: '/runs',
       at: r.finishedAt ?? r.createdAt,
     })),

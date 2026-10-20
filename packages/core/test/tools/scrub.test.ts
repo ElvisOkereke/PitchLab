@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, scrubSecrets } from '../../src/tools/scrub';
+import { errorMessage, scrubError, scrubSecrets } from '../../src/tools/scrub';
 
 const R = '[redacted]';
 
@@ -61,7 +61,21 @@ describe('scrubSecrets', () => {
     expect(scrubSecrets('custom+x://a@b:c@host.test/p?q=1#f')).toBe('custom+x://host.test/p');
     expect(scrubSecrets('https://us@er:p@ss@host.test/x')).toBe('https://host.test/x');
     expect(scrubSecrets('ok https://host.test then')).toBe('ok https://host.test then');
-    expect(scrubSecrets('weird://%zz@[bad/host')).toBe('weird://[bad/host'); // regex fallback when URL() rejects it
+    expect(scrubSecrets('weird://[bad/host')).toBe('weird://[bad/host'); // regex fallback when URL() rejects it, no userinfo
+  });
+
+  it('fails closed when URL() rejects a URL that holds an @ (D2-R3)', () => {
+    for (const u of ['postgres://u:pa/ss@host:5433/db', 'postgres://u:p#w@host/db', 'postgres://u:p?w@host/db', 'weird://%zz@[bad/host']) {
+      const out = scrubSecrets(`connect ${u} refused`);
+      expect(out, u).toBe(`connect ${u.split('://')[0]}://[redacted] refused`);
+    }
+    expect(scrubSecrets('connect postgres://bcg:hunter2@127.0.0.1:5433/bcg refused')).toBe('connect postgres://127.0.0.1:5433/bcg refused');
+  });
+
+  it('errorMessage cuts the message to 16 KB before scrubbing (D2-R3)', () => {
+    expect(errorMessage(new Error('x '.repeat(20_000))).length).toBeLessThanOrEqual(16_384);
+    expect(scrubError('y '.repeat(20_000)).length).toBeLessThanOrEqual(16_384);
+    expect(scrubError('token=abc')).toBe(`token=${R}`);
   });
 
   it('redacts the extended assignment keywords (D2-R2)', () => {
@@ -97,6 +111,7 @@ describe('scrubSecrets', () => {
       'a1-'.repeat(MB / 3), `${'a'.repeat(23)} `.repeat(MB / 24), 'postgres://u:'.repeat(MB / 13), '?'.repeat(MB),
       'a:'.repeat(MB / 2), 'ab+'.repeat(MB / 3), 'x://@'.repeat(MB / 5), 'password="'.repeat(MB / 10), `token='${'z'.repeat(MB)}`,
       'eyJ'.repeat(MB / 3), 'eyJa.'.repeat(MB / 5), 'eyJa '.repeat(MB / 5), 'cookie='.repeat(MB / 7), 'session: "'.repeat(MB / 10),
+      'eyJ-'.repeat(MB / 4), 'x-eyJ'.repeat(MB / 5), '.eyJ-'.repeat(MB / 5), 'eyJa.a-'.repeat(MB / 7), 'eyJa.-eyJ'.repeat(MB / 9),
     ];
     for (const s of inputs) {
       const t = performance.now();
