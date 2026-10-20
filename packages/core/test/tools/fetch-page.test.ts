@@ -83,6 +83,10 @@ describe('fetchPage', () => {
     const r = await fetchPage('https://a.test/', { fetchImpl: redirecting });
     expect(r).toMatchObject({ ok: false, reason: 'blocked_host', finalUrl: 'https://www.gamersgetaway.ca/' });
     expect(redirecting).toHaveBeenCalledTimes(1);
+    for (const url of ['https://gamersgetaway.ca../', 'https://www..gamersgetaway.ca/', 'https://a..example.com/']) {
+      expect((await fetchPage(url, { fetchImpl: direct })).reason, url).toBe('blocked_host');
+    }
+    expect(direct).not.toHaveBeenCalled();
     // A look-alike domain is not blocked.
     expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });

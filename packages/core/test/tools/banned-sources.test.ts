@@ -13,6 +13,16 @@ describe('never-fetch hosts (P3-R8)', () => {
     expect(isNeverFetchHost('gamersgetaway.ca.evil.com')).toBe(false);
   });
 
+  it('trailing dots and empty labels fail closed (P3-R13)', () => {
+    for (const host of ['gamersgetaway.ca.', 'gamersgetaway.ca..', 'www..gamersgetaway.ca', 'GAMERSGETAWAY.CA...', 'www..example.com']) {
+      expect(isNeverFetchHost(host), host).toBe(true);
+    }
+    for (const url of ['https://gamersgetaway.ca./', 'https://gamersgetaway.ca../', 'https://www..gamersgetaway.ca/', 'https://a..example.com/']) {
+      expect(isBannedSource(url), url).toBe(true);
+    }
+    expect(isNeverFetchHost('example.com.')).toBe(false);
+  });
+
   it('fetch-page re-exports the same list and check', () => {
     expect(FetchPageHosts).toBe(NEVER_FETCH_HOSTS);
     expect(fetchPageIsNeverFetchHost).toBe(isNeverFetchHost);

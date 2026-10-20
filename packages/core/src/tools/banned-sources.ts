@@ -13,9 +13,13 @@ const BANNED = new Set<string>(BANNED_DOMAINS);
  */
 export const NEVER_FETCH_HOSTS = ['gamersgetaway.ca'] as const;
 
-/** True for a never-fetch host or one of its subdomains (case and trailing dot ignored). */
+/**
+ * True for a never-fetch host or one of its subdomains (case and all trailing dots ignored). A hostname with an empty
+ * label ("..") is malformed and also counts (fails closed).
+ */
 export function isNeverFetchHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (hostname.includes('..')) return true;
+  const host = hostname.toLowerCase().replace(/\.+$/, '');
   return NEVER_FETCH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
