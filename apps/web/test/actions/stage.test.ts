@@ -100,6 +100,50 @@ describe('overturnKillAction', () => {
   });
 });
 
+describe('returnTo (case page controls return to the case)', () => {
+  const redirectOf = async (p: Promise<unknown>) => {
+    const e = await p.catch((err: unknown) => err);
+    expect(e).toBeInstanceOf(RedirectError);
+    return (e as RedirectError).url;
+  };
+
+  it('moveStageAction returns to the given case tab after a successful move', async () => {
+    const c = await seedCase(state.db);
+    const url = await redirectOf(moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'pilot', slug: c.slug, returnTo: `/cases/${c.slug}?tab=numbers` })));
+    expect(url).toBe(`/cases/${c.slug}?tab=numbers`);
+    expect((await getCase(state.db, c.id)).stage).toBe('pilot');
+    expect(request.revalidated).toEqual(['/', `/cases/${c.slug}`]);
+  });
+
+  it('moveStageAction still reports a refusal as a message (no redirect) when returnTo is set', async () => {
+    const c = await seedCase(state.db, { stage: 'pilot' });
+    expect(await moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'live', returnTo: `/cases/${c.slug}` })))
+      .toEqual({ error: 'This case moved since you loaded the page. Refresh.' });
+  });
+
+  it('an off-site returnTo is replaced by the board', async () => {
+    for (const returnTo of ['//evil.com', 'https://evil.com/x', '/\\evil.com', '/%2F%2Fevil.com', 'javascript:alert(1)']) {
+      const c = await seedCase(state.db);
+      expect(await redirectOf(moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'live', returnTo })))).toBe('/');
+    }
+  });
+
+  it('overturnKillAction returns to the case page, and a refusal lands there with the notice', async () => {
+    const c = await seedCase(state.db, { stage: 'killed', killReason: 'meh' });
+    expect(await redirectOf(overturnKillAction(form({ caseId: c.id, slug: c.slug, returnTo: `/cases/${c.slug}` })))).toBe(`/cases/${c.slug}`);
+    expect(await getCase(state.db, c.id)).toMatchObject({ stage: 'new', killReason: null });
+    // Second press: no longer killed.
+    expect(await redirectOf(overturnKillAction(form({ caseId: c.id, slug: c.slug, returnTo: `/cases/${c.slug}?tab=score` }))))
+      .toBe(`/cases/${c.slug}?tab=score&notice=overturn_refused`);
+    expect(await eventsOf(state.db, c.id)).toHaveLength(1);
+  });
+
+  it('overturnKillAction with an off-site returnTo falls back to the board', async () => {
+    const c = await seedCase(state.db, { stage: 'pilot' });
+    expect(await redirectOf(overturnKillAction(form({ caseId: c.id, returnTo: '//evil.com' })))).toBe('/?notice=overturn_refused');
+  });
+});
+
 describe('rerunGateKillAction', () => {
   it('queues an owner-idea run for a gate-killed idea and returns to the Killed column', async () => {
     const idea = await seedGatedOutIdea(state.db);

@@ -9,8 +9,9 @@ import { STAGES, STAGE_LABEL } from '@/lib/stages';
 /**
  * Move a case to another stage: a select of the other stages, a note (required to kill; checked on the server, hinted
  * here) and a submit button. Works without JS. A killed case also gets an "Overturn kill" button (killed → new).
+ * `returnTo` (a same-origin path, checked again on the server) is where both forms land after a successful action.
  */
-export function StageMoveForm({ caseId, slug, stage }: { caseId: string; slug: string; stage: CaseStage }) {
+export function StageMoveForm({ caseId, slug, stage, returnTo }: { caseId: string; slug: string; stage: CaseStage; returnTo?: string }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(moveStageAction, {});
   const others = STAGES.filter((s) => s !== stage);
   const [to, setTo] = useState<CaseStage>(others[0]!);
@@ -22,6 +23,7 @@ export function StageMoveForm({ caseId, slug, stage }: { caseId: string; slug: s
         <input type="hidden" name="caseId" value={caseId} />
         <input type="hidden" name="from" value={stage} />
         <input type="hidden" name="slug" value={slug} />
+        {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
         <label className="visually-hidden" htmlFor={`to-${caseId}`}>
           Move to
         </label>
@@ -56,6 +58,7 @@ export function StageMoveForm({ caseId, slug, stage }: { caseId: string; slug: s
         <form action={overturnKillAction} data-testid="overturn-kill">
           <input type="hidden" name="caseId" value={caseId} />
           <input type="hidden" name="slug" value={slug} />
+          {returnTo ? <input type="hidden" name="returnTo" value={returnTo} /> : null}
           <button type="submit" className="secondary">
             Overturn kill
           </button>

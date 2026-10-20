@@ -455,6 +455,209 @@ ul.plain {
   font-weight: 600;
 }
 
+/* ---- Shared: chips, banners, pager --------------------------------------------------------- */
+
+.chip,
+.badge {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid var(--chip-color, var(--border));
+  border-radius: 999px;
+  color: var(--chip-color, var(--fg));
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.chip-verified,
+.badge-ok { --chip-color: var(--ok); }
+.chip-unsupported,
+.badge-bad { --chip-color: var(--bad); }
+.chip-unreachable,
+.badge-warn { --chip-color: var(--warn); }
+.chip-needs_review,
+.badge-info { --chip-color: var(--info); }
+.chip-unverified,
+.badge-muted { --chip-color: var(--muted); }
+
+.banner {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+.banner-warn {
+  border-color: var(--warn);
+  border-left-width: 4px;
+}
+
+.stack {
+  display: grid;
+  gap: 8px;
+}
+
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.pager a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+/* ---- Case view ------------------------------------------------------------------------------ */
+
+.crumbs {
+  margin: 8px 0 0;
+}
+
+.case-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 2px solid var(--stage-color, var(--border));
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.kill-reason,
+.case-move {
+  margin: 8px 0;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 12px 0 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 12px;
+  color: var(--fg);
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+}
+
+.tab-link[aria-current='page'] {
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.fields,
+.results {
+  margin: 0;
+}
+
+.fields > div,
+.results > div {
+  margin-bottom: 8px;
+}
+
+.fields dt,
+.results dt {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.fields dd,
+.results dd {
+  margin: 0;
+}
+
+.fields dd p {
+  margin: 0 0 4px;
+}
+
+.verdicts li,
+.for-you li {
+  margin-bottom: 6px;
+}
+
+.verdict .check {
+  font-weight: 600;
+}
+
+blockquote {
+  margin: 0 0 6px;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+}
+
+.evidence-item p {
+  margin: 0 0 4px;
+}
+
+.meta {
+  font-size: 0.9rem;
+}
+
+.email h4 {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.email p {
+  margin: 0;
+}
+
+/* Phones: a .stacked table shows each row as a card with labelled cells (labels from data-label). */
+@media (max-width: 767px) {
+  table.stacked thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  table.stacked,
+  table.stacked tbody,
+  table.stacked tr,
+  table.stacked td {
+    display: block;
+    width: 100%;
+  }
+
+  table.stacked tr {
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+  }
+
+  table.stacked td {
+    border-bottom: 0;
+    overflow-wrap: anywhere;
+  }
+
+  table.stacked td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+}
+
 @media (min-width: 768px) {
   .board-switcher {
     display: none;

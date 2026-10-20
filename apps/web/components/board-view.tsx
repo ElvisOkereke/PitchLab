@@ -3,6 +3,7 @@ import type { CaseStage } from '@bcg/core/db/schema';
 import Link from 'next/link';
 import { rerunGateKillAction } from '@/actions/stage';
 import { BOARD_NOTICES, boardHref, selectedStage, type BoardQuery } from '@/lib/board-query';
+import { checkLabel } from '@/lib/gate';
 import { STAGES, STAGE_LABEL } from '@/lib/stages';
 import { CaseCard } from './case-card';
 
@@ -14,14 +15,6 @@ export type BoardViewProps = {
 };
 
 const MIN_AI_OPTIONS = [2, 3, 3.5, 4, 4.5];
-const CHECK_LABEL: Record<string, string> = {
-  generic: 'Not generic',
-  regulation: 'Regulation',
-  control: 'Control',
-  autonomy: 'Autonomy',
-  reachability: 'Reachability',
-  evidence: 'Evidence',
-};
 
 /**
  * The pipeline board. Wide screens: 5 columns. Phones (< 768px): a stage switcher with counts plus the selected
@@ -119,7 +112,7 @@ function GateKills({ kills }: { kills: GateKill[] }) {
             <ul className="failed-checks">
               {k.failed.map((f) => (
                 <li key={f.check}>
-                  <span className="check">❌ {CHECK_LABEL[f.check] ?? f.check}:</span> <span className="pre">{f.reasoning}</span>
+                  <span className="check">❌ {checkLabel(f.check)}:</span> <span className="pre">{f.reasoning}</span>
                 </li>
               ))}
             </ul>
