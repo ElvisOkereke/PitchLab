@@ -95,15 +95,17 @@ function* stringLeaves(v: unknown, path: (string | number)[] = []): Generator<[(
 const pathLabel = (path: (string | number)[]) =>
   path.map((p, i) => (typeof p === 'number' ? `[${p}]` : i === 0 ? p : `.${p}`)).join('');
 
-export const PilotPlanSchema = z
-  .object({
-    idealPilotCustomer: text,
-    firstStep: text,
-    steps: list.min(3).max(8),
-    measures: z.array(z.object({ metric: text, successThreshold: text })).min(2),
-    timelineWeeks: z.number().int().min(1).max(52),
-    permissionsAndRisks: list,
-  })
+/** The pilot plan without the permission tripwire: used only by the loose fallback call (P3-R3), whose output is annotated by code. */
+export const PilotPlanLooseSchema = z.object({
+  idealPilotCustomer: text,
+  firstStep: text,
+  steps: list.min(3).max(8),
+  measures: z.array(z.object({ metric: text, successThreshold: text })).min(2),
+  timelineWeeks: z.number().int().min(1).max(52),
+  permissionsAndRisks: list,
+});
+
+export const PilotPlanSchema = PilotPlanLooseSchema
   // A refinement, not a transform (R9): the router re-asks until every such text names the permission it depends on.
   .superRefine((plan, ctx) => {
     for (const [path, value] of stringLeaves(plan)) {
@@ -150,11 +152,16 @@ export const ChecklistSchema = z.object({
 });
 export type Checklist = z.infer<typeof ChecklistSchema>;
 
-/** What one `pack` call returns and what `validation_packs.sections` stores. */
-export const PackDocsSchema = z.object({
-  mvpSpec: MvpSpecSchema,
-  pilotPlan: PilotPlanSchema,
-  interviewKit: InterviewKitSchema,
-  checklist: ChecklistSchema,
-});
-export type PackDocs = z.infer<typeof PackDocsSchema>;
+const packShape = { mvpSpec: MvpSpecSchema, interviewKit: InterviewKitSchema, checklist: ChecklistSchema };
+
+/** What one `pack` call returns (with the pilot-plan permission tripwire). */
+export const PackDocsSchema = z.object({ ...packShape, pilotPlan: PilotPlanSchema });
+/** The same without the tripwire, for the one fallback call (P3-R3). */
+export const PackDocsLooseSchema = z.object({ ...packShape, pilotPlan: PilotPlanLooseSchema });
+
+/**
+ * What `validation_packs.sections` stores: the documents plus `reviewNotes`, which only code writes (never the model:
+ * it is not in the schemas sent to the model), e.g. when the fallback added permission reminders.
+ */
+export const PackSectionsSchema = z.object({ ...packShape, pilotPlan: PilotPlanLooseSchema, reviewNotes: z.array(z.string()).optional() });
+export type PackDocs = z.infer<typeof PackSectionsSchema>;

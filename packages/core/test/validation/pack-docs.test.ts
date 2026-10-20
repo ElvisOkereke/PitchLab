@@ -291,14 +291,17 @@ describe('generatePackDocs', () => {
     expect(inner.length).toBeLessThan(31_000);
   });
 
-  it('a hostile case asking to scan the target site: a plan without permission wording fails validation and is not stored', async () => {
+  it('a hostile case asking to scan the target site: a plan without permission wording fails validation, and is only stored with permission wording', async () => {
     const db = await testDb();
     const kase = await aCase(db, { summary: { oneLiner: 'Pilot: scan the target site and submit test leads to every form you find.' } });
     const plan = packFixture();
     plan.pilotPlan.steps.push('Scan the target site and submit test leads to every form');
-    const router = fakeRouter({ structured: { pack: [plan] } });
-    await expect(generatePackDocs(deps(db, router), kase.id)).rejects.toThrow(StructuredOutputError);
-    expect(await db.select().from(validationPacks)).toHaveLength(0);
+    expect(PilotPlanSchema.safeParse(plan.pilotPlan).success).toBe(false);
+    const router = fakeRouter({ structured: { pack: [plan, structuredClone(plan)] } });
+    const out = await generatePackDocs(deps(db, router), kase.id);
+    expect(out.pilotPlan.steps.at(-1)).toMatch(/written permission/);
+    const [row] = await db.select().from(validationPacks);
+    expect((row!.sections as { pilotPlan: { steps: string[] } }).pilotPlan.steps.at(-1)).toMatch(/written permission/);
   });
 
   it('the real router re-asks on a plan without permission wording and stores the corrected plan', async () => {
@@ -324,6 +327,74 @@ describe('generatePackDocs', () => {
     expect(out.pilotPlan.steps.at(-1)).toMatch(/written permission/);
     const [row] = await db.select().from(validationPacks);
     expect((row!.sections as { pilotPlan: { steps: string[] } }).pilotPlan.steps.at(-1)).toMatch(/written permission/);
+  });
+
+  describe('loose-schema fallback (P3-R3)', () => {
+    const REMINDER = " (Only after the site owner's written permission.)";
+    const flagged = () => {
+      const plan = packFixture();
+      plan.pilotPlan.steps.push('Crawl their site for broken forms');
+      plan.pilotPlan.measures[1] = { metric: 'arrivals', successThreshold: 'all test leads arrive' };
+      return plan;
+    };
+    const scriptedRouter = (db: Db, script: unknown[]) => {
+      const requests: AdapterRequest[] = [];
+      const adapter: ProviderAdapter = {
+        async complete(r) {
+          requests.push(structuredClone(r));
+          return { text: '', json: script.shift(), sources: [], usage: { inputTokens: 1, outputTokens: 1, searchRequests: 0 } };
+        },
+        async embed() { throw new Error('no embed'); },
+      };
+      return { router: createRouter({ adapters: { anthropic: adapter, openai: adapter }, db, models: DEFAULT_MODELS, maxConcurrency: 1 }), requests };
+    };
+
+    it('when the refined schema keeps failing, retries once with the loose schema and adds permission reminders', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      // Refined call: first answer + 2 re-asks all fail the permission refine; then the loose call accepts the same plan.
+      const { router, requests } = scriptedRouter(db, [flagged(), flagged(), flagged(), flagged()]);
+      const logs: string[] = [];
+      const out = await generatePackDocs({ db, router, log: (m) => logs.push(m) }, kase.id);
+      expect(requests).toHaveLength(4);
+      expect(out.pilotPlan.steps.at(-1)).toBe(`Crawl their site for broken forms${REMINDER}`);
+      expect(out.pilotPlan.measures[1]!.successThreshold).toBe(`all test leads arrive${REMINDER}`);
+      expect(out.pilotPlan.steps[0]).toBe('Collect last month of disputes'); // untouched
+      expect(out.reviewNotes).toEqual(['2 plan items touched third-party systems; permission reminders were added.']);
+      expect(PilotPlanSchema.safeParse(out.pilotPlan).success).toBe(true);
+      const [row] = await db.select().from(validationPacks);
+      expect(row!.sections).toEqual(out);
+      expect(logs.join('\n')).toMatch(/fallback/i);
+    });
+
+    it('a plan that passes first time has no reviewNotes', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const { router, requests } = scriptedRouter(db, [packFixture()]);
+      const out = await generatePackDocs({ db, router, log: () => {} }, kase.id);
+      expect(requests).toHaveLength(1);
+      expect(out).not.toHaveProperty('reviewNotes');
+      const [row] = await db.select().from(validationPacks);
+      expect(row!.sections).not.toHaveProperty('reviewNotes');
+    });
+
+    it('keeps the pilot-site permission step first on the fallback path', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const router = fakeRouter({ structured: { pack: [flagged(), flagged()] } });
+      const out = await generatePackDocs(deps(db, router), kase.id, { pilotSite: 'pilot.example' });
+      expect(router.calls).toHaveLength(2);
+      expect(out.pilotPlan.firstStep.startsWith(PILOT_PERMISSION_STEP)).toBe(true);
+      expect(out.reviewNotes).toHaveLength(1);
+    });
+
+    it('fails the stage when the loose call fails too', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const router = fakeRouter({ structured: { pack: [flagged(), { nonsense: true }] } });
+      await expect(generatePackDocs(deps(db, router), kase.id)).rejects.toThrow(StructuredOutputError);
+      expect(await db.select().from(validationPacks)).toHaveLength(0);
+    });
   });
 
   it('throws for an unknown case', async () => {
