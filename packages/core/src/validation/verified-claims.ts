@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { claims } from '../db/schema';
-import { capField, neutralizeUntrusted, stripInvisible } from '../llm/untrusted';
+import { capField, stripInvisible } from '../llm/untrusted';
 
 /** Claim sections whose texts state facts or figures a draft or landing page could quote (as deep-case writes them). */
 const QUOTABLE_SECTIONS = ['evidence', 'numbers'];
@@ -31,7 +31,7 @@ export async function verifiedClaimTexts(db: Db, caseId: string): Promise<string
 /**
  * The case's own offer terms, which the owner sets and may always state (P3-R22): its price ("99 per month"). The case
  * schema has no separate pilot-offer field (pitch.pricingCopy is free model text that may carry unverified figures, so
- * it is not exempt). Neutralised and capped: these appear outside the untrusted block.
+ * it is not exempt). These appear outside the untrusted block, so the unit is restricted to a plain phrase (P3-R23).
  */
 export function allowedOfferTerms(sections: unknown): string[] {
   const price = offerPrice(sections);
@@ -41,7 +41,7 @@ export function allowedOfferTerms(sections: unknown): string[] {
 /**
  * The case price as text, with the currency sign the case export uses ("$1 per load processed", "$1.50 per invoice"),
  * or '' without a finite numeric price. Without the sign the model copied "Pricing is 1 per load processed" verbatim
- * into a live draft and landing page (2026-10-19). Neutralised and capped.
+ * into a live draft and landing page (2026-10-19). The unit is kept only when it passes `PRICE_UNIT` (P3-R23).
  */
 export function offerPrice(sections: unknown): string {
   const price = (sections as { summary?: { price?: { amount?: unknown; per?: unknown } } } | null)?.summary?.price;
@@ -51,9 +51,16 @@ export function offerPrice(sections: unknown): string {
     minimumFractionDigits: whole ? 0 : 2,
     maximumFractionDigits: 2,
   });
-  const per = typeof price.per === 'string' ? capField(neutralizeUntrusted(price.per), 50) : '';
-  return per ? `${amount} per ${per}` : amount;
+  const per = typeof price.per === 'string' ? price.per.trim() : '';
+  return PRICE_UNIT.test(per) ? `${amount} per ${per}` : amount;
 }
+
+/**
+ * Ruling P3-R23: the price unit is model-written text that lands in the trusted part of a prompt, so it must be a short
+ * plain phrase ("month", "load processed", "seat/month"). Anything else (punctuation, newlines, markup, digits, longer
+ * than 20 characters) drops the unit and keeps the amount only.
+ */
+const PRICE_UNIT = /^[a-z][a-z /-]{0,19}$/i;
 
 /** The figures rule for a prompt, outside the untrusted block: verified claims, plus the case's own offer terms. */
 export function figuresRule(verified: string[], allowed: string[] = []): string {
