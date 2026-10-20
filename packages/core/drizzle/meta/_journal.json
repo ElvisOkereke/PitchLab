@@ -36,6 +36,13 @@
       "when": 1792436232721,
       "tag": "0004_validation_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792457614462,
+      "tag": "0005_event_fk_indexes",
+      "breakpoints": true
     }
   ]
 }

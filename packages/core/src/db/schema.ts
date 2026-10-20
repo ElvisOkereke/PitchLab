@@ -3,7 +3,7 @@ import type { CaseSections } from '../case/schema';
 import type { RunConfig } from '../pipeline/types';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
-  vector, primaryKey, uniqueIndex, check,
+  vector, primaryKey, uniqueIndex, index, check,
 } from 'drizzle-orm/pg-core';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -264,7 +264,7 @@ export const outreachEvents = pgTable('outreach_events', {
   note: text('note'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
-});
+}, (t) => [index('outreach_events_prospect_id_idx').on(t.prospectId)]);
 
 /** Addresses that must never be exported again (unsubscribes). Stored lowercased. */
 export const suppressions = pgTable('suppressions', {
@@ -293,7 +293,7 @@ export const landingEvents = pgTable('landing_events', {
   company: text('company'),
   note: text('note'),
   createdAt: createdAt(),
-});
+}, (t) => [index('landing_events_landing_page_id_idx').on(t.landingPageId)]);
 
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),

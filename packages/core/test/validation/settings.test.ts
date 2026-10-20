@@ -65,6 +65,15 @@ describe('validation tables (migration 0004)', () => {
     expect((rows as unknown as { rows: { n: number }[] }).rows[0]!.n).toBe(2);
   });
 
+  it('indexes the event foreign keys (migration 0005)', async () => {
+    const db = await testDb();
+    const res = await db.execute(sql`select tablename, indexname, indexdef from pg_indexes where schemaname = 'public'`);
+    const rows = (res as unknown as { rows: { tablename: string; indexname: string; indexdef: string }[] }).rows;
+    const has = (table: string, column: string) => rows.some((r) => r.tablename === table && r.indexdef.includes(`(${column})`));
+    expect(has('outreach_events', 'prospect_id')).toBe(true);
+    expect(has('landing_events', 'landing_page_id')).toBe(true);
+  });
+
   it('rejects unknown enum values', async () => {
     const db = await testDb();
     const kase = await aCase(db);

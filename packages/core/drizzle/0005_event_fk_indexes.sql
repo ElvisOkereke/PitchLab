@@ -1,0 +1,2 @@
+CREATE INDEX "landing_events_landing_page_id_idx" ON "landing_events" USING btree ("landing_page_id");--> statement-breakpoint
+CREATE INDEX "outreach_events_prospect_id_idx" ON "outreach_events" USING btree ("prospect_id");
