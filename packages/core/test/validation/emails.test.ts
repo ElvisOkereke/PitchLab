@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { prospects, suppressions } from '../../src/db/schema';
 import { fetchPage as realFetchPage } from '../../src/tools/fetch-page';
-import { PARSE_MAX, discoverEmails, extractEmails } from '../../src/validation/emails';
+import { PARSE_MAX, decodeCfEmail, discoverEmails, extractEmails } from '../../src/validation/emails';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
@@ -151,6 +151,73 @@ tom@acme-freight.com">b</a>
   });
 });
 
+// Cloudflare email protection: hex, first byte is the XOR key for the rest. Encoded with key 0x42 / 0xa7 / 0x13 / 0x5c.
+const CF_SAC = '422b2c242d023123212430272b252a366c212d2f'; // info@sacfreight.com
+const CF_RADIUS = 'a7c3ced4d7c6d3c4cfe7d5c6c3ced2d48ad3d5c6c9d4d7c8d5d3d489c4c8ca'; // dispatch@radius-transports.com
+const CF_ELSEWHERE = '137c636053767f6076647b7661763d707c7e'; // ops@elsewhere.com
+const CF_SPACE = '5c163d32397c1833391c3d3f3139723f3331'; // "Jane Doe@acme.com"
+
+describe('decodeCfEmail', () => {
+  it('decodes a known Cloudflare-encoded address', () => {
+    expect(decodeCfEmail(CF_SAC)).toBe('info@sacfreight.com');
+    expect(decodeCfEmail(CF_RADIUS.toUpperCase())).toBe('dispatch@radius-transports.com');
+    expect(decodeCfEmail(` ${CF_SAC} `)).toBe('info@sacfreight.com');
+  });
+
+  it('ignores malformed, odd-length, non-hex, too short and non-address values', () => {
+    for (const bad of [
+      '', '42', CF_SAC.slice(0, -1), `${CF_SAC.slice(0, -2)}zz`, 'not-hex-at-all', '0x422b2c', `${CF_SAC}#x`,
+      '4242424242', // decodes to NULs
+      CF_SPACE, // decodes to an address with a space
+      'ff'.repeat(600), // absurdly long
+    ]) {
+      expect(decodeCfEmail(bad), bad).toBeNull();
+    }
+  });
+});
+
+describe('extractEmails with Cloudflare email protection', () => {
+  const SAC = 'https://sacfreight.com/';
+  it('decodes data-cfemail spans and /cdn-cgi/l/email-protection hrefs, recording the page as the source', () => {
+    const html = `
+      <p>Write to <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="${CF_SAC}">[email&#160;protected]</a></p>
+      <p><a href="https://sacfreight.com/cdn-cgi/l/email-protection#${encodeHex(0x21, 'maria@sacfreight.com')}">Email Maria</a></p>`;
+    expect(extractEmails(html, SAC)).toEqual([
+      { email: 'maria@sacfreight.com', foundOn: SAC },
+      { email: 'info@sacfreight.com', foundOn: SAC },
+    ]);
+  });
+
+  it('a decoded address on another domain is rejected by the same domain rule; malformed values are ignored', () => {
+    const html = `
+      <span data-cfemail="${CF_ELSEWHERE}">[email protected]</span>
+      <span data-cfemail="${CF_SAC.slice(0, -1)}">x</span>
+      <span data-cfemail="zz${CF_SAC.slice(2)}">x</span>
+      <a href="/cdn-cgi/l/email-protection#nothex">x</a>
+      <span data-cfemail="${encodeHex(0x33, 'noreply@sacfreight.com')}">x</span>
+      <span data-cfemail="${encodeHex(0x33, 'logo@2x.png')}">x</span>`;
+    expect(emails(html, SAC)).toEqual([]);
+  });
+
+  it('keeps the usual ranking: decoded role inboxes rank after named people, other-audience inboxes last', () => {
+    const html = `
+      <span data-cfemail="${encodeHex(0x10, 'carriers@sacfreight.com')}">x</span>
+      <span data-cfemail="${CF_SAC}">x</span>
+      <p>tom@sacfreight.com</p>`;
+    expect(emails(html, SAC)).toEqual(['tom@sacfreight.com', 'info@sacfreight.com', 'carriers@sacfreight.com']);
+  });
+
+  it('ignores protected addresses inside scripts and templates, like any other address', () => {
+    const html = `<template><span data-cfemail="${CF_SAC}">x</span></template><script>var e="${CF_SAC}"</script>`;
+    expect(emails(html, SAC)).toEqual([]);
+  });
+});
+
+function encodeHex(key: number, s: string): string {
+  const hex = (n: number) => n.toString(16).padStart(2, '0');
+  return hex(key) + [...s].map((c) => hex(c.charCodeAt(0) ^ key)).join('');
+}
+
 // ---- discoverEmails ------------------------------------------------------------------------------
 
 const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }];
@@ -200,6 +267,18 @@ describe('discoverEmails', () => {
     const row = await reload(db, p.id);
     expect(row).toMatchObject({ email: 'dispatch@acme-freight.com', emailSourceUrl: 'https://www.acme-freight.com/contact', caslBasis: 'self_published' });
     expect(row.emailCapturedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+
+  it('stores a Cloudflare-protected address with the page it was on', async () => {
+    const db = await testDb();
+    const p = await aProspect(db);
+    const s = site({
+      'https://www.acme-freight.com/': '<h1>Acme</h1>',
+      'https://www.acme-freight.com/contact': `<a href="/cdn-cgi/l/email-protection" data-cfemail="${encodeHex(0x4d, 'info@acme-freight.com')}">[email&#160;protected]</a>`,
+    });
+    const out = await discoverEmails(deps(db, s.fetchPage), p);
+    expect(out).toMatchObject({ status: 'found', email: 'info@acme-freight.com', sourceUrl: 'https://www.acme-freight.com/contact' });
+    expect(await reload(db, p.id)).toMatchObject({ emailSourceUrl: 'https://www.acme-freight.com/contact', caslBasis: 'self_published' });
   });
 
   it('only fetches GET via the guarded fetcher', async () => {

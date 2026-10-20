@@ -124,6 +124,40 @@ function mailtoAddresses(document: PageDom): string[] {
   return out;
 }
 
+/** Longest encoded value decoded: key byte + a 254-character address. */
+const CF_HEX_MAX = 2 + 2 * 254;
+const CF_HREF = /\/cdn-cgi\/l\/email-protection#([0-9a-f]+)$/i;
+
+/**
+ * A Cloudflare email-protection value (`data-cfemail="…"`, or the hex after `/cdn-cgi/l/email-protection#`) decoded:
+ * hex, whose first byte is the XOR key for the remaining bytes. Null unless the hex is well formed (even length, at least
+ * one encoded byte, not absurdly long) and the decoded text is a whole, plain address with no whitespace. The live run
+ * found 3 of 14 broker sites hiding their self-published address this way. Decoded addresses then go through the same
+ * filters as every other address (domain rule, reject lists, ranking).
+ */
+export function decodeCfEmail(value: string): string | null {
+  const hex = value.trim();
+  if (hex.length < 4 || hex.length > CF_HEX_MAX || hex.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(hex)) return null;
+  const key = parseInt(hex.slice(0, 2), 16);
+  let out = '';
+  for (let i = 2; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key);
+  return !/\s/.test(out) && EMAIL_EXACT.test(out) ? out : null;
+}
+
+/** Addresses hidden by Cloudflare email protection: `data-cfemail` attributes and `/cdn-cgi/l/email-protection#hex` links. */
+function cfProtectedAddresses(document: PageDom): string[] {
+  const out: string[] = [];
+  // One selector, so the values come in page order.
+  for (const el of [...document.querySelectorAll('[data-cfemail], a[href]')]) {
+    const values = [el.getAttribute('data-cfemail'), CF_HREF.exec((el.getAttribute('href') ?? '').trim())?.[1] ?? null];
+    for (const v of values) {
+      const email = v === null ? null : decodeCfEmail(v);
+      if (email) out.push(email);
+    }
+  }
+  return out;
+}
+
 /** True when the address is plausible and published for this site: its domain, or a free-mail host. */
 function acceptable(email: string, siteDomain: string): boolean {
   const at = email.lastIndexOf('@');
@@ -144,8 +178,9 @@ const localKey = (email: string) => email.slice(0, email.indexOf('@')).replace(/
 const inboxTier = (email: string) => (OTHER_AUDIENCE_INBOXES.has(localKey(email)) ? 2 : ROLE_INBOXES.has(localKey(email)) ? 1 : 0);
 
 /**
- * Plausible addresses published on one page of a site: from `mailto:` links and visible text (with simple `[at]`/`[dot]`
- * obfuscation decoded), lowercased, deduplicated. Kept only on the site's registrable domain or a free-mail host;
+ * Plausible addresses published on one page of a site: from `mailto:` links, Cloudflare email protection
+ * (`data-cfemail`, `/cdn-cgi/l/email-protection#…`) and visible text (with simple `[at]`/`[dot]` obfuscation decoded),
+ * lowercased, deduplicated. Kept only on the site's registrable domain or a free-mail host;
  * asset names, placeholder domains and no-reply inboxes are dropped. Same-domain addresses come before free-mail ones,
  * named people before role inboxes, and role inboxes before inboxes for another audience (carriers, drivers, jobs, press).
  */
@@ -157,7 +192,9 @@ function extractFromDoms(documents: PageDom[], siteUrl: string): FoundEmail[] {
   const siteDomain = prospectDomain(siteUrl);
   if (!siteDomain) return [];
   // Union over the page's documents (one, or head and tail of a large page), in page order.
-  const candidates = documents.flatMap((d) => [...mailtoAddresses(d), ...(deobfuscate(visibleText(d)).match(EMAIL_RE) ?? [])]);
+  const candidates = documents.flatMap((d) => [
+    ...mailtoAddresses(d), ...cfProtectedAddresses(d), ...(deobfuscate(visibleText(d)).match(EMAIL_RE) ?? []),
+  ]);
   const seen = new Set<string>();
   const kept: string[] = [];
   for (const c of candidates) {
