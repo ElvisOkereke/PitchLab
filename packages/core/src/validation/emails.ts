@@ -39,17 +39,26 @@ type PageDom = ReturnType<typeof parseHTML>['document'];
 export const PARSE_MAX = 200_000;
 const PARSE_HEAD = 120_000;
 
-/**
- * Parse once with linkedom (linear, no regex over raw HTML) and drop non-rendered elements, so text, mailto links and
- * page links all come from the same cleaned DOM. Comments are not elements, so links inside them never count.
- */
-function cleanDom(raw: string): PageDom {
-  // Parsing cost grows with nesting (60k nested divs at 500 KB take seconds), so at most PARSE_MAX chars are parsed: the
-  // start of the page and its end, where contact details usually sit in the footer.
-  const html = raw.length > PARSE_MAX ? `${raw.slice(0, PARSE_HEAD)}\n${raw.slice(raw.length - (PARSE_MAX - PARSE_HEAD))}` : raw;
+/** Parse with linkedom (linear, no regex over raw HTML) and drop non-rendered elements. Comments are not elements. */
+function parseClean(html: string): PageDom {
   const { document } = parseHTML(/<html[\s>]/i.test(html) ? html : `<html><body>${html}</body></html>`);
   for (const el of [...document.querySelectorAll(HIDDEN_ELEMENTS)]) el.remove();
   return document;
+}
+
+/**
+ * The cleaned DOM(s) of a page; text, mailto links and page links all come from these. Parsing cost grows with nesting
+ * (60k nested divs at 500 KB take seconds), so a page longer than PARSE_MAX is parsed as two independent documents: its
+ * start and its end (where contact details usually sit in the footer). They are never spliced together, so an unclosed
+ * comment or tag in the head cannot swallow the footer (ruling P3-R6). A partial tag at the start of the tail is dropped.
+ */
+function cleanDoms(raw: string): PageDom[] {
+  if (raw.length <= PARSE_MAX) return [parseClean(raw)];
+  let tail = raw.slice(raw.length - (PARSE_MAX - PARSE_HEAD));
+  const gt = tail.indexOf('>');
+  const lt = tail.indexOf('<');
+  if (gt >= 0 && (lt < 0 || gt < lt)) tail = tail.slice(gt + 1); // the cut landed inside a tag
+  return [parseClean(raw.slice(0, PARSE_HEAD)), parseClean(`<html><body>${tail}</body></html>`)];
 }
 
 type DomNode = { nodeType: number; nodeValue: string | null; childNodes: ArrayLike<DomNode> };
@@ -85,16 +94,16 @@ function deobfuscate(text: string): string {
     .replace(/ ?[[({] ?dot ?[\])}] ?/gi, '.');
 }
 
-/** `href` values of the page's links (already entity-decoded by the parser). */
+/** Raw `href` values of the page's links (entity-decoded by the parser, not trimmed). */
 function hrefs(document: PageDom): string[] {
-  return [...document.querySelectorAll('a[href]')].map((a) => (a.getAttribute('href') ?? '').trim());
+  return [...document.querySelectorAll('a[href]')].map((a) => a.getAttribute('href') ?? '');
 }
 
-/** Addresses from `mailto:` hrefs (each must be a whole, plain address). */
+/** Addresses from `mailto:` hrefs. Each must be a whole, plain address; any whitespace (raw or %-decoded) rejects it. */
 function mailtoAddresses(document: PageDom): string[] {
   const out: string[] = [];
   for (const value of hrefs(document)) {
-    if (!/^mailto:/i.test(value)) continue;
+    if (!/^mailto:/i.test(value) || /\s/.test(value)) continue;
     let target = value.slice('mailto:'.length).split('?')[0]!;
     try {
       target = decodeURIComponent(target);
@@ -102,8 +111,7 @@ function mailtoAddresses(document: PageDom): string[] {
       continue;
     }
     for (const addr of target.split(',')) {
-      const a = addr.trim();
-      if (EMAIL_EXACT.test(a)) out.push(a);
+      if (!/\s/.test(addr) && EMAIL_EXACT.test(addr)) out.push(addr);
     }
   }
   return out;
@@ -132,13 +140,14 @@ const isRole = (email: string) => ROLE_INBOXES.has(email.slice(0, email.indexOf(
  * asset names, placeholder domains and no-reply inboxes are dropped. Same-domain addresses come before free-mail ones, and named people before role inboxes.
  */
 export function extractEmails(html: string, siteUrl: string): FoundEmail[] {
-  return extractFromDom(cleanDom(html), siteUrl);
+  return extractFromDoms(cleanDoms(html), siteUrl);
 }
 
-function extractFromDom(document: PageDom, siteUrl: string): FoundEmail[] {
+function extractFromDoms(documents: PageDom[], siteUrl: string): FoundEmail[] {
   const siteDomain = prospectDomain(siteUrl);
   if (!siteDomain) return [];
-  const candidates = [...mailtoAddresses(document), ...(deobfuscate(visibleText(document)).match(EMAIL_RE) ?? [])];
+  // Union over the page's documents (one, or head and tail of a large page), in page order.
+  const candidates = documents.flatMap((d) => [...mailtoAddresses(d), ...(deobfuscate(visibleText(d)).match(EMAIL_RE) ?? [])]);
   const seen = new Set<string>();
   const kept: string[] = [];
   for (const c of candidates) {
@@ -173,12 +182,12 @@ const MAX_FETCHES = 3;
 const MAX_LINKED = 2;
 
 /** Same-site contact/about pages the homepage links to (contact first), then the usual paths. */
-function followUpUrls(home: PageDom | null, base: string, domain: string): string[] {
+function followUpUrls(home: PageDom[], base: string, domain: string): string[] {
   const linked: string[] = [];
-  for (const href of home ? hrefs(home) : []) {
+  for (const href of home.flatMap(hrefs)) {
     let u: URL;
     try {
-      u = new URL(href, base);
+      u = new URL(href.trim(), base);
     } catch {
       continue;
     }
@@ -217,15 +226,15 @@ export async function discoverEmails({ db, fetchPage, log }: EmailDeps, prospect
     const page = await fetchPage(url);
     fetches++;
     const onSite = page.ok && prospectDomain(page.finalUrl) === domain;
-    const dom = onSite && page.html !== undefined ? cleanDom(page.html) : null;
-    if (fetches === 1) queue.push(...followUpUrls(dom, onSite ? page.finalUrl : prospect.website, domain));
+    const doms = onSite && page.html !== undefined ? cleanDoms(page.html) : [];
+    if (fetches === 1) queue.push(...followUpUrls(doms, onSite ? page.finalUrl : prospect.website, domain));
     if (!page.ok || page.html === undefined) continue;
     if (!onSite) {
       log(`emails: ${capField(url, 200)} redirected off ${domain} to ${capField(page.finalUrl, 200)}; ignored`);
       continue;
     }
 
-    const found = extractFromDom(dom!, page.finalUrl);
+    const found = extractFromDoms(doms, page.finalUrl);
     if (found.length === 0) continue;
     const blocked = new Set(
       (await db.select({ email: suppressions.email }).from(suppressions).where(inArray(suppressions.email, found.map((f) => f.email))))

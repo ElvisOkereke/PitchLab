@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { prospects, suppressions } from '../../src/db/schema';
 import { fetchPage as realFetchPage } from '../../src/tools/fetch-page';
-import { discoverEmails, extractEmails } from '../../src/validation/emails';
+import { PARSE_MAX, discoverEmails, extractEmails } from '../../src/validation/emails';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
@@ -83,6 +83,36 @@ describe('extractEmails', () => {
     const filler = '<p>' + 'lorem ipsum '.repeat(25_000) + '</p>'; // ~300 KB
     const html = `<header>head@acme-freight.com</header>${filler}<p>middle@acme-freight.com</p>${filler}<footer>footer@acme-freight.com</footer>`;
     expect(emails(html)).toEqual(['head@acme-freight.com', 'footer@acme-freight.com']);
+  });
+
+  it('parses the head and tail of a large page as separate documents (P3-R6)', () => {
+    const filler = '<p>' + 'lorem ipsum '.repeat(25_000) + '</p>'; // ~300 KB
+    // An unterminated comment opened in the head region must not swallow the footer, and what is inside it never counts.
+    const html = `<p>head@acme-freight.com</p><!-- <p>hidden@acme-freight.com</p>${filler}<footer>footer@acme-freight.com</footer>`;
+    const out = emails(html);
+    expect(out).toContain('footer@acme-freight.com');
+    expect(out).not.toContain('hidden@acme-freight.com');
+    expect(out).toEqual(['head@acme-freight.com', 'footer@acme-freight.com']);
+  });
+
+  it('drops a partial tag at the start of the tail before parsing it', () => {
+    const tag = '<span title="evil@acme-freight.com">';
+    const footer = '<footer>footer@acme-freight.com</footer>';
+    const tailLen = PARSE_MAX - 120_000;
+    const middle = 'ok</span>' + ' '.repeat(tailLen - (tag.length - 6) - 'ok</span>'.length - footer.length);
+    const html = '<p>' + 'lorem '.repeat(50_000) + '</p>' + tag + middle + footer;
+    expect(html.slice(-tailLen).startsWith('title="evil@')).toBe(true); // the tail starts mid-tag
+    expect(emails(html)).toEqual(['footer@acme-freight.com']);
+  });
+
+  it('rejects a mailto href containing whitespace', () => {
+    const html = `
+      <a href="mailto:jane@acme-freight.com ">a</a>
+      <a href="mailto:
+tom@acme-freight.com">b</a>
+      <a href="mailto:ann@acme-freight.com, bob@acme-freight.com">c</a>
+      <a href="mailto:carl@acme-freight.com,%20dee@acme-freight.com">d</a>`;
+    expect(emails(html)).toEqual(['carl@acme-freight.com']);
   });
 
   describe('hostile 500 KB inputs finish quickly', () => {
