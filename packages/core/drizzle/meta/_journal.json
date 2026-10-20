@@ -43,6 +43,13 @@
       "when": 1792457614462,
       "tag": "0005_event_fk_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792467808946,
+      "tag": "0006_stage_events",
+      "breakpoints": true
     }
   ]
 }

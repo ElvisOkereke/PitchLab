@@ -295,6 +295,25 @@ export const landingEvents = pgTable('landing_events', {
   createdAt: createdAt(),
 }, (t) => [index('landing_events_landing_page_id_idx').on(t.landingPageId)]);
 
+// ---- Dashboard (Plan 2, migration 0006) -----------------------------------------------------------
+
+export type CaseStage = (typeof caseStage.enumValues)[number];
+
+/** `kill` = moved to killed; `overturn` = moved out of killed (any target); `move` = everything else. */
+export const stageEventKind = pgEnum('stage_event_kind', ['move', 'overturn', 'kill']);
+export type StageEventKind = (typeof stageEventKind.enumValues)[number];
+
+/** Every stage move the owner makes (spec §6.2: each move is logged). Kept for the later taste-learning loop. */
+export const stageEvents = pgTable('stage_events', {
+  id: id(),
+  caseId: uuid('case_id').notNull().references(() => cases.id),
+  fromStage: caseStage('from_stage').notNull(),
+  toStage: caseStage('to_stage').notNull(),
+  kind: stageEventKind('kind').notNull(),
+  note: text('note'),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('stage_events_case_at_idx').on(t.caseId, t.at)]);
+
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
   value: jsonb('value').$type<unknown>().notNull(),
