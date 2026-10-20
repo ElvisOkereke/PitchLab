@@ -6,6 +6,7 @@ export const BOARD_NOTICES = {
   rerun_queued: 'Queued a run for that idea. It starts when `npm run worker` is running.',
   rerun_busy: '3 runs are already queued. Wait for the worker, then try again.',
   rerun_refused: 'That idea can no longer be re-run.',
+  overturn_refused: 'That case is no longer killed, so there was nothing to overturn.',
 } as const;
 export type BoardNotice = keyof typeof BOARD_NOTICES;
 

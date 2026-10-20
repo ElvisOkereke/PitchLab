@@ -61,7 +61,14 @@ body {
   font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--fg);
-  overflow-x: hidden;
+}
+
+/* No page-level overflow clipping: every block that can hold long text wraps it, grid/flex children may shrink
+   (min-width: 0), and only tables scroll, inside their own .scroll-x container. */
+main,
+section,
+article {
+  min-width: 0;
 }
 
 h1,
@@ -69,6 +76,20 @@ h2,
 h3 {
   line-height: 1.25;
   margin: 1rem 0 0.5rem;
+  overflow-wrap: anywhere;
+}
+
+p,
+li,
+dd,
+dt {
+  overflow-wrap: anywhere;
+}
+
+img,
+svg {
+  max-width: 100%;
+  height: auto;
 }
 
 h1 {
@@ -106,7 +127,7 @@ a {
   overflow-wrap: anywhere;
 }
 
-/* Tables scroll inside their container, never the page. */
+/* Wrap every table in .scroll-x: the table scrolls inside its container, never the page. Use it for tables only. */
 .scroll-x {
   max-width: 100%;
   overflow-x: auto;
@@ -192,6 +213,9 @@ label {
   position: absolute;
   width: 1px;
   height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
@@ -202,6 +226,8 @@ label {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 details > summary {

@@ -57,4 +57,9 @@ describe('BoardView', () => {
     expect(container.querySelector('script, b')).toBeNull();
     expect(container.querySelector('[role="status"]')?.textContent).toContain('3 runs are already queued');
   });
+
+  it('shows the overturn-refused notice', () => {
+    const { container } = render(<BoardView board={board} gateKills={[]} lenses={[]} query={{ notice: 'overturn_refused' }} />);
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('That case is no longer killed, so there was nothing to overturn.');
+  });
 });

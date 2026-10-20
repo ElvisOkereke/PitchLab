@@ -9,6 +9,7 @@ describe('board query', () => {
       .toEqual({ stage: 'pilot', lens: 'aggregator', minAi: 3.5, notice: 'rerun_queued' });
     expect(parseBoardQuery({ stage: 'archived', lens: 'x;drop table', minAi: '9', notice: '<script>' }))
       .toEqual({ stage: undefined, lens: undefined, minAi: undefined, notice: undefined });
+    expect(parseBoardQuery({ notice: 'overturn_refused' }).notice).toBe('overturn_refused');
     expect(parseBoardQuery({ minAi: 'abc' }).minAi).toBeUndefined();
     expect(parseBoardQuery({ minAi: '' }).minAi).toBeUndefined();
     expect(parseBoardQuery({ stage: ['live', 'new'] }).stage).toBe('live');

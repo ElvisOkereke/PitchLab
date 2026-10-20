@@ -45,14 +45,18 @@ export async function moveStageAction(_prev: FormState, fd: FormData): Promise<F
 
 const CaseRefSchema = z.object({ caseId: z.uuid() });
 
-/** "Overturn kill": killed → new (logged as an overturn, kill reason cleared). A case no longer killed is left alone. */
+/**
+ * "Overturn kill": killed → new (logged as an overturn, kill reason cleared). A case that is no longer killed (or is
+ * gone) is left alone and the owner lands on the Killed column with the `overturn_refused` notice.
+ */
 export async function overturnKillAction(fd: FormData): Promise<void> {
   await requireOwnerAction();
   const raw = formToObject(fd);
   const parsed = CaseRefSchema.safeParse(raw);
   if (!parsed.success) throw new Error('Invalid request.');
   const r = await moveStage(getDb(), { caseId: parsed.data.caseId, from: 'killed', to: 'new' });
-  if (r.ok) revalidateCase(raw.slug);
+  if (!r.ok) redirect('/?stage=killed&notice=overturn_refused');
+  revalidateCase(raw.slug);
 }
 
 const IdeaRefSchema = z.object({ ideaId: z.uuid() });

@@ -86,12 +86,17 @@ describe('overturnKillAction', () => {
     expect(request.revalidated).toEqual(['/', `/cases/${c.slug}`]);
   });
 
-  it('rejects a bad id and leaves a non-killed case alone', async () => {
+  it('rejects a bad id; a case that is no longer killed (or gone) is left alone with a visible notice', async () => {
     const c = await seedCase(state.db, { stage: 'pilot' });
     const before = await snapshotDb(state.db);
     await expect(overturnKillAction(form({ caseId: 'nope' }))).rejects.toThrow('Invalid request.');
-    await overturnKillAction(form({ caseId: c.id }));
+    for (const caseId of [c.id, '00000000-0000-4000-8000-000000000000']) {
+      const e = await overturnKillAction(form({ caseId })).catch((err: unknown) => err);
+      expect(e).toBeInstanceOf(RedirectError);
+      expect((e as RedirectError).url).toBe('/?stage=killed&notice=overturn_refused');
+    }
     expect(await snapshotDb(state.db)).toEqual(before);
+    expect(request.revalidated).toEqual([]);
   });
 });
 
