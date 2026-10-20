@@ -31,6 +31,21 @@ describe('getValidateView', () => {
     expect(JSON.stringify(w)).not.toContain('<script>');
   });
 
+  it('returns an empty view for a non-uuid case id instead of a database error (D2-R3)', async () => {
+    const db = await testDb();
+    for (const bad of ['', 'not-a-uuid', "x' or 1=1 --", '123']) {
+      const v = await getValidateView(db, bad, { page: 1 });
+      expect(v.pack).toBeNull();
+      expect(v.prospects).toEqual({ rows: [], total: 0 });
+      expect(v.events).toEqual([]);
+      expect(v.landing).toBeNull();
+      expect(v.checklist).toBeNull();
+      expect(v.counts.prospects).toBe(0);
+      expect(v.counts.byStatus.sent).toBe(0);
+      expect(v.counts.events.sent).toEqual({ events: 0, prospects: 0 });
+    }
+  });
+
   it('returns the pack, checklist, prospects with their drafts, latest events and counts', async () => {
     const { db, caseId } = await setup();
     await db.insert(validationPacks).values({ caseId, sections: { not: 'a valid pack' }, model: 'm', promptVersion: 'p' });

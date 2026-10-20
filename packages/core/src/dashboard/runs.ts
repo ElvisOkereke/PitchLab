@@ -104,16 +104,28 @@ export async function queueRun(db: Db, raw: QueueRunInput): Promise<QueueResult>
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** `failed → queued` only; the worker's executeRun then resumes from the failed stage. */
-export async function requeueRun(db: Db, runId: string): Promise<{ ok: boolean; reason?: 'not_found' | 'not_failed' }> {
+/**
+ * `failed → queued` only, within MAX_QUEUED (same lock as queueRun); the worker's executeRun then resumes from the
+ * failed stage.
+ */
+export async function requeueRun(
+  db: Db,
+  runId: string,
+): Promise<{ ok: boolean; reason?: 'not_found' | 'not_failed' | 'too_many_queued' }> {
   if (typeof runId !== 'string' || !UUID.test(runId)) return { ok: false, reason: 'not_found' };
-  const updated = await db.update(runs)
-    .set({ status: 'queued', error: null, finishedAt: null })
-    .where(and(eq(runs.id, runId), eq(runs.status, 'failed')))
-    .returning({ id: runs.id });
-  if (updated.length) return { ok: true };
-  const [exists] = await db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId));
-  return { ok: false, reason: exists ? 'not_failed' : 'not_found' };
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${QUEUE_LOCK_KEY})`);
+    const [row] = await tx.select({ status: runs.status }).from(runs).where(eq(runs.id, runId));
+    if (!row) return { ok: false, reason: 'not_found' as const };
+    if (row.status !== 'failed') return { ok: false, reason: 'not_failed' as const };
+    const [{ n } = { n: 0 }] = await tx.select({ n: count() }).from(runs).where(eq(runs.status, 'queued'));
+    if (n >= MAX_QUEUED) return { ok: false, reason: 'too_many_queued' as const };
+    const updated = await tx.update(runs)
+      .set({ status: 'queued', error: null, finishedAt: null })
+      .where(and(eq(runs.id, runId), eq(runs.status, 'failed')))
+      .returning({ id: runs.id });
+    return updated.length ? { ok: true } : { ok: false, reason: 'not_failed' as const };
+  });
 }
 
 /**

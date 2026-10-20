@@ -1,8 +1,9 @@
 import { count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { Db } from '../db/client';
 import { landingPages, outreachDrafts, outreachEvents, prospects, validationPacks } from '../db/schema';
 import { computeChecklistStatus, type GateStatus } from '../validation/checklist';
-import { outreachCounts, type OutreachCounts } from '../validation/tracking';
+import { emptyOutreachCounts, outreachCounts, type OutreachCounts } from '../validation/tracking';
 import { clampPage } from './runs';
 
 export type ValidationPackRow = typeof validationPacks.$inferSelect;
@@ -32,6 +33,13 @@ const KIND_ORDER = new Map(['cold', 'followup1', 'followup2'].map((k, i) => [k, 
 
 /** Everything the Validate tab shows for one case (read-only; tracking writes go through markOutreach). */
 export async function getValidateView(db: Db, caseId: string, o: { page?: number }): Promise<ValidateView> {
+  // D2-R3: a malformed id gets the empty view, never a database error.
+  if (!z.uuid().safeParse(caseId).success) {
+    return {
+      pack: null, prospects: { rows: [], total: 0 }, drafts: new Map(), events: [], landing: null, checklist: null,
+      counts: emptyOutreachCounts(),
+    };
+  }
   const page = clampPage(o.page);
   const [[pack], prospectRows, [totalRow], events, [landing], counts] = await Promise.all([
     db.select().from(validationPacks).where(eq(validationPacks.caseId, caseId)),

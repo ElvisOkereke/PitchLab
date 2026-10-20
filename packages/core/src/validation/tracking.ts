@@ -73,6 +73,16 @@ export type OutreachCounts = {
   events: Record<OutreachEventType, { events: number; prospects: number }>;
 };
 
+/** All-zero counts (a case with no prospects). */
+export function emptyOutreachCounts(): OutreachCounts {
+  return {
+    prospects: 0,
+    withEmail: 0,
+    byStatus: Object.fromEntries(PROSPECT_STATUSES.map((s) => [s, 0])) as Record<ProspectStatus, number>,
+    events: Object.fromEntries(OUTREACH_EVENT_TYPES.map((t) => [t, { events: 0, prospects: 0 }])) as OutreachCounts['events'],
+  };
+}
+
 /** Outreach totals for a case: prospects (all, with email, by status) and events by type with distinct prospects. */
 export async function outreachCounts(db: Db, caseId: string): Promise<OutreachCounts> {
   const statusRows = await db.select({ status: prospects.status, n: count(), withEmail: count(prospects.email) })
@@ -83,7 +93,7 @@ export async function outreachCounts(db: Db, caseId: string): Promise<OutreachCo
     .innerJoin(prospects, eq(prospects.id, outreachEvents.prospectId))
     .where(eq(prospects.caseId, caseId))
     .groupBy(outreachEvents.type);
-  const byStatus = Object.fromEntries(PROSPECT_STATUSES.map((s) => [s, 0])) as Record<ProspectStatus, number>;
+  const { byStatus, events } = emptyOutreachCounts();
   let total = 0;
   let withEmail = 0;
   for (const r of statusRows) {
@@ -91,7 +101,6 @@ export async function outreachCounts(db: Db, caseId: string): Promise<OutreachCo
     total += r.n;
     withEmail += r.withEmail;
   }
-  const events = Object.fromEntries(OUTREACH_EVENT_TYPES.map((t) => [t, { events: 0, prospects: 0 }])) as OutreachCounts['events'];
   for (const r of eventRows) events[r.type] = { events: r.events, prospects: r.prospects };
   return { prospects: total, withEmail, byStatus, events };
 }

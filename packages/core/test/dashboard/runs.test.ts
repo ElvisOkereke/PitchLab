@@ -89,6 +89,15 @@ describe('queueRun', () => {
     expect(await requeueRun(db, 'not-a-uuid')).toEqual({ ok: false, reason: 'not_found' });
   });
 
+  it('requeueRun respects MAX_QUEUED (D2-R3)', async () => {
+    const failed = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await db.update(runs).set({ status: 'failed', error: 'boom' }).where(eq(runs.id, failed.id));
+    for (let i = 0; i < MAX_QUEUED; i++) await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    expect(await requeueRun(db, failed.id)).toEqual({ ok: false, reason: 'too_many_queued' });
+    expect((await db.select().from(runs).where(eq(runs.id, failed.id)))[0]!.status).toBe('failed');
+    expect(await queued()).toHaveLength(MAX_QUEUED);
+  });
+
   it('queueGateKillRerun queues an idea run with overturnOfIdeaId and rejects non-gated_out ideas', async () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     await db.update(runs).set({ status: 'succeeded' }).where(eq(runs.id, run.id));
