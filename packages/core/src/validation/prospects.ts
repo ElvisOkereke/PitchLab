@@ -322,6 +322,8 @@ export function placesSource(opts: { apiKey: string | undefined; fetchImpl?: typ
       const t = await loadTarget(db, caseId);
       const pageSize = Math.max(1, Math.min(limit, PLACES_PAGE_MAX));
       const candidates: ProspectCandidate[] = [];
+      // One country failing must not discard the others' results; the source fails only when every country failed.
+      const errors: unknown[] = [];
       for (const code of t.countries) {
         const textQuery = `${t.buyerType || t.buyer} in ${COUNTRY_NAMES[code] ?? code}`;
         let places;
@@ -329,7 +331,9 @@ export function placesSource(opts: { apiKey: string | undefined; fetchImpl?: typ
           places = await placesSearch(opts.apiKey, textQuery, pageSize, opts.fetchImpl ?? fetch);
         } catch (err) {
           await logDataCall(db, { runId: null, provider: 'google_places', endpoint: 'places:searchText', costUsd: 0, ok: false });
-          throw err;
+          log(`prospects: places search for ${code} failed: ${err instanceof Error ? err.message : String(err)}`);
+          errors.push(err);
+          continue;
         }
         await logDataCall(db, { runId: null, provider: 'google_places', endpoint: 'places:searchText', costUsd: PLACES_COST_PER_CALL, ok: true });
         for (const p of places) {
@@ -344,6 +348,7 @@ export function placesSource(opts: { apiKey: string | undefined; fetchImpl?: typ
           });
         }
       }
+      if (errors.length > 0 && errors.length === t.countries.length) throw errors[0];
       const kept = normalizeCandidates(candidates, { limit, log });
       log(`prospects: places found ${kept.length} candidate(s)`);
       return kept;

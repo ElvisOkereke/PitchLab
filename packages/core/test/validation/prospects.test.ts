@@ -185,6 +185,24 @@ describe('placesSource', () => {
     expect((await db.select().from(dataCalls))[0]).toMatchObject({ provider: 'google_places', ok: false });
   });
 
+  it('a failure for one country keeps the other countries\' results; throws only when every country fails', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const fetchImpl = vi.fn(async (_u: unknown, init?: RequestInit) =>
+      String(init!.body).includes('Canada')
+        ? new Response('quota', { status: 429 })
+        : new Response(JSON.stringify(placesJson), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const logs: string[] = [];
+    const out = await placesSource({ apiKey: 'k', fetchImpl: fetchImpl as unknown as typeof fetch }).find(ctx(db, fakeRouter({}), kase.id, logs));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(out.map((c) => c.name)).toEqual(['Acme Freight']);
+    expect(out[0]!.country).toBe('US');
+    const calls = await db.select().from(dataCalls);
+    expect(calls.map((c) => c.ok).sort()).toEqual([false, true]);
+    expect(logs.join('\n')).toMatch(/Canada.*429|429.*Canada|CA.*429/);
+  });
+
   it('GOOGLE_PLACES_API_KEY is an optional env var', () => {
     expect(loadEnv({ LLM_API_KEY: 'k' }).GOOGLE_PLACES_API_KEY).toBeUndefined();
     expect(loadEnv({ LLM_API_KEY: 'k', GOOGLE_PLACES_API_KEY: 'p' }).GOOGLE_PLACES_API_KEY).toBe('p');

@@ -281,9 +281,11 @@ describe('generatePackDocs', () => {
     const logs: string[] = [];
     const router = fakeRouter({ structured: { pack: [packFixture({ firstStep: 'Review how their leads reach the sales team' })] } });
     const out = await generatePackDocs(deps(db, router, logs), kase.id, { pilotSite: 'pilot.example' });
-    expect(out.pilotPlan.firstStep).toBe(PILOT_PERMISSION_STEP);
+    // The model's own first step is kept after the forced permission step.
+    const expected = `${PILOT_PERMISSION_STEP}. Review how their leads reach the sales team`;
+    expect(out.pilotPlan.firstStep).toBe(expected);
     const [row] = await db.select().from(validationPacks);
-    expect((row!.sections as { pilotPlan: { firstStep: string } }).pilotPlan.firstStep).toBe(PILOT_PERMISSION_STEP);
+    expect((row!.sections as { pilotPlan: { firstStep: string } }).pilotPlan.firstStep).toBe(expected);
     expect(logs.join('\n')).toMatch(/permission/);
   });
 

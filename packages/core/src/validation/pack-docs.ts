@@ -107,8 +107,8 @@ export async function generatePackDocs({ db, router, log }: PackDeps, caseId: st
 
   // The permission-first rule is enforced in code too, not only asked for in the prompt.
   if (pilotSiteBlock(opts.pilotSite) !== '' && !docs.pilotPlan.firstStep.toLowerCase().startsWith(PILOT_PERMISSION_STEP.toLowerCase())) {
-    log(`pack-docs: pilot plan did not start with the written-permission step; replaced its first step "${capField(docs.pilotPlan.firstStep, 120)}"`);
-    docs.pilotPlan.firstStep = PILOT_PERMISSION_STEP;
+    log(`pack-docs: pilot plan did not start with the written-permission step; put it before "${capField(docs.pilotPlan.firstStep, 120)}"`);
+    docs.pilotPlan.firstStep = `${PILOT_PERMISSION_STEP}. ${docs.pilotPlan.firstStep}`;
   }
 
   // Whatever path produced it, the stored pack must pass the strict schema (P3-R11); otherwise nothing is stored.
