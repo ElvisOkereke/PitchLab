@@ -89,6 +89,19 @@ export function prospectDomain(raw: string): string | null {
   return r.domain;
 }
 
+/**
+ * The registrable domain of a `--pilot-site` value (P3-R21). The value must be an http(s) URL (scheme required) with a
+ * registrable ICANN domain; otherwise this throws (value capped in the message). The site itself is never fetched.
+ */
+export function pilotSiteDomain(raw: string): string {
+  const s = raw.trim();
+  const domain = /^https?:\/\//i.test(s) && s.length <= URL_MAX ? prospectDomain(s) : null;
+  if (!domain) {
+    throw new Error(`--pilot-site must be an http(s) URL with a registrable domain (e.g. https://example.com), got: ${capField(raw, 100)}`);
+  }
+  return domain;
+}
+
 type Normalized<T extends ProspectCandidate> = T & { domain: string };
 
 /** Clean one candidate (caps, single-line fields, real website) or say why it is dropped. */

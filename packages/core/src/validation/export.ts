@@ -229,8 +229,9 @@ export async function exportValidation(
   db: Db,
   caseId: string,
   outDir: string,
-  opts: { includeWeak?: boolean; log?: (msg: string) => void } = {},
+  opts: { includeWeak?: boolean; pilotDomain?: string | null; log?: (msg: string) => void } = {},
 ): Promise<ValidationExport> {
+  const pilotDomain = opts.pilotDomain ?? null;
   const log = opts.log ?? (() => {});
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`exportValidation: unknown case ${caseId}`);
@@ -255,13 +256,14 @@ export async function exportValidation(
   const counts = await outreachCounts(db, caseId);
   write('pack.md', packMarkdown(kase.title, docs, packRow ?? null, status, counts, senderMissing));
 
-  // prospects.csv — suppressed / unsubscribed addresses are left out.
+  // prospects.csv — suppressed / unsubscribed addresses and the pilot site's prospects' addresses are left out (rows kept).
   const allProspects = await db.select().from(prospects).where(eq(prospects.caseId, caseId)).orderBy(prospects.createdAt, prospects.id);
   const emails = allProspects.map((p) => p.email?.toLowerCase()).filter((e): e is string => !!e);
   const suppressed = new Set(
     emails.length ? (await db.select({ email: suppressions.email }).from(suppressions).where(inArray(suppressions.email, emails))).map((r) => r.email) : [],
   );
-  const hidden = (p: (typeof allProspects)[number]) => p.status === 'unsubscribed' || (!!p.email && suppressed.has(p.email.toLowerCase()));
+  const hidden = (p: (typeof allProspects)[number]) =>
+    p.status === 'unsubscribed' || (!!p.email && suppressed.has(p.email.toLowerCase())) || (pilotDomain !== null && p.domain === pilotDomain);
   write('prospects.csv', csvRows([
     ['prospect_id', 'name', 'website', 'location', 'email', 'email_source_url', 'email_captured_at', 'casl_basis', 'status', 'fit_reason'],
     ...allProspects.map((p) => {
@@ -274,7 +276,7 @@ export async function exportValidation(
   ]));
 
   // outreach.csv — only sendable prospects, footers from the current settings.
-  const sendable = await exportableOutreach(db, caseId, { includeWeak: opts.includeWeak });
+  const sendable = await exportableOutreach(db, caseId, { includeWeak: opts.includeWeak, pilotDomain });
   const body = (b: string | undefined) => (b === undefined ? '' : applyFooter(b, footer));
   write('outreach.csv', csvRows([
     ['prospect_id', 'prospect', 'email', 'casl_basis', ...OUTREACH_KINDS.flatMap((k) => [`${k}_subject`, `${k}_body`])],
@@ -283,7 +285,7 @@ export async function exportValidation(
     ]),
   ]));
 
-  // outreach-drafts.md — every draft except those of suppressed / unsubscribed prospects.
+  // outreach-drafts.md — every draft except those of suppressed / unsubscribed / pilot-site prospects.
   const draftRows = allProspects.length
     ? await db.select().from(outreachDrafts).where(inArray(outreachDrafts.prospectId, allProspects.map((p) => p.id)))
     : [];
@@ -298,7 +300,7 @@ export async function exportValidation(
     '> `npm run gen -- outreach mark <email> sent`. Record replies the same way (replied, positive, meeting, not_interested, unsubscribe).',
     '',
   ];
-  if (withDrafts.length > shown.length) md.push(`_${withDrafts.length - shown.length} prospect(s) left out: unsubscribed or suppressed._`, '');
+  if (withDrafts.length > shown.length) md.push(`_${withDrafts.length - shown.length} prospect(s) left out: unsubscribed, suppressed or on the pilot site._`, '');
   if (shown.length === 0) md.push('_No drafts yet._', '');
   for (const p of shown) {
     md.push(`## ${line(p.name)} (${line(p.domain)})`, '');

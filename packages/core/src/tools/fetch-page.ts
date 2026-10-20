@@ -22,6 +22,8 @@ export interface FetchPageOpts {
   maxBytes?: number;
   fetchImpl?: typeof fetch;
   lookup?: (host: string) => Promise<{ address: string; family: number }[]>;
+  /** Extra hosts refused on every hop like NEVER_FETCH_HOSTS (subdomains included; case and trailing dots ignored), e.g. a run's pilot site. */
+  blockHosts?: readonly string[];
 }
 
 const USER_AGENT = 'BusinessCaseGen/0.1 (research; contact: owner)';
@@ -125,8 +127,10 @@ function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+const normHost = (h: string) => h.toLowerCase().replace(/\.+$/, '');
+
 async function checkHost(
-  u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean,
+  u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean, blockHosts: readonly string[],
 ): Promise<'ok' | 'blocked_host' | 'network' | 'timeout'> {
   if (u.username || u.password) return 'blocked_host';
   const rawHost = u.hostname.toLowerCase();
@@ -137,6 +141,7 @@ async function checkHost(
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   if (host === 'localhost' || ['.localhost', '.local', '.internal'].some((s) => host.endsWith(s))) return 'blocked_host';
   if (isNeverFetchHost(host)) return 'blocked_host';
+  if (blockHosts.some((b) => b !== '' && (host === b || host.endsWith(`.${b}`)))) return 'blocked_host';
   // A redirect may not point at an IP literal (it could bypass the never-fetch host set); the entry url still may.
   if (isIP(host) && isRedirect) return 'blocked_host';
   if (isIP(host)) return isAllowedIp(host) ? 'ok' : 'blocked_host';
@@ -180,6 +185,7 @@ function extract(html: string): { title: string; text: string } {
 /** GET-only page fetch. Never throws. */
 export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<PageResult> {
   const { timeoutMs = 15000, maxBytes = 2_000_000, fetchImpl = pinnedFetch, lookup = defaultLookup } = opts;
+  const blockHosts = (opts.blockHosts ?? []).map(normHost);
   let current = url;
   let prevProtocol: string | null = null;
   const controller = new AbortController();
@@ -193,7 +199,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
         return fail('blocked_scheme', 0, current);
       }
       if (!isHttp(parsed)) return fail('blocked_scheme', 0, current);
-      const hostCheck = await checkHost(parsed, lookup, controller.signal, hop > 0);
+      const hostCheck = await checkHost(parsed, lookup, controller.signal, hop > 0, blockHosts);
       if (hostCheck !== 'ok') return fail(hostCheck, 0, current);
       if (prevProtocol === 'https:' && parsed.protocol === 'http:') return fail('blocked_scheme', 0, current);
       prevProtocol = parsed.protocol;

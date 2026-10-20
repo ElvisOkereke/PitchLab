@@ -172,13 +172,19 @@ async function suppressedSet(db: Db, emails: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => r.email));
 }
 
-/** Prospects of a case that may be emailed: an email, not suppressed, not unsubscribed / not interested; weak basis only with includeWeak. */
-async function draftable(db: Db, caseId: string, includeWeak: boolean): Promise<{ eligible: Prospect[]; excludedWeak: number }> {
+/**
+ * Prospects of a case that may be emailed: an email, not suppressed, not unsubscribed / not interested, not on the run's
+ * pilot site domain (P3-R21); weak basis only with includeWeak.
+ */
+async function draftable(
+  db: Db, caseId: string, includeWeak: boolean, pilotDomain: string | null,
+): Promise<{ eligible: Prospect[]; excludedWeak: number }> {
   const rows = await db.select().from(prospects)
     .where(and(eq(prospects.caseId, caseId), isNotNull(prospects.email)))
     .orderBy(prospects.createdAt, prospects.id);
   const blocked = await suppressedSet(db, rows.map((r) => r.email!.toLowerCase()));
-  const open = rows.filter((r) => !NOT_DRAFTED.includes(r.status) && !blocked.has(r.email!.toLowerCase()));
+  const open = rows.filter((r) =>
+    !NOT_DRAFTED.includes(r.status) && !blocked.has(r.email!.toLowerCase()) && (pilotDomain === null || r.domain !== pilotDomain));
   const eligible = open.filter((r) => includeWeak || r.caslBasis === 'self_published');
   return { eligible, excludedWeak: open.length - eligible.length };
 }
@@ -193,14 +199,14 @@ async function draftable(db: Db, caseId: string, includeWeak: boolean): Promise<
 export async function generateDrafts(
   { db, router, log, fetchPage }: DraftDeps,
   caseId: string,
-  opts: { includeWeak?: boolean; regenerate?: boolean } = {},
+  opts: { includeWeak?: boolean; regenerate?: boolean; pilotDomain?: string | null } = {},
 ): Promise<DraftResult> {
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`generateDrafts: unknown case ${caseId}`);
   const { footer, missing } = await senderFooter(db);
   if (missing.length) log(`outreach: sender settings missing (${missing.join(', ')}); drafts carry [SET SENDER …] markers`);
 
-  const { eligible, excludedWeak } = await draftable(db, caseId, opts.includeWeak ?? false);
+  const { eligible, excludedWeak } = await draftable(db, caseId, opts.includeWeak ?? false, opts.pilotDomain ?? null);
   if (excludedWeak) log(`outreach: ${excludedWeak} prospect(s) with a weak-basis email left out (use --include-weak to draft them)`);
 
   const existing = eligible.length
@@ -293,8 +299,10 @@ export type ExportableOutreach = { prospect: Prospect; drafts: Partial<Record<Ou
  * Prospects whose drafts may go in the outreach export: an email that is `self_published` (any basis with includeWeak),
  * not suppressed, status not unsubscribed / not interested, with at least one draft. Ordered by prospect creation.
  */
-export async function exportableOutreach(db: Db, caseId: string, opts: { includeWeak?: boolean } = {}): Promise<ExportableOutreach[]> {
-  const { eligible } = await draftable(db, caseId, opts.includeWeak ?? false);
+export async function exportableOutreach(
+  db: Db, caseId: string, opts: { includeWeak?: boolean; pilotDomain?: string | null } = {},
+): Promise<ExportableOutreach[]> {
+  const { eligible } = await draftable(db, caseId, opts.includeWeak ?? false, opts.pilotDomain ?? null);
   if (eligible.length === 0) return [];
   const rows = await db.select().from(outreachDrafts).where(inArray(outreachDrafts.prospectId, eligible.map((p) => p.id)));
   return eligible

@@ -1,5 +1,6 @@
 import { Argument, Command, Option } from 'commander';
 import type { RunConfig } from './pipeline/types';
+import { pilotSiteDomain } from './validation/prospects';
 
 // Command definitions and option parsing, separate from the handlers in cli.ts so they can be tested without a DB or
 // network. Handlers return the process exit code.
@@ -22,6 +23,16 @@ function prospectCount(v: string): number {
   const n = positiveInt(v);
   if (n > MAX_PROSPECTS) throw new CliError(`--prospects is at most ${MAX_PROSPECTS}, got: ${v}`, 2);
   return n;
+}
+
+/** --pilot-site must be an http(s) URL with a registrable domain (P3-R21); the value itself is passed on unchanged. */
+function pilotSiteArg(v: string): string {
+  try {
+    pilotSiteDomain(v);
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), 2);
+  }
+  return v;
 }
 
 export type RunOpts = {
@@ -126,7 +137,7 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--skip-prospects', 'do not look for new prospects (existing ones still get emails and drafts)')
     .addOption(new Option('--source <source>', 'prospect source').choices(['web_research', 'places']))
     .option('--include-weak', 'also draft and export emails whose CASL basis is not self-published')
-    .option('--pilot-site <url>', 'site named in the pilot plan (text only: never fetched or contacted)')
+    .option('--pilot-site <url>', 'http(s) URL of the site named in the pilot plan (never fetched, contacted, listed or exported)', pilotSiteArg)
     .option('--refresh', 'regenerate the pack and landing page even if they exist')
     .action(async (slug: string, opts: ValidateCliOpts) => {
       process.exitCode = await h.validate(slug, opts);

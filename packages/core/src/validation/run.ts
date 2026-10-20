@@ -7,7 +7,7 @@ import { exportValidation, type ValidationExport } from './export';
 import { generateLanding } from './landing';
 import { generateDrafts } from './outreach';
 import { generatePackDocs } from './pack-docs';
-import { placesSource, prospectDomain, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
+import { pilotSiteDomain, placesSource, prospectDomain, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
 
 export type ValidationDeps = Pick<StageDeps, 'db' | 'router' | 'fetchPage' | 'log'> & {
   /** Root of the validation export; files go to `<outDir>/<slug>/`. */
@@ -48,6 +48,8 @@ const errText = (err: unknown) => capField(err instanceof Error ? err.message : 
  */
 export async function runValidation(deps: ValidationDeps, caseId: string, opts: ValidationOpts = {}): Promise<ValidationResult> {
   const { db, log } = deps;
+  // P3-R21: a given --pilot-site must be a real http(s) URL; checked before any step, model call or fetch.
+  const pilotDomain = opts.pilotSite === undefined ? null : pilotSiteDomain(opts.pilotSite);
   const steps: StepResult[] = [];
   const record = (step: ValidationStep, status: StepResult['status'], detail: string) => {
     steps.push({ step, status, detail });
@@ -77,7 +79,13 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   // 2–4. Outreach chain.
   let chainBroken = false;
-  const pilotDomain = opts.pilotSite ? prospectDomain(opts.pilotSite) : null;
+  // The pilot site domain is excluded at every step (P3-R21): dropped from new prospects, refused by fetchPage on every
+  // hop (blockHosts), never drafted for and never exported. isBannedSource covers only the static NEVER_FETCH_HOSTS,
+  // not this per-run pilot site. Existing rows are kept as they are (not deleted, not marked unsubscribed).
+  const blockHosts = pilotDomain ? [pilotDomain] : [];
+  const fetchDeps: ValidationDeps = pilotDomain
+    ? { ...deps, fetchPage: ((url: string, o = {}) => deps.fetchPage(url, { ...o, blockHosts })) as ValidationDeps['fetchPage'] }
+    : deps;
   if (opts.skipProspects) {
     record('prospects', 'skipped', '--skip-prospects');
   } else {
@@ -86,7 +94,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
         ? placesSource({ apiKey: deps.placesApiKey, ...(deps.placesFetch ? { fetchImpl: deps.placesFetch } : {}) })
         : webResearchSource;
       const all = await source.find({ db, router: deps.router, log, caseId, limit: opts.prospects ?? DEFAULT_PROSPECTS });
-      // The pilot site is the owner's pilot, never a prospect (never-fetch hosts are already refused by isBannedSource).
+      // The pilot site is the owner's pilot, never a prospect.
       const found = pilotDomain ? all.filter((c) => prospectDomain(c.website) !== pilotDomain) : all;
       if (found.length < all.length) log(`validate: dropped ${all.length - found.length} prospect(s) on the pilot site domain ${pilotDomain}`);
       const r = await upsertProspects(db, caseId, found, source.id);
@@ -114,7 +122,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
       const tally = { found: 0, none: 0, blocked: 0, kept: 0, errors: 0 };
       for (const p of todo) {
         try {
-          const r = await discoverEmails(deps, p);
+          const r = await discoverEmails(fetchDeps, p);
           tally[r.status]++;
         } catch (err) {
           tally.errors++;
@@ -135,7 +143,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
     record('drafts', 'skipped', 'an earlier outreach step failed');
   } else {
     try {
-      const r = await generateDrafts(deps, caseId, { includeWeak: opts.includeWeak ?? false });
+      const r = await generateDrafts(fetchDeps, caseId, { includeWeak: opts.includeWeak ?? false, pilotDomain });
       const detail = `${r.generated} drafted, ${r.refreshed} footers refreshed, ${r.unchanged} kept, ${r.failed} failed` +
         (r.excludedWeak ? `, ${r.excludedWeak} weak-basis left out` : '');
       // Every attempted prospect failing is a real failure; some failing is a warning (the rest are saved).
@@ -161,7 +169,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   // 6. Export.
   try {
-    const exp = await exportValidation(db, caseId, deps.outDir, { includeWeak: opts.includeWeak ?? false, log });
+    const exp = await exportValidation(db, caseId, deps.outDir, { includeWeak: opts.includeWeak ?? false, pilotDomain, log });
     record('export', 'ok', `${exp.files.length} files in ${exp.dir}; ${exp.outreachRows} prospect(s) in outreach.csv`);
     return done(exp);
   } catch (err) {

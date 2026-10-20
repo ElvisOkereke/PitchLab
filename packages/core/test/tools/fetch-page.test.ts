@@ -96,6 +96,24 @@ describe('fetchPage', () => {
     expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });
 
+  it('blockHosts refuses those hosts and their subdomains on every hop, without a request (P3-R21)', async () => {
+    const direct = htmlFetch('<p>x</p>');
+    for (const url of ['https://pilot.example.com/', 'https://WWW.Pilot.Example.com../x', 'https://shop.pilot.example.com./']) {
+      expect((await fetchPage(url, { fetchImpl: direct, blockHosts: ['pilot.example.com.'] })).reason, url).toBe('blocked_host');
+    }
+    expect(direct).not.toHaveBeenCalled();
+    expect((await fetchPage('https://notpilot.example.com/', { fetchImpl: direct, blockHosts: ['pilot.example.com'] })).ok).toBe(true);
+
+    const redirecting = vi.fn(async (u: any) =>
+      String(u) === 'https://prospect.test/'
+        ? new Response(null, { status: 302, headers: { location: 'https://www.pilot.example.com/contact' } })
+        : respond('<p>should never be fetched</p>'),
+    );
+    const r = await fetchPage('https://prospect.test/', { fetchImpl: redirecting, blockHosts: ['pilot.example.com'] });
+    expect(r).toMatchObject({ ok: false, reason: 'blocked_host', finalUrl: 'https://www.pilot.example.com/contact' });
+    expect(redirecting).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks a redirect to an IP-literal host; an IP-literal entry url behaves as before (P3-R7)', async () => {
     for (const target of ['http://93.184.216.34/', 'http://[2001:4860:4860::8888]/']) {
       const f = vi.fn(async (u: any) =>

@@ -25,9 +25,9 @@ async function parse(args: string[]) {
 
 describe('gen validate', () => {
   it('parses every option', async () => {
-    const h = await parse(['validate', 'freight', '--prospects', '10', '--source', 'places', '--include-weak', '--pilot-site', 'https://pilot.example', '--refresh']);
+    const h = await parse(['validate', 'freight', '--prospects', '10', '--source', 'places', '--include-weak', '--pilot-site', 'https://pilot-site.com', '--refresh']);
     expect(h.validate).toHaveBeenCalledWith('freight', {
-      prospects: 10, source: 'places', includeWeak: true, pilotSite: 'https://pilot.example', refresh: true,
+      prospects: 10, source: 'places', includeWeak: true, pilotSite: 'https://pilot-site.com', refresh: true,
     });
   });
 
@@ -41,6 +41,14 @@ describe('gen validate', () => {
     await expect(parse(['validate', 'freight', '--prospects', 'ten'])).rejects.toThrow(/positive whole number/);
     await expect(parse(['validate', 'freight', '--prospects', '500'])).rejects.toThrow(/at most 100/);
     await expect(parse(['validate', 'freight', '--source', 'csv'])).rejects.toThrow();
+  });
+
+  it('rejects a --pilot-site that is not an http(s) URL with a registrable domain (P3-R21)', async () => {
+    for (const bad of ['notaurl', 'ftp://acme.com', 'https://localhost', 'https://10.0.0.1', 'acme.com']) {
+      await expect(parse(['validate', 'freight', '--pilot-site', bad]), bad).rejects.toThrow(/--pilot-site must be an http\(s\) URL/);
+    }
+    expect((await parse(['validate', 'freight', '--pilot-site', 'https://gamersgetaway.ca'])).validate)
+      .toHaveBeenCalledWith('freight', { pilotSite: 'https://gamersgetaway.ca' });
   });
 });
 

@@ -205,6 +205,49 @@ describe('runValidation', () => {
     expect(fetchPage.mock.calls.map((c) => String(c[0]))).not.toContainEqual(expect.stringContaining('acme-freight'));
   });
 
+  it('an invalid --pilot-site throws before any model or fetch call (P3-R21)', async () => {
+    for (const bad of ['not a url', 'ftp://acme.com/', 'https://localhost/', 'https://192.0.2.1/', 'acme.com', `https://${'x'.repeat(500)}`]) {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const { deps, router, fetchPage } = setup(db, { structured: { pack: [pack()] } });
+      await expect(runValidation(deps, kase.id, { pilotSite: bad }), bad).rejects.toThrow(/--pilot-site must be an http\(s\) URL/);
+      expect(router.calls).toHaveLength(0);
+      expect(fetchPage).not.toHaveBeenCalled();
+    }
+  });
+
+  it('an existing prospect on the pilot domain gets no email fetch, no draft and no export row; it is not unsubscribed (P3-R21)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const base = { caseId: kase.id, location: '', fitReason: '', source: 'csv' as const };
+    await db.insert(prospects).values([
+      { ...base, name: 'Pilot Co', website: 'https://www.pilot-site.com/', domain: 'pilot-site.com' },
+      { ...base, name: 'Normal Co', website: 'https://normal.com/', domain: 'normal.com' },
+    ]);
+    const script: FakeScript = { structured: { pack: [pack()], outreach: [drafts(), drafts()], landing: [landing()] } };
+    const { deps, outDir, fetchPage } = setup(db, script);
+    const opts = { skipProspects: true, pilotSite: 'https://pilot-site.com/' };
+    expect((await runValidation(deps, kase.id, opts)).exitCode).toBe(0);
+
+    // Email discovery and the homepage snippet never fetch the pilot domain; every fetch carries blockHosts.
+    expect(fetchPage.mock.calls.map((c) => String(c[0])).some((u) => u.includes('pilot-site'))).toBe(false);
+    expect(fetchPage.mock.calls.length).toBeGreaterThan(0);
+    for (const c of fetchPage.mock.calls) expect((c as unknown[])[1]).toMatchObject({ blockHosts: ['pilot-site.com'] });
+
+    // Even with an (owner-entered) email, the pilot prospect is never drafted for or exported.
+    await db.update(prospects).set({ email: 'owner@pilot-site.com', caslBasis: 'self_published' }).where(eq(prospects.domain, 'pilot-site.com'));
+    expect((await runValidation(deps, kase.id, opts)).exitCode).toBe(0);
+    const [pilot] = await db.select().from(prospects).where(eq(prospects.domain, 'pilot-site.com'));
+    const draftRows = await db.select().from(outreachDrafts);
+    expect(draftRows.some((d) => d.prospectId === pilot!.id)).toBe(false);
+    expect(draftRows).toHaveLength(3); // Normal Co only
+    expect(pilot!.status).toBe('new'); // not unsubscribed, not deleted
+    for (const f of ['outreach.csv', 'outreach-drafts.md', 'prospects.csv']) {
+      expect(readFileSync(join(outDir, 'freight', f), 'utf8'), f).not.toContain('owner@pilot-site.com');
+    }
+    expect(readFileSync(join(outDir, 'freight', 'prospects.csv'), 'utf8')).toContain('Pilot Co'); // the row is kept
+  });
+
   it('a landing failure still runs the export, with a non-zero exit code', async () => {
     const db = await testDb();
     const kase = await aCase(db);
@@ -260,9 +303,9 @@ describe('runValidation', () => {
     });
     const permissionPack = { ...pack(), pilotPlan: { ...pack().pilotPlan, firstStep: "Get the site owner's written permission and learn where leads land" } };
     const { deps, router, outDir } = setup(db, { structured: { pack: [permissionPack], outreach: [drafts()], landing: [landing()] } });
-    const r = await runValidation(deps, kase.id, { skipProspects: true, includeWeak: true, pilotSite: 'https://pilot.example' });
+    const r = await runValidation(deps, kase.id, { skipProspects: true, includeWeak: true, pilotSite: 'https://pilot-site.com' });
     expect(r.exitCode).toBe(0);
-    expect(router.calls[0]!.prompt).toContain('pilot.example');
+    expect(router.calls[0]!.prompt).toContain('pilot-site.com');
     expect(readFileSync(join(outDir, 'freight', 'outreach.csv'), 'utf8')).toContain('sales@weak.com');
   });
 });
