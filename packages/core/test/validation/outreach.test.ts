@@ -311,8 +311,16 @@ describe('generateDrafts', () => {
     expect(rules).toMatch(/ONE specific, easy yes\/no question about whether \[this buyer\] has run into \[this case's problem\] recently, in their own words/);
     expect(rules).toContain(`${EXAMPLE_LABEL} "Does your team ever eat a detention charge a shipper refuses to pay because proof was missing?"`);
     expect(rules).toMatch(/Never ask a stranger to send data/);
-    expect(rules).toMatch(/cold email and followup1 contain NO price, NO numbers, NO amounts and NO percentages/);
-    expect(rules).toMatch(/Followup2 may mention the price, and only as the case's allowed offer term/);
+    // One consistent figures rule (P3-R25): none in cold/followup1; followup2 may use the offer term and verified figures only.
+    const figures = rules.split('\n').find((l) => l.startsWith('- Figures:'))!;
+    expect(figures).toMatch(/the cold email and followup1 contain NO figures: no price, no numbers, no amounts, no percentages/);
+    expect(figures).toContain(
+      "Only followup2 may contain figures, and only these two kinds: the case's allowed offer term (stated exactly) and figures that appear in the case's verifiedClaims list. Nothing else, in any email.",
+    );
+    expect(figures).toContain('There are no verified figures'); // claimsRule, scoped to followup2 on the same line
+    expect(rules).not.toMatch(/Followup2 may mention the price, and only as/);
+    expect(rules).not.toMatch(/Any other figure in the case may not be stated/);
+    expect(rules).toMatch(/Followup2 is a short last note: it may say in one line what the tool does, with its price and at most one verified figure/);
     expect(rules).toMatch(/Do not explain the prospect's own business to them/);
     expect(rules).toMatch(/cold email at most 90 words, each follow-up at most 60 words/);
     // v1 rules kept: honesty, no links or addresses, only verified figures, plain text, no signature.
@@ -473,6 +481,10 @@ describe('generateDrafts', () => {
     expect(prompt).toContain('Carriers bill 2 hours free time: 2');
     for (const t of ['12%', '$75', '40%', '99%']) expect(prompt, t).not.toContain(t);
     expect(prompt).not.toContain('no verified figures');
+    // With verified figures, the claims rule is the followup2 part of the one figures rule (P3-R25).
+    const figures = prompt.split('\n').find((l) => l.startsWith('- Figures:'))!;
+    expect(figures).toMatch(/Only followup2 may contain figures.*For followup2: Figures: quote a number only when it appears in the case's verifiedClaims list/);
+    expect(figures).toContain('$99 per month');
   });
 
   it('adds a plain snippet of the prospect homepage (title + description) via the guarded fetcher when available', async () => {
