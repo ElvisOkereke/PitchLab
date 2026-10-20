@@ -7,6 +7,13 @@ import { caseToMarkdown, type CaseRow, type ClaimRow, type ScoreRow } from '../.
 
 const FIXTURE = new URL('../helpers/fixtures/case-draft.json', import.meta.url);
 
+/** caseToMarkdown plus a snapshot of its output, so moving logic out of the exporter keeps it byte-identical. */
+function toMd(...args: Parameters<typeof caseToMarkdown>): string {
+  const md = caseToMarkdown(...args);
+  expect(md).toMatchSnapshot();
+  return md;
+}
+
 function caseFixture(opts: { gateFlags?: string[]; mutate?: (s: CaseSections) => void; title?: string } = {}): CaseRow {
   const { title, usedSignalUrls: _used, ...draft } = JSON.parse(readFileSync(FIXTURE, 'utf8'));
   const sections: CaseSections = {
@@ -52,14 +59,14 @@ describe('caseToMarkdown', () => {
         s.competitors.list[0]!.name = 'Comp‮etitor';
       },
     });
-    const md = caseToMarkdown(c, [claim('verified', { text: 'Claim​ text‮' })], aiScores());
+    const md = toMd(c, [claim('verified', { text: 'Claim​ text‮' })], aiScores());
     expect(md).not.toMatch(/[‪-‮⁦-⁩​-‍]/);
     expect(md).toContain('# Lead flow');
     expect(md).toContain('Competitor');
   });
 
   it('renders markdown with gate flags, formulas and claim statuses', () => {
-    const md = caseToMarkdown(caseFixture({ gateFlags: ['evidence'] }), [claim('verified'), claim('unreachable')], aiScores());
+    const md = toMd(caseFixture({ gateFlags: ['evidence'] }), [claim('verified'), claim('unreachable')], aiScores());
     expect(md).toMatch(/⚠️ Gate flags: evidence/);
     expect(md).toContain('$3,840');
     expect(md).toContain('✅');
@@ -67,7 +74,7 @@ describe('caseToMarkdown', () => {
   });
 
   it('puts the gate flag block at the top and the sections in tab order', () => {
-    const md = caseToMarkdown(caseFixture({ gateFlags: ['evidence', 'control'] }), [], aiScores());
+    const md = toMd(caseFixture({ gateFlags: ['evidence', 'control'] }), [], aiScores());
     const lines = md.split('\n');
     expect(lines[0]).toBe('# Lead-flow verification for web agencies');
     expect(md.indexOf('> ⚠️ Gate flags: evidence, control')).toBeLessThan(md.indexOf('## Summary'));
@@ -77,18 +84,18 @@ describe('caseToMarkdown', () => {
   });
 
   it('omits the gate flag block when there are no flags', () => {
-    expect(caseToMarkdown(caseFixture(), [], [])).not.toContain('Gate flags');
+    expect(toMd(caseFixture(), [], [])).not.toContain('Gate flags');
   });
 
   it('shows the formulas list and an inputs table with a source link or assumption per input', () => {
-    const md = caseToMarkdown(caseFixture(), [], []);
+    const md = toMd(caseFixture(), [], []);
     expect(md).toContain('- Annual price = $8 × 40 × 12 = $3,840');
     expect(md).toMatch(/\| price\.amount \| 8 \| assumption: Our proposed price per monitored site per month/);
     expect(md).toMatch(/\| price\.unitsPerBuyer \| 40 \| \[agency-benchmarks\.example\]\(https:\/\/agency-benchmarks\.example\/2026-small-agency-report\)/);
   });
 
   it('shows every claim status', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('verified'), claim('unsupported'), claim('unreachable'), claim('unverified')], []);
+    const md = toMd(caseFixture(), [claim('verified'), claim('unsupported'), claim('unreachable'), claim('unverified')], []);
     expect(md).toMatch(/✅ verified.*\(verified\)/);
     expect(md).toMatch(/❌ unsupported.*\(unsupported\)/);
     expect(md).toMatch(/⚠️ unreachable.*\(unreachable\)/);
@@ -99,7 +106,7 @@ describe('caseToMarkdown', () => {
     const sig = claim('unsupported', {
       section: 'signal', text: 'Our forms die after plugin updates', sourceUrl: 'https://news.example/item/1', quote: 'Our forms die after plugin updates',
     });
-    const md = caseToMarkdown(caseFixture(), [sig], []);
+    const md = toMd(caseFixture(), [sig], []);
     expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) ❌');
     expect(md).toContain('_No claims recorded._');
   });
@@ -112,7 +119,7 @@ describe('caseToMarkdown', () => {
         { quote: 'Our forms die after plugin updates', url: 'https://news.example/item/1', sourceName: 'Hacker News' },
       ];
     } });
-    const md = caseToMarkdown(kase, [], []);
+    const md = toMd(kase, [], []);
     expect(md).toContain('- "We lose a day a week to this" (forum.example, [forum.example](https://forum.example/t/1)) (voice: operator) not checked');
     expect(md).toContain('- "Our product fixes this" (vendor.example, [vendor.example](https://vendor.example/blog)) (voice: vendor) not checked');
     expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) not checked');
@@ -120,14 +127,14 @@ describe('caseToMarkdown', () => {
   });
 
   it('marks a signal or competitor without a verification claim (e.g. beyond the cap) as not checked', () => {
-    const md = caseToMarkdown(caseFixture(), [], []);
+    const md = toMd(caseFixture(), [], []);
     expect(md).toContain('- "Our forms die after plugin updates" (Hacker News, [news.example](https://news.example/item/1)) not checked');
     expect(md).toMatch(/\| Generic uptime monitor \|.*\| not checked \|/);
   });
 
   it('gives the competitors table a Product and a Pricing status column', () => {
     const url = 'https://uptime-tool.example/pricing';
-    const md = caseToMarkdown(caseFixture(), [
+    const md = toMd(caseFixture(), [
       claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
       claim('needs_review', { section: 'competitor-pricing', text: 'Generic uptime monitor pricing: $15/month for 50 monitors', sourceUrl: url, quote: null }),
     ], []);
@@ -139,7 +146,7 @@ describe('caseToMarkdown', () => {
 
   it('shows "not published — check" in the pricing column when the case quotes no figure', () => {
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[0]!.pricing = 'Not published'; } });
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: 'https://uptime-tool.example/pricing', quote: null }),
     ], []);
     expect(md).toMatch(/\| Generic uptime monitor \|.*\| Not published \|.*\| ✅ verified \| 🔍 not published — check \|/);
@@ -148,7 +155,7 @@ describe('caseToMarkdown', () => {
   it('keys competitor flags by url and name, so two competitors on one site keep their own status', () => {
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.url = s.competitors.list[0]!.url; } });
     const url = kase.sections.competitors.list[0]!.url;
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
       claim('unsupported', { section: 'competitor', text: 'Synthetic browser testing platform', sourceUrl: url, quote: null }),
       claim('verified', { section: 'competitor-pricing', text: 'Synthetic browser testing platform pricing: From $99/month', sourceUrl: url, quote: null }),
@@ -159,7 +166,7 @@ describe('caseToMarkdown', () => {
 
   it('lists unreachable links, unsure checks and unpublished prices under "For you to check", but not real failures', () => {
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.pricing = 'Contact sales'; } });
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       claim('unreachable', { text: 'Agencies run 40 sites', sourceUrl: 'https://down.example/report', reviewNote: 'page could not be loaded by the checker — open it yourself' }),
       claim('needs_review', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: 'https://uptime-tool.example/pricing', quote: null, reviewNote: 'checker unsure (confidence 0.45)' }),
       claim('unsupported', { text: 'Forms fail weekly', sourceUrl: 'https://wrong.example/x' }),
@@ -200,20 +207,20 @@ describe('caseToMarkdown', () => {
   const checkSection = (md: string) => md.slice(md.indexOf('\n## For you to check\n'), md.indexOf('\n## Evidence\n'));
 
   it('says there is nothing to check only when every displayed source was confirmed or flagged', () => {
-    const md = caseToMarkdown(caseFixture(), [...settledClaims(), claim('verified'), claim('unsupported')], []);
+    const md = toMd(caseFixture(), [...settledClaims(), claim('verified'), claim('unsupported')], []);
     expect(md).toContain('## For you to check\n\nNothing — every displayed source was confirmed or flagged.\n');
     expect(checkSection(md)).not.toMatch(/^- /m);
   });
 
   it('lists never-checked (unverified) claims and does not claim all-clear', () => {
-    const md = caseToMarkdown(caseFixture(), [...settledClaims(), claim('unverified', { text: 'Agencies churn yearly', sourceUrl: 'https://churn.example/' })], []);
+    const md = toMd(caseFixture(), [...settledClaims(), claim('unverified', { text: 'Agencies churn yearly', sourceUrl: 'https://churn.example/' })], []);
     const section = checkSection(md);
     expect(section).toMatch(/Agencies churn yearly \(\[churn\.example\]\(https:\/\/churn\.example\/\)\): not checked yet — open it yourself/);
     expect(md).not.toContain('Nothing — every displayed source');
   });
 
   it('lists displayed links that have no verification claim at all (legacy cases)', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('verified')], []);
+    const md = toMd(caseFixture(), [claim('verified')], []);
     const section = checkSection(md);
     expect(section).toMatch(/\*\*Signal:\*\* Our forms die after plugin updates .*not checked yet — open it yourself/);
     expect(section).toMatch(/\*\*Number input:\*\* reachableBuyers: 3000 .*not checked yet/);
@@ -224,7 +231,7 @@ describe('caseToMarkdown', () => {
   it('reads a legacy "<name>: <pricing>" competitor claim (before tuning-2) as that competitor\'s check', () => {
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[1]!.pricing = 'Not published'; } });
     const [a, b] = kase.sections.competitors.list;
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       ...settledClaims().filter((c) => c.section !== 'competitor' && c.section !== 'competitor-pricing'),
       claim('unsupported', { section: 'competitor', text: `${a!.name}: ${a!.pricing}`, sourceUrl: a!.url, quote: null }),
       claim('unreachable', { section: 'competitor', text: `${b!.name}: Not published`, sourceUrl: b!.url, quote: null }),
@@ -243,7 +250,7 @@ describe('caseToMarkdown', () => {
   it('shows an unconfirmable competitor claim (needs_review from verify) as 🔍 and lists it with its note', () => {
     const note = 'the checker could not find this on the linked page — check it yourself';
     const [a] = caseFixture().sections.competitors.list;
-    const md = caseToMarkdown(caseFixture(), [
+    const md = toMd(caseFixture(), [
       ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === a!.url)),
       claim('needs_review', { section: 'competitor', text: a!.name, sourceUrl: a!.url, quote: null, reviewNote: note }),
       claim('needs_review', { section: 'competitor-pricing', text: `${a!.name} pricing: ${a!.pricing}`, sourceUrl: a!.url, quote: null, reviewNote: note }),
@@ -261,7 +268,7 @@ describe('caseToMarkdown', () => {
   it('merges "For you to check" items that share a url, reason and label, keeping the first and counting the claims', () => {
     const down = 'https://apex.example/report';
     const reviewNote = 'page could not be loaded by the checker — open it yourself';
-    const md = caseToMarkdown(caseFixture(), [
+    const md = toMd(caseFixture(), [
       ...settledClaims(),
       claim('unreachable', { text: 'Overpayments run 1%', sourceUrl: down, reviewNote }),
       claim('unreachable', { text: 'Audits recover 20%', sourceUrl: down, reviewNote }),
@@ -282,7 +289,7 @@ describe('caseToMarkdown', () => {
     const kase = caseFixture();
     const [a] = kase.sections.competitors.list;
     const reviewNote = 'page could not be loaded by the checker — open it yourself';
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === a!.url)),
       claim('unreachable', { section: 'competitor', text: a!.name, sourceUrl: a!.url, quote: null, reviewNote }),
       claim('unreachable', { section: 'competitor-pricing', text: `${a!.name} pricing: ${a!.pricing}`, sourceUrl: a!.url, quote: null, reviewNote }),
@@ -294,19 +301,19 @@ describe('caseToMarkdown', () => {
   });
 
   it('tells the owner to verify everything when the case has no claims', () => {
-    const md = caseToMarkdown(caseFixture(), [], []);
+    const md = toMd(caseFixture(), [], []);
     expect(md).toContain('## For you to check\n\nThis case has no checked sources — verify everything yourself.\n');
     expect(md).not.toContain('Nothing — every displayed source');
   });
 
   it('shows the 🔍 status for a needs_review claim', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('needs_review')], []);
+    const md = toMd(caseFixture(), [claim('needs_review')], []);
     expect(md).toMatch(/🔍 needs review.*\(needs_review\)/);
   });
 
   it('shows the worst status when two claims share a url and text', () => {
     const sig = { section: 'signal', text: 'Our forms die after plugin updates', sourceUrl: 'https://news.example/item/1', quote: 'Our forms die after plugin updates' };
-    const md = caseToMarkdown(caseFixture(), [claim('unsupported', sig), claim('verified', sig)], []);
+    const md = toMd(caseFixture(), [claim('unsupported', sig), claim('verified', sig)], []);
     expect(md).toContain('(Hacker News, [news.example](https://news.example/item/1)) ❌');
   });
 
@@ -314,14 +321,14 @@ describe('caseToMarkdown', () => {
     const input = claim('unreachable', {
       section: 'numbers', text: 'price.unitsPerBuyer: 40', sourceUrl: 'https://agency-benchmarks.example/2026-small-agency-report',
     });
-    const md = caseToMarkdown(caseFixture(), [input], []);
+    const md = toMd(caseFixture(), [input], []);
     expect(md).toMatch(/\| price\.unitsPerBuyer \| 40 \| \[agency-benchmarks\.example\]\([^)]*\): "[^"]*" ⚠️ \|/);
     expect(md).toContain('⚠️ unreachable: price.unitsPerBuyer: 40');
   });
 
   it('renders AI and owner scores as criterion | value | note tables', () => {
     const owner: ScoreRow = { ...aiScores()[0]!, id: 'o1', criterion: 'gut', value: 2, note: 'meh', by: 'owner', model: null, promptVersion: null };
-    const md = caseToMarkdown(caseFixture(), [], [...aiScores(), owner]);
+    const md = toMd(caseFixture(), [], [...aiScores(), owner]);
     expect(md).toContain('| Criterion | Value | Note |');
     expect(md).toContain('| pain | 4 | pain note |');
     expect(md).toContain('### Owner scores');
@@ -338,7 +345,7 @@ describe('caseToMarkdown', () => {
         s.competitors.list[0]!.gap = 'a | b\nc';
       },
     });
-    const md = caseToMarkdown(kase, [claim('verified', { sourceUrl: 'javascript:alert(2)', quote: '<img src=x onerror=alert(3)>' })], []);
+    const md = toMd(kase, [claim('verified', { sourceUrl: 'javascript:alert(2)', quote: '<img src=x onerror=alert(3)>' })], []);
     expect(md).toContain('# Evil &lt;script&gt;alert(1)&lt;/script&gt; &amp; co');
     expect(md).toContain('Gate flags: &lt;b&gt;x&lt;/b&gt;');
     expect(md).not.toMatch(/<script|<img|<b>/);
@@ -352,7 +359,7 @@ describe('caseToMarkdown', () => {
   it('decodes HTML entities in legacy stored quotes before escaping them', () => {
     const quote = 'We don&#8217;t know &amp; can&rsquo;t see it &lt;b&gt;';
     const kase = caseFixture({ mutate: (s) => { s.evidence.signals = [{ quote, url: 'https://news.example/item/9', sourceName: 'HN' }]; } });
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       claim('verified', { section: 'signal', text: quote, sourceUrl: 'https://news.example/item/9', quote }),
       claim('verified', { text: 'Owners claim', quote: 'It&#x2019;s broken' }),
     ], []);
@@ -365,7 +372,7 @@ describe('caseToMarkdown', () => {
   it('keeps control and invisible characters (encoded or raw) out of rendered quotes', () => {
     const quote = 'evil &#x202E;txt.exe &#27;[31m zero&#x200B;width raw‮bidi​zw\u0007bell';
     const kase = caseFixture({ mutate: (s) => { s.evidence.signals = [{ quote, url: 'https://news.example/item/9', sourceName: 'HN' }]; } });
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       claim('unreachable', { section: 'signal', text: quote, sourceUrl: 'https://news.example/item/9', quote }),
       claim('verified', { text: 'c', quote }),
     ], []);
@@ -377,7 +384,7 @@ describe('caseToMarkdown', () => {
     const pricing = 'Not published (first 150 testers)';
     const kase = caseFixture({ mutate: (s) => { s.competitors.list[0]!.pricing = pricing; } });
     const url = kase.sections.competitors.list[0]!.url;
-    const md = caseToMarkdown(kase, [
+    const md = toMd(kase, [
       ...settledClaims().filter((c) => !(c.section.startsWith('competitor') && c.sourceUrl === url)),
       claim('verified', { section: 'competitor', text: 'Generic uptime monitor', sourceUrl: url, quote: null }),
       claim('verified', { section: 'competitor-pricing', text: `Generic uptime monitor pricing: ${pricing}`, sourceUrl: url, quote: null }),
@@ -388,13 +395,13 @@ describe('caseToMarkdown', () => {
   });
 
   it('escapes an unknown claim section used as a label', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('unverified', { section: '<b>odd</b>', text: 'x' })], []);
+    const md = toMd(caseFixture(), [claim('unverified', { section: '<b>odd</b>', text: 'x' })], []);
     expect(md).toContain('**&lt;b&gt;odd&lt;/b&gt;:**');
     expect(md).not.toMatch(/<b>/);
   });
 
   it('percent-encodes parentheses in link targets', () => {
-    const md = caseToMarkdown(caseFixture(), [claim('verified', { sourceUrl: 'https://x.example/a_(b) c' })], []);
+    const md = toMd(caseFixture(), [claim('verified', { sourceUrl: 'https://x.example/a_(b) c' })], []);
     expect(md).toContain('[x.example](https://x.example/a_%28b%29%20c)');
   });
 });
