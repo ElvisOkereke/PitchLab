@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Db } from '../db/client';
 import { cases, ideas, lenses, markets, runStages, runs } from '../db/schema';
 import { STAGES, defaultRunConfig, type RunConfig } from '../pipeline/types';
+import { scrubSecrets } from '../tools/scrub';
 
 // ---- Run config ----------------------------------------------------------------------------------
 
@@ -194,6 +195,8 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
     total: totalRow?.n ?? 0,
     rows: rows.map((r) => ({
       ...r,
+      // D2-R1: legacy rows may hold unscrubbed errors.
+      error: r.error === null ? null : scrubSecrets(r.error),
       config: r.config.ideaText !== undefined ? { ...r.config, ideaText: r.config.ideaText.slice(0, IDEA_TEXT_SHOWN) } : r.config,
       caseCount: caseCounts.find((c) => c.runId === r.id)?.n ?? 0,
       stages: stageRows.filter((s) => s.runId === r.id)

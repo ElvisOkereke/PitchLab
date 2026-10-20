@@ -48,6 +48,18 @@ describe('executeRun', () => {
     expect(stages.find((r) => r.stage === 'gate')!.output).toEqual({ ...FULL, n: 4 });
   });
 
+  it('stores a failed stage error with credentials scrubbed, the message otherwise kept (D2-R1)', async () => {
+    const db = await testDb();
+    const { id } = await createRun(db, defaultRunConfig({ seedType: 'open' }));
+    const stageImpls = Object.fromEntries(STAGES.map((s) => [s, async () => {
+      if (s === 'ideate') throw new Error('401 from https://user:pw@api.test/v1?key=abc with Bearer sk-ant-api03-SECRETsecret123 at ideate');
+      return FULL;
+    }]));
+    expect(await executeRun(deps(db), id, stageImpls)).toBe('failed');
+    const [row] = await db.select().from(runs).where(eq(runs.id, id));
+    expect(row!.error).toBe('401 from https://api.test/v1 with Bearer [redacted] at ideate');
+  });
+
   it('resumes from the failed stage without re-running done stages', async () => {
     const db = await testDb();
     const { id } = await createRun(db, defaultRunConfig({ seedType: 'open' }));

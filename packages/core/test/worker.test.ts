@@ -130,6 +130,16 @@ describe('runWorker', () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
+  it('scrubs credentials from a setup error it stores (D2-R1)', async () => {
+    const db = await testDb();
+    const id = await insertAt(db, cfg, new Date());
+    await runWorker({
+      db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {},
+      execute: async () => { throw new Error('auth failed for api_key=ghp_abcdefghij0123456789ABCD'); },
+    });
+    expect((await statusOf(db, id)).error).toBe('auth failed for api_key=[redacted]');
+  });
+
   it('keeps the heartbeat going while a long run executes', async () => {
     const db = await testDb();
     await insertRun(db, cfg);

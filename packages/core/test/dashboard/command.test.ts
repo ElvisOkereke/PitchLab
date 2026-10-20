@@ -90,4 +90,19 @@ describe('command center data', () => {
     const times = items.map((i) => i.at.getTime());
     expect([...times].sort((a, b) => b - a)).toEqual(times);
   });
+
+  it('scrubs credentials from legacy stored run errors in labels and run rows (D2-R1)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const leaked = 'boom: Authorization: Bearer xoxb-1234-5678-abcdef token=hunter2 https://u:p@db.test/x?sig=a1b2c3d4e5f6g7h8i9j0k1l2';
+    await db.update(runs).set({ status: 'failed', error: leaked, finishedAt: new Date('2026-10-19T00:00:00Z') }).where(eq(runs.id, run.id));
+    const items = await needsYou(db, new Date('2026-10-19T12:00:00Z'));
+    const label = items.find((i) => i.kind === 'failed_run')!.label;
+    const { listRuns } = await import('../../src/dashboard/runs');
+    const row = (await listRuns(db, { page: 1, pageSize: 5 })).rows.find((r) => r.id === run.id)!;
+    for (const text of [label, row.error!]) {
+      expect(text).toContain('boom');
+      expect(text).not.toMatch(/xoxb|hunter2|u:p@|sig=|a1b2c3/);
+    }
+  });
 });

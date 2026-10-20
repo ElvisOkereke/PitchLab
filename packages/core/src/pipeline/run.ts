@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { runs, runStages } from '../db/schema';
+import { scrubSecrets } from '../tools/scrub';
 import { dedupe } from './dedupe';
 import { deepCase } from './deep-case';
 import { gate } from './gate';
@@ -112,7 +113,8 @@ export async function executeRun(
       try {
         output = await impls[stage]({ ...deps, log }, run, previous);
       } catch (err) {
-        const error = messageOf(err);
+        // D2-R1: the stored error (shown in the CLI and the dashboard) never carries credentials.
+        const error = scrubSecrets(messageOf(err));
         const now = new Date();
         await saveStage(stage, { status: 'failed', finishedAt: now });
         await db.update(runs).set({ status: 'failed', error, finishedAt: now }).where(eq(runs.id, runId));
