@@ -88,8 +88,9 @@ describe('ValidateTab', () => {
     const form = within(item).getByTestId('mark-outreach');
     expect(form.querySelector('input[name="prospectId"]')?.getAttribute('value')).toBe(p.id);
     expect(form.querySelector('input[name="slug"]')?.getAttribute('value')).toBe('lead-flow-verification');
-    expect([...form.querySelectorAll('select[name="type"] option')].map((o) => o.getAttribute('value')))
-      .toEqual(['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe']);
+    const options = [...form.querySelectorAll('select[name="type"] option')];
+    expect(options.map((o) => o.getAttribute('value'))).toEqual(['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe', 'note']);
+    expect(options.at(-1)!.textContent).toBe('Interview note');
     expect(form.querySelector('input[name="note"]')?.getAttribute('maxlength')).toBe('500');
 
     const ev = getByTestId('events');

@@ -10,13 +10,17 @@ import { formToObject, pickValues, type FormState } from '@/lib/form';
 
 const MarkOutreachInputSchema = z.object({
   prospectId: z.uuid(),
-  type: z.enum(['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe']),
+  type: z.enum(['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe', 'note']),
   note: z.string().trim().max(500).optional(),
 });
 
+/** The checklist's interviews_done counts `note` events whose note starts with this (case-insensitive). */
+const INTERVIEW_PREFIX = /^\s*interview:/i;
+
 /**
  * Records what the owner did or heard for one prospect, through core's markOutreach (the function `gen outreach mark`
- * uses), so "status never regresses" and "unsubscribe suppresses the address" hold in one place.
+ * uses), so "status never regresses" and "unsubscribe suppresses the address" hold in one place. Type `note` is an
+ * interview note: its text is required and gets the `interview:` prefix the checklist counts (unless already there).
  */
 export async function markOutreachAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
@@ -30,7 +34,12 @@ export async function markOutreachAction(_prev: FormState, fd: FormData): Promis
     if (field === 'type') return { error: 'Pick what happened.', values };
     return { error: 'Invalid request. Refresh and try again.', values };
   }
-  const { prospectId, type, note } = parsed.data;
+  const { prospectId, type } = parsed.data;
+  let { note } = parsed.data;
+  if (type === 'note') {
+    if (!note) return { error: 'Write what you learned in the interview.', values };
+    if (!INTERVIEW_PREFIX.test(note)) note = `interview: ${note}`;
+  }
   try {
     await markOutreach(getDb(), prospectId, type, note);
   } catch (e) {

@@ -12,6 +12,8 @@ const TYPES = [
   ['meeting', 'Meeting booked'],
   ['not_interested', 'Not interested'],
   ['unsubscribe', 'Unsubscribe'],
+  // Logged as a `note` event starting "interview:" (added on the server), which the checklist counts as an interview.
+  ['note', 'Interview note'],
 ] as const;
 
 /**
@@ -21,6 +23,7 @@ const TYPES = [
 export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slug: string }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(markOutreachAction, {});
   const f = useFormFields({ type: 'sent', note: '' }, state, { clearOnSuccess: ['note'] });
+  const interview = f.text('type') === 'note';
   return (
     <form key={f.formKey} action={formAction} className="mark-outreach" data-testid="mark-outreach">
       <input type="hidden" name="prospectId" value={prospectId} />
@@ -33,8 +36,16 @@ export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slu
           </option>
         ))}
       </select>
-      <label htmlFor={`mnote-${prospectId}`}>Note (optional)</label>
-      <input id={`mnote-${prospectId}`} type="text" name="note" maxLength={500} defaultValue={f.text('note')} onChange={(e) => f.set('note', e.target.value)} />
+      <label htmlFor={`mnote-${prospectId}`}>{interview ? 'What you learned (required)' : 'Note (optional)'}</label>
+      <input
+        id={`mnote-${prospectId}`}
+        type="text"
+        name="note"
+        maxLength={500}
+        required={interview}
+        defaultValue={f.text('note')}
+        onChange={(e) => f.set('note', e.target.value)}
+      />
       <button type="submit" disabled={pending}>
         {pending ? 'Saving…' : 'Record'}
       </button>

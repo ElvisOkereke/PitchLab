@@ -1,6 +1,8 @@
 import type { Db } from '@bcg/core/db/client';
-import { outreachEvents, prospects, suppressions } from '@bcg/core/db/schema';
+import { outreachEvents, prospects, suppressions, validationPacks } from '@bcg/core/db/schema';
+import { computeChecklistStatus } from '@bcg/core/validation/checklist';
 import { markOutreach } from '@bcg/core/validation/tracking';
+import { packFixture } from '../helpers/validate-fixture';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDb, seedProspect, snapshotDb } from '../helpers/db';
@@ -63,7 +65,7 @@ describe('markOutreachAction', () => {
     expect(p!.status).toBe('meeting');
   });
 
-  it('rejects a bad id, an unknown type (including note) and a long note, writing nothing', async () => {
+  it('rejects a bad id, an unknown type, a note type without text and a long note, writing nothing', async () => {
     const { prospect } = await seedProspect(state.db);
     const before = await snapshotDb(state.db);
     for (const fields of <Record<string, string>[]>[
@@ -77,6 +79,34 @@ describe('markOutreachAction', () => {
       expect(r.ok).toBeUndefined();
       expect(r.error).toMatch(/\w/);
     }
+    expect(await snapshotDb(state.db)).toEqual(before);
+  });
+
+  it('an interview note is logged as a `note` event prefixed "interview:", which the checklist counts', async () => {
+    const { kase, prospect } = await seedProspect(state.db, { status: 'replied' });
+    const pack = packFixture();
+    pack.checklist.gates = [{ id: 'interviews', description: '1 interview', metricKey: 'interviews_done', threshold: 1 }];
+    await state.db.insert(validationPacks).values({ caseId: kase.id, sections: pack, model: 'm', promptVersion: 'p' });
+    expect((await computeChecklistStatus(state.db, kase.id))[0]).toMatchObject({ value: 0, state: 'pending' });
+
+    expect(await markOutreachAction({}, form({ prospectId: prospect.id, slug: kase.slug, type: 'note', note: ' Talked to the owner for 30 min ' })))
+      .toEqual({ ok: true });
+    // Already prefixed (any case): not prefixed twice.
+    expect(await markOutreachAction({}, form({ prospectId: prospect.id, type: 'note', note: 'Interview: second call' }))).toEqual({ ok: true });
+
+    const s = await trackingState(state.db, prospect.id);
+    expect(s.events).toEqual([['note', 'interview: Talked to the owner for 30 min'], ['note', 'Interview: second call']]);
+    expect(s.status).toBe('replied');
+    expect((await computeChecklistStatus(state.db, kase.id))[0]).toMatchObject({ value: 2, state: 'pass' });
+  });
+
+  it('an interview note needs text (capped at 500 characters) and writes nothing otherwise', async () => {
+    const { prospect } = await seedProspect(state.db);
+    const before = await snapshotDb(state.db);
+    expect(await markOutreachAction({}, form({ prospectId: prospect.id, type: 'note', note: '   ' })))
+      .toEqual({ error: 'Write what you learned in the interview.', values: { type: 'note', note: '' } });
+    expect(await markOutreachAction({}, form({ prospectId: prospect.id, type: 'note', note: 'x'.repeat(501) })))
+      .toEqual({ error: 'The note is at most 500 characters.', values: { type: 'note', note: 'x'.repeat(501) } });
     expect(await snapshotDb(state.db)).toEqual(before);
   });
 

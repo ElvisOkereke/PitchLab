@@ -46,7 +46,8 @@ const SPECS: Record<string, Spec> = {
   'outreach.ts#markOutreachAction': {
     seed: async (db) => {
       const { kase, prospect } = await seedProspect(db);
-      return { prospectId: prospect.id, slug: kase.slug, type: 'sent', note: '' };
+      // The interview-note path (type `note`), added in D2-R6; `sent` and the others are covered in outreach.test.ts.
+      return { prospectId: prospect.id, slug: kase.slug, type: 'note', note: 'interview: owner says forms break monthly' };
     },
   },
   'runs.ts#queueRunAction': {
