@@ -94,6 +94,8 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
   };
   while (!o.signal.aborted) {
     await beat();
+    // D2-R3: a stop requested while the heartbeat was in flight must not start a run.
+    if (o.signal.aborted) return;
     const id = await claimNextRun(o.db);
     if (id === null) {
       if (o.once) {

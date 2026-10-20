@@ -166,6 +166,19 @@ describe('runWorker', () => {
     expect(log.mock.calls.flat().join('\n')).toMatch(/heartbeat failed/);
   });
 
+  it('never starts a run when the signal aborts during the heartbeat (D2-R3)', async () => {
+    const db = await testDb();
+    const { id } = await insertRun(db, cfg);
+    const ctrl = new AbortController();
+    const execute = vi.fn(async () => 'succeeded' as const);
+    await runWorker({
+      db, intervalMs: 60_000, signal: ctrl.signal, log: quietLog, execute,
+      heartbeat: async () => { ctrl.abort(); }, // SIGINT ("Stopping.") arrives while the heartbeat is in flight
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect((await statusOf(db, id)).status).toBe('queued');
+  });
+
   it('returns at once when the signal is already aborted', async () => {
     const db = await testDb();
     await insertRun(db, cfg);
