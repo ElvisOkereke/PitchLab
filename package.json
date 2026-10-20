@@ -7,6 +7,7 @@
     "test": "npm test -w packages/core",
     "gen": "npm run gen -w packages/core --",
     "worker": "npm run gen -w packages/core -- worker",
-    "db:migrate": "npm run db:migrate -w packages/core"
+    "db:migrate": "npm run db:migrate -w packages/core",
+    "db:copy": "npm run db:copy -w packages/core --"
   }
 }

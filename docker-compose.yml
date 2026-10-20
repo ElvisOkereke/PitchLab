@@ -1,0 +1,24 @@
+# Local Postgres shared by the dashboard (apps/web) and `npm run worker`.
+# LOCAL DEVELOPMENT ONLY: the password below is a local-only dev value, and the port is bound to 127.0.0.1
+# (5433 avoids clashing with any Postgres already on 5432).
+# URL: postgres://bcg:bcg_local_dev@127.0.0.1:5433/bcg
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bcg
+      POSTGRES_PASSWORD: bcg_local_dev
+      POSTGRES_DB: bcg
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - bcg_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bcg"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  bcg_pg:
