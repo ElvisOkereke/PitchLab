@@ -86,8 +86,12 @@ describe('queueRunAction echoes the input on a refusal', () => {
     const r = await queueRunAction({}, form({ seedType: 'idea', ideaText, sectors: ['HVAC'], ideaCount: '7', advanceCount: '2', junk: 'x' }));
     expect(r).toEqual({
       error: '3 runs are already queued. Wait for the worker.',
-      values: { seedType: 'idea', ideaText: ideaText.trim(), sectors: ['HVAC'], lensIds: [], ideaCount: '7', advanceCount: '2' },
+      // lensIds was not submitted (its fieldset was hidden/disabled, or nothing ticked): not echoed, so the form keeps its ticks.
+      values: { seedType: 'idea', ideaText: ideaText.trim(), sectors: ['HVAC'], ideaCount: '7', advanceCount: '2' },
     });
+    const noLists = await queueRunAction({}, form({ seedType: 'idea', ideaText: 'short' }));
+    expect(noLists.values).not.toHaveProperty('sectors');
+    expect(noLists.values).not.toHaveProperty('lensIds');
     const invalid = await queueRunAction({}, form({ seedType: 'idea', ideaText: 'short', ideaCount: '99' }));
     expect(invalid.values).toMatchObject({ seedType: 'idea', ideaText: 'short', ideaCount: '99' });
   });

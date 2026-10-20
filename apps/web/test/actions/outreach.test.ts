@@ -100,6 +100,18 @@ describe('markOutreachAction', () => {
     expect((await computeChecklistStatus(state.db, kase.id))[0]).toMatchObject({ value: 2, state: 'pass' });
   });
 
+  it('the same interview note submitted twice (double submit / POST resubmit) is logged once, with a neutral notice', async () => {
+    const { kase, prospect } = await seedProspect(state.db);
+    const fields = { prospectId: prospect.id, slug: kase.slug, type: 'note', note: 'owner says forms break monthly' };
+    expect(await markOutreachAction({}, form(fields))).toEqual({ ok: true });
+    expect(await markOutreachAction({}, form(fields))).toEqual({ ok: true, notice: 'Already logged.' });
+    // Already prefixed by hand, differently cased: still the same note.
+    expect(await markOutreachAction({}, form({ ...fields, note: 'Interview: Owner says forms break monthly' }))).toEqual({ ok: true, notice: 'Already logged.' });
+    expect((await trackingState(state.db, prospect.id)).events).toEqual([['note', 'interview: owner says forms break monthly']]);
+    expect(await markOutreachAction({}, form({ ...fields, note: 'a different interview' }))).toEqual({ ok: true });
+    expect((await trackingState(state.db, prospect.id)).events).toHaveLength(2);
+  });
+
   it('an interview note needs text (capped at 500 characters) and writes nothing otherwise', async () => {
     const { prospect } = await seedProspect(state.db);
     const before = await snapshotDb(state.db);

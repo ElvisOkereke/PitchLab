@@ -41,7 +41,9 @@ export async function markOutreachAction(_prev: FormState, fd: FormData): Promis
     if (!INTERVIEW_PREFIX.test(note)) note = `interview: ${note}`;
   }
   try {
-    await markOutreach(getDb(), prospectId, type, note);
+    // core skips a note identical to one logged for this prospect in the last 10 minutes (a resubmitted form).
+    const r = await markOutreach(getDb(), prospectId, type, note);
+    if (r.duplicate) return { ok: true, notice: 'Already logged.' };
   } catch (e) {
     // The only expected refusal for an id: the prospect is gone. Anything else is a real error.
     if (e instanceof Error && e.message.startsWith('No prospect matches')) return { error: 'This prospect no longer exists. Refresh.', values };

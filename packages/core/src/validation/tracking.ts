@@ -1,4 +1,4 @@
-import { count, countDistinct, eq, sql } from 'drizzle-orm';
+import { and, count, countDistinct, eq, gte, isNull, sql } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import {
   OUTREACH_EVENT_TYPES, PROSPECT_STATUSES, outreachEvents, prospects, suppressions,
@@ -27,14 +27,29 @@ export function nextStatus(current: ProspectStatus, type: OutreachEventType): Pr
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NOTE_MAX = 2000;
 
-export type MarkResult = { prospects: { id: string; status: ProspectStatus }[]; suppressed: string | null };
+/** `duplicate: true` when a `note` was not recorded because the same note was logged moments ago (see markOutreach). */
+export type MarkResult = { prospects: { id: string; status: ProspectStatus }[]; suppressed: string | null; duplicate?: true };
+
+/** A `note` identical to one logged for the same prospect within this window is a double submit, not a new note. */
+export const NOTE_DEDUPE_MS = 10 * 60_000;
 
 /**
  * Record an outreach event for a prospect, given by id or by email (case-insensitive), and move its status forward
  * (see nextStatus). `unsubscribe` also adds the lowercased address to `suppressions` (even when no prospect has it) and
  * applies to every prospect with that address; other events need exactly one matching prospect.
+ *
+ * A `note` whose text equals (trimmed, case-insensitive) a note logged for the same prospect in the last 10 minutes is
+ * not inserted again and the result says `duplicate: true`: the checklist counts interview notes as events, so a
+ * resubmitted form (or a repeated CLI call) must not count one interview twice. `o.now` is the clock (tests).
  */
-export async function markOutreach(db: Db, prospectRef: string, type: OutreachEventType, note?: string): Promise<MarkResult> {
+export async function markOutreach(
+  db: Db,
+  prospectRef: string,
+  type: OutreachEventType,
+  note?: string,
+  o: { now?: Date } = {},
+): Promise<MarkResult> {
+  const now = o.now ?? new Date();
   const ref = prospectRef.trim();
   const byId = UUID.test(ref);
   if (!byId && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ref)) throw new Error(`Not a prospect id or email address: ${capField(ref, 200)}`);
@@ -53,10 +68,22 @@ export async function markOutreach(db: Db, prospectRef: string, type: OutreachEv
   const cleanNote = note === undefined ? null : capField(note, NOTE_MAX) || null;
 
   return db.transaction(async (tx) => {
+    if (type === 'note' && matches.length === 1) {
+      const p = matches[0]!;
+      // Lock the prospect row so two simultaneous submits cannot both pass the duplicate check.
+      await tx.select({ id: prospects.id }).from(prospects).where(eq(prospects.id, p.id)).for('update');
+      const [dup] = await tx.select({ id: outreachEvents.id }).from(outreachEvents).where(and(
+        eq(outreachEvents.prospectId, p.id),
+        eq(outreachEvents.type, 'note'),
+        gte(outreachEvents.at, new Date(now.getTime() - NOTE_DEDUPE_MS)),
+        cleanNote === null ? isNull(outreachEvents.note) : eq(sql`lower(btrim(${outreachEvents.note}))`, cleanNote.toLowerCase()),
+      )).limit(1);
+      if (dup) return { prospects: [{ id: p.id, status: p.status }], suppressed: null, duplicate: true as const };
+    }
     const out: MarkResult['prospects'] = [];
     for (const p of matches) {
       const status = nextStatus(p.status, type);
-      await tx.insert(outreachEvents).values({ prospectId: p.id, type, note: cleanNote });
+      await tx.insert(outreachEvents).values({ prospectId: p.id, type, note: cleanNote, at: now });
       if (status !== p.status) await tx.update(prospects).set({ status }).where(eq(prospects.id, p.id));
       out.push({ id: p.id, status });
     }

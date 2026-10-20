@@ -19,6 +19,8 @@ describe('pickValues', () => {
     const raw = { a: 'x', many: ['1', '2'], n: 5, junk: 'never echoed', long: 'y'.repeat(30_000) };
     expect(pickValues(raw, ['a', 'many', 'n', 'missing', 'long'], ['many'])).toEqual({ a: 'x', many: ['1', '2'], long: 'y'.repeat(20_000) });
     expect(pickValues({ many: 'one' }, ['many'], ['many'])).toEqual({ many: ['one'] });
+    // Unticked (or disabled, hence unsubmitted) checkbox groups are indistinguishable over HTTP: never echoed as [].
+    expect(pickValues({ many: [] }, ['many', 'missing'], ['many', 'missing'])).toEqual({});
   });
 });
 

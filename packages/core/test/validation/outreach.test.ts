@@ -647,6 +647,47 @@ describe('tracking', () => {
     expect(r.prospects.every((x) => x.status === 'unsubscribed')).toBe(true);
   });
 
+  it('an identical note for the same prospect within 10 minutes is not recorded twice (D2-R7)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const p = await aProspect(db, kase.id);
+    const t0 = new Date('2026-10-20T15:00:00Z');
+    const notes = async () => (await db.select().from(outreachEvents).where(eq(outreachEvents.prospectId, p.id)))
+      .filter((e) => e.type === 'note').map((e) => e.note);
+
+    const first = await markOutreach(db, p.id, 'note', 'interview: forms break monthly', { now: t0 });
+    expect(first.duplicate).toBeUndefined();
+    expect(first.prospects).toEqual([{ id: p.id, status: p.status }]);
+
+    // Same text (case and surrounding spaces ignored) 9 minutes later: a double submit, not a second interview.
+    const again = await markOutreach(db, p.id, 'note', '  INTERVIEW: forms break monthly ', { now: new Date(t0.getTime() + 9 * 60_000) });
+    expect(again).toEqual({ prospects: [{ id: p.id, status: p.status }], suppressed: null, duplicate: true });
+    expect(await notes()).toEqual(['interview: forms break monthly']);
+
+    // Different text: recorded. Same text after 10 minutes: recorded.
+    expect((await markOutreach(db, p.id, 'note', 'interview: second contact', { now: new Date(t0.getTime() + 9 * 60_000) })).duplicate).toBeUndefined();
+    expect((await markOutreach(db, p.id, 'note', 'interview: forms break monthly', { now: new Date(t0.getTime() + 11 * 60_000) })).duplicate).toBeUndefined();
+    expect(await notes()).toHaveLength(3);
+
+    // Only notes are de-duplicated: a repeated `sent` still counts as an event (existing behaviour).
+    await markOutreach(db, p.id, 'sent', undefined, { now: t0 });
+    expect((await markOutreach(db, p.id, 'sent', undefined, { now: t0 })).duplicate).toBeUndefined();
+
+    // Another prospect with the same note text is not a duplicate.
+    const q = await aProspect(db, kase.id);
+    expect((await markOutreach(db, q.id, 'note', 'interview: forms break monthly', { now: t0 })).duplicate).toBeUndefined();
+  });
+
+  it('the CLI path (validation/outreach re-export, as gen outreach mark uses it) de-duplicates the same way', async () => {
+    const { markOutreach: cliMark } = await import('../../src/validation/outreach');
+    const db = await testDb();
+    const p = await aProspect(db, (await aCase(db)).id);
+    await cliMark(db, p.id, 'note', 'interview: one');
+    expect((await cliMark(db, p.id, 'note', 'interview: one')).duplicate).toBe(true);
+    const events = await db.select().from(outreachEvents).where(eq(outreachEvents.prospectId, p.id));
+    expect(events).toHaveLength(1);
+  });
+
   it('outreachCounts reports events and distinct prospects by type, and prospects by status', async () => {
     const db = await testDb();
     const kase = await aCase(db);

@@ -114,6 +114,31 @@ describe('QueueRunForm', () => {
   });
 });
 
+describe('QueueRunForm ticks across seeds (D2-R7 N1)', () => {
+  it('ticks in a hidden (disabled, so unsubmitted) fieldset survive a refusal, even if the echo carries empty lists', async () => {
+    const user = userEvent.setup();
+    render(<QueueRunForm sectors={['HVAC', 'plumbing']} lenses={[{ id: 'aggregator', name: 'Sell to the aggregator' }]} />);
+    await user.click(screen.getByLabelText('Sectors'));
+    await user.click(screen.getByLabelText('HVAC'));
+    await user.click(screen.getByLabelText('Lenses'));
+    await user.click(screen.getByLabelText('Sell to the aggregator'));
+    await user.click(screen.getByLabelText('Your idea'));
+    await user.click(el('textarea[name="ideaText"]'));
+    await user.paste('too short');
+    // As an older server would echo it: the unsubmitted checkbox groups as empty lists.
+    act.result = { error: 'Describe the idea in at least 50 characters.', values: { seedType: 'idea', ideaText: 'too short', sectors: [], lensIds: [] } };
+    await user.click(screen.getByRole('button', { name: 'Queue run' }));
+    await screen.findByRole('alert');
+    expect(lastCall().getAll('sectors')).toEqual([]);
+
+    await user.click(screen.getByLabelText('Sectors'));
+    expect(el<HTMLInputElement>('input[name="sectors"][value="HVAC"]').checked).toBe(true);
+    await user.click(screen.getByLabelText('Lenses'));
+    expect(el<HTMLInputElement>('input[name="lensIds"][value="aggregator"]').checked).toBe(true);
+    expect(el<HTMLTextAreaElement>('textarea[name="ideaText"]').value).toBe('too short');
+  });
+});
+
 describe('SettingsForm', () => {
   it('a refused save keeps every typed value', async () => {
     const user = userEvent.setup();
@@ -154,6 +179,12 @@ describe('MarkOutreachForm and StageMoveForm', () => {
     await user.click(screen.getByRole('button', { name: 'Record' }));
     await screen.findByText('Recorded.');
     expect(el<HTMLInputElement>('input[name="note"]').value).toBe('');
+
+    // A note logged moments ago is not recorded twice; the form says so neutrally.
+    act.result = { ok: true, notice: 'Already logged.' };
+    await user.click(screen.getByRole('button', { name: 'Record' }));
+    expect((await screen.findByRole('status')).textContent).toBe('Already logged.');
+    expect(screen.queryByText('Recorded.')).toBeNull();
   });
 
   it('the stage-move note and target survive a refusal', async () => {

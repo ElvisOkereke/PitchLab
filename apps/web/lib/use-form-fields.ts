@@ -19,7 +19,9 @@ export function useFormFields(initial: FormValues, state: FormState, o: { clearO
     setSeen(state);
     setFormKey((k) => k + 1);
     setValues((v) => {
-      const next = { ...v, ...state.values };
+      const next = { ...v };
+      // An echoed empty list means "nothing submitted" (e.g. a hidden, disabled fieldset): keep the local ticks.
+      for (const [k, x] of Object.entries(state.values ?? {})) if (!(Array.isArray(x) && x.length === 0)) next[k] = x;
       if (state.ok) for (const k of o.clearOnSuccess ?? []) next[k] = '';
       return next;
     });

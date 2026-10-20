@@ -333,6 +333,10 @@ async function outreachMarkCommand(ref: string, type: MarkType, opts: { note?: s
     } catch (err) {
       throw new CliError(err instanceof Error ? err.message : String(err), 1);
     }
+    if (r.duplicate) {
+      out('Already logged: the same note was recorded for this prospect in the last 10 minutes, so it was not recorded again.');
+      return 0;
+    }
     for (const p of r.prospects) out(`Recorded ${type} for prospect ${p.id}; status: ${p.status}`);
     if (r.suppressed) out(`Suppressed ${r.suppressed}: it will never be drafted or exported again.`);
     return 0;

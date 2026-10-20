@@ -55,8 +55,8 @@ export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slu
         </p>
       ) : null}
       {state.ok ? (
-        <p className="ok" role="status">
-          Recorded.
+        <p className={state.notice ? 'muted' : 'ok'} role="status">
+          {state.notice ?? 'Recorded.'}
         </p>
       ) : null}
     </form>
