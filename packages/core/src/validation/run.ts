@@ -8,6 +8,7 @@ import { generateLanding } from './landing';
 import { generateDrafts } from './outreach';
 import { generatePackDocs } from './pack-docs';
 import { pilotSiteDomain, placesSource, prospectDomain, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
+import { priceUnitDropped } from './verified-claims';
 
 export type ValidationDeps = Pick<StageDeps, 'db' | 'router' | 'fetchPage' | 'log'> & {
   /** Root of the validation export; files go to `<outDir>/<slug>/`. */
@@ -64,6 +65,11 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`runValidation: unknown case ${caseId}`);
+  // Once per run (drafts and landing both use the price): the owner should fix the unit in the case.
+  if (priceUnitDropped(kase.sections)) {
+    log('validate: the case price unit was dropped (it must be a short plain phrase such as "month" or "load processed"); ' +
+      'drafts and the landing page show the amount only. Edit the case price unit to show it.');
+  }
   if (opts.redraft) {
     log('validate: WARNING: --redraft replaces the outreach drafts of prospects not yet contacted (new or drafted); drafts you edited in the database are replaced (status, events and suppressions are kept)');
   }

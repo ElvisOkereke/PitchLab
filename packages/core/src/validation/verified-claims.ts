@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
+import { money } from '../case/export-markdown';
 import { claims } from '../db/schema';
 import { capField, stripInvisible } from '../llm/untrusted';
 
@@ -44,15 +45,25 @@ export function allowedOfferTerms(sections: unknown): string[] {
  * into a live draft and landing page (2026-10-19). The unit is kept only when it passes `PRICE_UNIT` (P3-R23).
  */
 export function offerPrice(sections: unknown): string {
+  const price = casePrice(sections);
+  if (!price) return '';
+  return PRICE_UNIT.test(price.per) ? `${money(price.amount)} per ${price.per}` : money(price.amount);
+}
+
+/**
+ * True when the case has a price whose unit was given but dropped by the charset rule (P3-R23), so prompts show the
+ * amount only. The caller logs it once so the owner knows to edit the unit; the unit text itself is not echoed.
+ */
+export function priceUnitDropped(sections: unknown): boolean {
+  const price = casePrice(sections);
+  return !!price && price.per !== '' && !PRICE_UNIT.test(price.per);
+}
+
+/** The case price with a finite numeric amount and its unit trimmed ('' when absent); null without one. */
+function casePrice(sections: unknown): { amount: number; per: string } | null {
   const price = (sections as { summary?: { price?: { amount?: unknown; per?: unknown } } } | null)?.summary?.price;
-  if (!price || typeof price.amount !== 'number' || !Number.isFinite(price.amount)) return '';
-  const whole = Number.isInteger(Math.round(price.amount * 100) / 100);
-  const amount = (price.amount < 0 ? '-$' : '$') + Math.abs(price.amount).toLocaleString('en-US', {
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: 2,
-  });
-  const per = typeof price.per === 'string' ? price.per.trim() : '';
-  return PRICE_UNIT.test(per) ? `${amount} per ${per}` : amount;
+  if (!price || typeof price.amount !== 'number' || !Number.isFinite(price.amount)) return null;
+  return { amount: price.amount, per: typeof price.per === 'string' ? price.per.trim() : '' };
 }
 
 /**

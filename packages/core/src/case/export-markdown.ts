@@ -62,7 +62,8 @@ export function link(url: string): string {
 /** A link inside a table cell (a non-http url falls back to text, which may contain pipes). */
 export const cellLink = (url: string) => link(url).replace(/\|/g, '\\|');
 
-const money = (x: number) => {
+/** A dollar amount as the case export shows it ("$1", "$1.50", "-$1,200"); also used for the case price in prompts. */
+export const money = (x: number) => {
   const whole = Number.isInteger(Math.round(x * 100) / 100);
   return (x < 0 ? '-$' : '$') + Math.abs(x).toLocaleString('en-US', {
     minimumFractionDigits: whole ? 0 : 2,
