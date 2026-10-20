@@ -244,6 +244,18 @@ describe('discoverEmails', () => {
     expect(logs.join('\n')).toMatch(/redirected off/);
   });
 
+  it('never follows a prospect redirect to the pilot site', async () => {
+    const db = await testDb();
+    const p = await aProspect(db);
+    const s = site(
+      { 'https://www.gamersgetaway.ca/': '<p>info@gamersgetaway.ca</p>' },
+      { 'https://www.acme-freight.com/': 'https://www.gamersgetaway.ca/' },
+    );
+    const out = await discoverEmails(deps(db, s.fetchPage), p);
+    expect(out.email).toBeNull();
+    expect(s.urls().some((u) => u.includes('gamersgetaway'))).toBe(false);
+  });
+
   it('never fetches the pilot site gamersgetaway.ca', async () => {
     const db = await testDb();
     const p = await aProspect(db, { website: 'https://gamersgetaway.ca/', domain: 'gamersgetaway.ca' });

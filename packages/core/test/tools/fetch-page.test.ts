@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { fetchPage as fetchPageReal, makeGuardedLookup } from '../../src/tools/fetch-page';
+import { NEVER_FETCH_HOSTS, fetchPage as fetchPageReal, makeGuardedLookup } from '../../src/tools/fetch-page';
 import { logDataCall } from '../../src/tools/data-calls';
 import { dataCalls } from '../../src/db/schema';
 import { testDb } from '../helpers/db';
@@ -65,6 +65,26 @@ describe('fetchPage', () => {
   it('has no html for text/plain pages or failures', async () => {
     expect((await fetchPage('https://a.test', { fetchImpl: typedFetch('text/plain') })).html).toBeUndefined();
     expect((await fetchPage('https://a.test', { fetchImpl: statusFetch(500) })).html).toBeUndefined();
+  });
+
+  it('never fetches the owner pilot site or its subdomains, even via a redirect', async () => {
+    expect(NEVER_FETCH_HOSTS).toContain('gamersgetaway.ca');
+    const direct = htmlFetch('<p>x</p>');
+    for (const url of ['https://gamersgetaway.ca/', 'http://WWW.GamersGetaway.ca./contact', 'https://shop.gamersgetaway.ca/x']) {
+      expect((await fetchPage(url, { fetchImpl: direct })).reason, url).toBe('blocked_host');
+    }
+    expect(direct).not.toHaveBeenCalled();
+
+    const redirecting = vi.fn(async (u: any) =>
+      String(u) === 'https://a.test/'
+        ? new Response(null, { status: 301, headers: { location: 'https://www.gamersgetaway.ca/' } })
+        : respond('<p>should never be fetched</p>'),
+    );
+    const r = await fetchPage('https://a.test/', { fetchImpl: redirecting });
+    expect(r).toMatchObject({ ok: false, reason: 'blocked_host', finalUrl: 'https://www.gamersgetaway.ca/' });
+    expect(redirecting).toHaveBeenCalledTimes(1);
+    // A look-alike domain is not blocked.
+    expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });
 
   it('passes text/plain through', async () => {

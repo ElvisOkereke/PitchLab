@@ -47,6 +47,15 @@ const isHttp = (u: URL) => u.protocol === 'http:' || u.protocol === 'https:';
 
 export class TooLarge extends Error {}
 
+/** Hosts (and their subdomains) never fetched, on any hop (Global Constraint: the owner's pilot site). */
+export const NEVER_FETCH_HOSTS = ['gamersgetaway.ca'] as const;
+
+/** True for a never-fetch host or one of its subdomains (case and trailing dot ignored). */
+export function isNeverFetchHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return NEVER_FETCH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
 const defaultLookup: (host: string) => Promise<{ address: string; family: number }[]> = (host) => dns.lookup(host, { all: true });
 
 type Resolver = (host: string) => Promise<{ address: string; family: number }[]>;
@@ -126,6 +135,7 @@ async function checkHost(u: URL, lookup: Resolver, signal: AbortSignal): Promise
   let host = u.hostname.toLowerCase().replace(/\.$/, '');
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   if (host === 'localhost' || ['.localhost', '.local', '.internal'].some((s) => host.endsWith(s))) return 'blocked_host';
+  if (isNeverFetchHost(host)) return 'blocked_host';
   if (isIP(host)) return isAllowedIp(host) ? 'ok' : 'blocked_host';
   try {
     const addrs = await raceAbort(lookup(host), signal);

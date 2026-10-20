@@ -5,6 +5,7 @@ import { prospects, suppressions } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { isBannedSource } from '../tools/banned-sources';
+import { isNeverFetchHost } from '../tools/fetch-page';
 import { prospectDomain } from './prospects';
 
 export type FoundEmail = { email: string; foundOn: string };
@@ -163,8 +164,6 @@ export type EmailDiscovery = {
   fetches: number;
 };
 
-/** Global Constraint: never fetch or submit anything to the owner's pilot site. */
-const NEVER_FETCH_DOMAINS = new Set(['gamersgetaway.ca']);
 const FALLBACK_PATHS = ['/contact', '/contact-us', '/about'];
 const MAX_FETCHES = 3;
 const MAX_LINKED = 2;
@@ -198,7 +197,8 @@ function followUpUrls(home: PageDom | null, base: string, domain: string): strin
 export async function discoverEmails({ db, fetchPage, log }: EmailDeps, prospect: Prospect): Promise<EmailDiscovery> {
   if (prospect.email) return { status: 'kept', email: prospect.email, fetches: 0 };
   const domain = prospectDomain(prospect.website);
-  if (!domain || NEVER_FETCH_DOMAINS.has(domain) || NEVER_FETCH_DOMAINS.has(prospect.domain) || isBannedSource(prospect.website)) {
+  // Early block (fetchPage also refuses never-fetch hosts on every hop, including redirects).
+  if (!domain || isNeverFetchHost(domain) || isNeverFetchHost(prospect.domain) || isBannedSource(prospect.website)) {
     log(`emails: not fetching ${capField(prospect.website, 200)} (blocked or invalid site)`);
     return { status: 'blocked', email: null, fetches: 0 };
   }
