@@ -129,3 +129,5 @@ Open after tuning-4:
 - WordPress forum queries should follow the chosen sectors instead of a fixed plugin list. Legal, marketing and IT services produced no ideas in run 5.
 - 5 of 8 ideas cited the same 5 signals: raise signals per sector or require each idea to cite a different subset.
 - Spot-check found wrong incumbent facts (NCS, Paidnice): the gate relies on the competitor research, so treat idea-stage incumbent lists as hints only.
+
+- Pilot-plan permission tripwire (validation/schema.ts) is a best-effort keyword check on advisory text; known edge cases (dash/clause scoping, unusual phrasing) are accepted limitations. The pack-docs fallback adds permission reminders and an audit note.
