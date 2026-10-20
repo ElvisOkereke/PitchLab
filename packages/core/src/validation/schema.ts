@@ -193,3 +193,19 @@ const draftEmail = z.object({
 /** What one `outreach` call returns for one prospect. */
 export const DraftEmailsSchema = z.object({ cold: draftEmail, followup1: draftEmail, followup2: draftEmail });
 export type DraftEmails = z.infer<typeof DraftEmailsSchema>;
+
+// ---- Landing page copy (landing.v1) --------------------------------------------------------------
+
+/** Plain-text copy only: the page template is code, and every string is HTML-escaped when rendered. */
+export const LandingCopySchema = z.object({
+  headline: text.max(200),
+  subhead: text.max(500),
+  whoItsFor: text.max(1500),
+  problem: text.max(2000),
+  howItWorks: z.array(z.object({ title: text.max(120), text: text.max(800) })).length(3),
+  offer: text.max(1500),
+  faq: z.array(z.object({ q: text.max(300), a: text.max(1500) })).min(3).max(5),
+  ctaLabel: text.max(60),
+  metaDescription: text.max(320),
+});
+export type LandingCopy = z.infer<typeof LandingCopySchema>;
