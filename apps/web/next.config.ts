@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { loadEnvConfig } from '@next/env';
 import type { NextConfig } from 'next';
+import { securityHeaders } from './lib/security-headers';
 
 /** The npm workspaces root: the nearest folder above the app whose package.json declares `workspaces`. */
 function findRepoRoot(start: string): string {
@@ -13,21 +14,15 @@ function findRepoRoot(start: string): string {
 }
 
 const repoRoot = findRepoRoot(process.cwd());
-// The repo root .env is the single env file (no apps/web/.env).
-loadEnvConfig(repoRoot, process.env.NODE_ENV !== 'production');
+// The repo root .env is the single env file (no apps/web/.env). Not loaded when the config is imported by a test.
+if (!process.env.VITEST) loadEnvConfig(repoRoot, process.env.NODE_ENV !== 'production');
 
 const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-const securityHeaders = [
-  { key: 'X-Frame-Options', value: 'DENY' },
-  { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'Referrer-Policy', value: 'same-origin' },
-  { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
-];
-
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // No image optimizer: removes the /_next/image endpoint and the sharp attack surface (the app serves no images).
+  images: { unoptimized: true },
   // Core is consumed as TypeScript source through its exports map (`@bcg/core/<path>`).
   transpilePackages: ['@bcg/core'],
   serverExternalPackages: ['pg', '@electric-sql/pglite', '@electric-sql/pglite-pgvector'],
@@ -39,7 +34,8 @@ const nextConfig: NextConfig = {
     serverActions: { allowedOrigins: list(process.env.ALLOWED_ORIGINS) },
   },
   async headers() {
-    return [{ source: '/:path*', headers: securityHeaders }];
+    // Evaluated at build time for `next build` (NODE_ENV=production), so the built app sends HSTS; `next dev` does not.
+    return [{ source: '/:path*', headers: securityHeaders(process.env.NODE_ENV === 'production') }];
   },
 };
 

@@ -20,8 +20,8 @@ describe('proxyDecision', () => {
   });
 
   it('lets static assets through and guards look-alikes', () => {
-    for (const p of ['/_next/static/chunks/a.js', '/_next/image?url=x', '/favicon.ico']) expect(proxyDecision(p, false)).toEqual({ type: 'next' });
-    for (const p of ['/login-x', '/loginx', '/login/../runs', '/_next/data/x', '/favicon.ico.evil']) {
+    for (const p of ['/_next/static/chunks/a.js', '/favicon.ico']) expect(proxyDecision(p, false)).toEqual({ type: 'next' });
+    for (const p of ['/login-x', '/loginx', '/login/../runs', '/_next/data/x', '/favicon.ico.evil', '/_next/image?url=x', '/_next/staticx']) {
       expect(proxyDecision(p, false).type).toBe('redirect');
     }
   });

@@ -2,7 +2,7 @@ export type ProxyDecision = { type: 'next' } | { type: 'redirect'; to: string };
 
 const LOGIN = '/login';
 /** Static assets the proxy matcher already skips; listed here too so the decision is safe on its own. */
-const STATIC_PREFIXES = ['/_next/static/', '/_next/image'];
+const STATIC_PREFIXES = ['/_next/static/'];
 const STATIC_FILES = new Set(['/favicon.ico']);
 
 /**

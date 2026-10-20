@@ -13,6 +13,9 @@ export async function proxy(req: NextRequest) {
   return NextResponse.next();
 }
 
+// Anchored exclusions: only real build assets (`/_next/static/…`) and exactly `/favicon.ico` skip the guard, so
+// look-alikes such as `/favicon.ico.evil` or `/_next/staticx` are guarded. The image optimizer is disabled
+// (`images.unoptimized`), so `/_next/image` is not excluded either. Tested in test/auth/proxy-matcher.test.ts.
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!_next/static/|favicon\\.ico$).*)'],
 };
