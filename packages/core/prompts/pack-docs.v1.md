@@ -22,7 +22,7 @@ Write four documents.
 - firstStep, then steps (3 to 8), measures (at least 2, each with a success threshold) and timelineWeeks.
 - permissionsAndRisks: the permissions the owner needs and the risks of the pilot.
 - Rule: never submit forms or send test leads to a third-party site without the site owner's written permission. No step may test, probe or change any site or system the owner does not own unless that owner has given written permission first.
-- Any step, measure or risk that involves submitting or filling in forms, test leads, probing, scanning, signing up, logging in, or test emails or messages on someone else's site or systems must say, in the same text, that it happens only with that owner's written permission.
+- Any text in the pilot plan that involves acting on someone else's site, systems or contacts (filling in or submitting forms, test leads, probing, scanning, crawling, security testing, registering or signing up, logging in, calling their API, sending emails, messages or requests, harvesting contacts) must say, in the same text, that it happens only after that owner's written permission is obtained. Never write that permission is not needed.
 {{pilotSite}}
 
 ## 3. Interview kit (interviewKit)

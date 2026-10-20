@@ -18,17 +18,62 @@ export const MvpSpecSchema = z.object({
 });
 export type MvpSpec = z.infer<typeof MvpSpecSchema>;
 
-/**
- * Wording that means acting on someone else's site or systems (ruling P3-R1): submitting or filling in forms, sending or
- * running test leads, probing, scanning, signing up, logging in, sending test emails or messages.
- */
-export const THIRD_PARTY_ACTION =
-  /\b(?:submit(?:s|ted|ting)?|fill(?:s|ed|ing)?\s+(?:in|out)|test[\s-]+leads?|prob(?:e|es|ed|ing)|scan(?:s|ned|ning)?|sign(?:s|ed|ing)?[\s-]*up|log(?:s|ged|ging)?[\s-]*(?:in|on)\b|login|test[\s-]+(?:e-?mails?|messages?))/i;
-/** Wording that shows the owner has (or must get) the third party's permission. */
-export const PERMISSION_WORDING = /\b(?:permission|consent(?:s|ed|ing)?|authori[sz](?:e|es|ed|ing|ation|ations)|agreed)\b/i;
+// Pilot-plan tripwire (rulings P3-R1, P3-R2). The plan is advisory text the owner reads; the system never executes it.
+// Best-effort tripwire for advisory text, not a complete guarantee.
+const THIRD_PARTY_ACTIONS = [
+  String.raw`submit(?:s|ted|ting)?`,
+  String.raw`fill(?:s|ed|ing)?(?:\s+(?:in|out))?`,
+  String.raw`test[\s-]+leads?`,
+  String.raw`prob(?:e|es|ed|ing)`,
+  String.raw`scan(?:s|ned|ning)?`,
+  String.raw`crawl(?:s|ed|er|ers|ing)?`,
+  String.raw`spider(?:s|ed|ing)?`,
+  String.raw`enumerat\w*`,
+  String.raw`fuzz\w*`,
+  String.raw`brute[\s-]?forc\w*`,
+  String.raw`pen(?:etration)?[\s-]?test\w*`,
+  String.raw`sign(?:s|ed|ing)?[\s-]*up`,
+  String.raw`log(?:s|ged|ging)?[\s-]*(?:in|on)(?:to)?`,
+  String.raw`logins?`,
+  String.raw`regist(?:er|ers|ered|ering|ration)`,
+  String.raw`creat(?:e|es|ed|ing)\s+(?:an?\s+)?accounts?`,
+  String.raw`authenticat\w*`,
+  String.raw`(?:send(?:s|ing)?|sent)\s+(?:an?\s+)?(?:test\s+)?(?:requests?|e-?mails?|sms|messages?)`,
+  String.raw`test[\s-]+(?:e-?mails?|messages?)`,
+  String.raw`call(?:s|ed|ing)?\b.{0,30}?\bapis?`,
+  String.raw`harvest\w*`,
+];
+/** Wording that means acting on someone else's site, systems or contacts. */
+export const THIRD_PARTY_ACTION = new RegExp(String.raw`\b(?:${THIRD_PARTY_ACTIONS.join('|')})\b`, 'i');
+const PERMISSION_WORD = /\b(?:permission|consent(?:s|ed|ing)?|authori[sz](?:e|es|ed|ing|ation|ations)|agreed)\b/gi;
+/** A negation shortly before the keyword ("no", "without", "don't need" … permission). */
+const NEGATION_BEFORE = /\b(?:no|without|not|never|don['’]?t|doesn['’]?t|unnecessary|needless)\b/i;
+/** A negation right after the keyword ("permission is not required", "consent unnecessary"). */
+const NEGATION_AFTER = /^\W*(?:(?:is|are|was|were)\s+)?(?:not\s+(?:required|needed|necessary)|unnecessary|needless|optional)\b/i;
+const NEGATION_WINDOW = 20;
+
+/** True when the text mentions permission (or consent, authorisation, "agreed") at least once without negating it. */
+export function hasPermissionWording(s: string): boolean {
+  for (const m of s.matchAll(PERMISSION_WORD)) {
+    // The window before the keyword stops at the previous sentence or clause break.
+    const before = s.slice(Math.max(0, m.index - NEGATION_WINDOW), m.index).split(/[.;!?]/).at(-1)!;
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + NEGATION_WINDOW + 5);
+    if (!NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after)) return true;
+  }
+  return false;
+}
 
 /** True when the text describes acting on a third party's site or systems without mentioning permission. */
-export const needsPermissionWording = (s: string) => THIRD_PARTY_ACTION.test(s) && !PERMISSION_WORDING.test(s);
+export const needsPermissionWording = (s: string) => THIRD_PARTY_ACTION.test(s) && !hasPermissionWording(s);
+
+/** Every string in a parsed value, with its path; so fields added later are checked by default. */
+function* stringLeaves(v: unknown, path: (string | number)[] = []): Generator<[(string | number)[], string]> {
+  if (typeof v === 'string') yield [path, v];
+  else if (Array.isArray(v)) for (let i = 0; i < v.length; i++) yield* stringLeaves(v[i], [...path, i]);
+  else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) yield* stringLeaves(x, [...path, k]);
+}
+const pathLabel = (path: (string | number)[]) =>
+  path.map((p, i) => (typeof p === 'number' ? `[${p}]` : i === 0 ? p : `.${p}`)).join('');
 
 export const PilotPlanSchema = z
   .object({
@@ -39,22 +84,16 @@ export const PilotPlanSchema = z
     timelineWeeks: z.number().int().min(1).max(52),
     permissionsAndRisks: list,
   })
-  // A refinement, not a transform (R9): the router re-asks until every such step names the permission it depends on.
+  // A refinement, not a transform (R9): the router re-asks until every such text names the permission it depends on.
   .superRefine((plan, ctx) => {
-    const checked: [string, (string | number)[], string][] = [
-      ['firstStep', ['firstStep'], plan.firstStep],
-      ...plan.steps.map((s, i): [string, (string | number)[], string] => [`steps[${i}]`, ['steps', i], s]),
-      ...plan.measures.map((m, i): [string, (string | number)[], string] => [`measures[${i}].metric`, ['measures', i, 'metric'], m.metric]),
-      ...plan.permissionsAndRisks.map((s, i): [string, (string | number)[], string] => [`permissionsAndRisks[${i}]`, ['permissionsAndRisks', i], s]),
-    ];
-    for (const [label, path, value] of checked) {
+    for (const [path, value] of stringLeaves(plan)) {
       if (needsPermissionWording(value)) {
         ctx.addIssue({
           code: 'custom',
           path,
           message:
-            `step ${label} interacts with a third party without mentioning permission: ` +
-            "say in the same text that it happens only with the owner's written permission (or consent / authorisation / as agreed)",
+            `step ${pathLabel(path)} interacts with a third party without mentioning permission: ` +
+            "mention that the site owner's permission is obtained first",
         });
       }
     }

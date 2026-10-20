@@ -122,6 +122,73 @@ describe('validation schemas', () => {
     }
   });
 
+  describe('third-party tripwire refinements (P3-R2)', () => {
+    const p = packFixture().pilotPlan;
+    const stepFails = (step: string) => PilotPlanSchema.safeParse({ ...p, steps: [...p.steps, step] }).success === false;
+    const WITH = " only with the site owner's written permission";
+
+    it('(a) log in / log on / log into / login, with word boundaries', () => {
+      for (const s of ['Log into the client portal', 'log in to the TMS', 'Logging on to their dashboard', 'Use the login they share', 'Logs in nightly']) {
+        expect(stepFails(s), s).toBe(true);
+        expect(stepFails(s + WITH), s).toBe(false);
+      }
+      for (const s of ['Catalog incoming disputes', 'Blog on industry news', 'Update the logo', 'Scandal-free brokers only', 'Keep a logbook']) {
+        expect(stepFails(s), s).toBe(false);
+      }
+    });
+
+    it('(b) fill with or without in/out', () => {
+      for (const s of ['Fill their quote form', 'Fill in the quote form', 'Fill out the contact form', 'Filling the booking form']) {
+        expect(stepFails(s), s).toBe(true);
+        expect(stepFails(s + WITH), s).toBe(false);
+      }
+      expect(stepFails('Fulfill the first orders by hand')).toBe(false);
+    });
+
+    it('(c) crawl, spider, enumerate, fuzz, brute force, pen test, register, accounts, authenticate, send requests/emails, call an API, harvest', () => {
+      for (const s of [
+        'Crawl their site for forms', 'Spider the client domain', 'Enumerate their subdomains', 'Fuzz the quote endpoint',
+        'Brute-force the admin page', 'Bruteforce weak logins', 'Run a pen test on the portal', 'Penetration test the site', 'Pentest the API',
+        'Register on the carrier portal', 'Create an account on their TMS', 'Authenticate against their API',
+        'Send a request to their webhook', 'Send an email to each dispatcher', 'Send SMS reminders to drivers', 'Send messages to their inbox',
+        'Call their booking API nightly', 'Harvest contacts from the directory',
+      ]) {
+        expect(stepFails(s), s).toBe(true);
+        expect(stepFails(s + WITH), s).toBe(false);
+      }
+    });
+
+    it('(d) negated permission does not count', () => {
+      for (const s of [
+        'Submit test leads; no permission needed', 'Submit test leads without permission', 'Scan the site, permission is not required',
+        'Submit test leads, permission unnecessary', "We don't need consent to crawl their pages", 'Crawl the site, never ask for authorization',
+        'Crawl the site; authorisation not required', 'Crawl the site; we do not need permission',
+      ]) {
+        expect(stepFails(s), s).toBe(true);
+      }
+      expect(stepFails('Crawl their site only with the owner’s written permission')).toBe(false);
+      expect(stepFails('Submit test leads only after written permission; never without permission')).toBe(false);
+    });
+
+    it('(e) every free-text field is checked', () => {
+      const fails = (patch: Record<string, unknown>) => PilotPlanSchema.safeParse({ ...p, ...patch }).success === false;
+      expect(fails({ idealPilotCustomer: 'A broker whose inbox we can scan' })).toBe(true);
+      expect(fails({ idealPilotCustomer: 'A broker whose inbox we can scan with their written permission' })).toBe(false);
+      expect(fails({ measures: [p.measures[0], { metric: 'arrivals', successThreshold: 'all test leads arrive' }] })).toBe(true);
+      expect(fails({ measures: [p.measures[0], { metric: 'arrivals', successThreshold: 'all test leads arrive (sent with written permission)' }] })).toBe(false);
+      expect(fails({ firstStep: 'Crawl the site' })).toBe(true);
+      expect(fails({ permissionsAndRisks: ['We will crawl the site'] })).toBe(true);
+    });
+
+    it('(f) the re-ask message states the requirement without listing accepted keywords', () => {
+      const r = PilotPlanSchema.safeParse({ ...p, steps: [...p.steps, 'Crawl the site'] });
+      const msg = r.error!.issues.map((i) => i.message).join('\n');
+      expect(msg).toMatch(/steps\[3\] interacts with a third party/);
+      expect(msg).toMatch(/mention that the site owner's permission is obtained first/);
+      expect(msg).not.toMatch(/consent|authori[sz]|agreed/i);
+    });
+  });
+
   it('pilot plan needs 3–8 steps and at least 2 measures', () => {
     const p = packFixture().pilotPlan;
     expect(PilotPlanSchema.safeParse({ ...p, steps: p.steps.slice(0, 2) }).success).toBe(false);
