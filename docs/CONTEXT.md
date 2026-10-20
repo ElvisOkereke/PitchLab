@@ -23,9 +23,18 @@
   run-5 Read 5–6 (feed all kill reasons + an autonomy rule into ideate; fix signal supply), then Plan 2 (Dashboard).
   **Plan 3 (validation pack) built on main and run live 2026-10-19 on the freight case**
   (`docs/runs/2026-10-19-validation-freight.md`): migrations 0004/0005 applied cleanly, exit 0, $3.14 over 3 runs; pack,
-  interview kit and landing page are good; prospect yield 46% email, ~50% real broker fit; 3 defects fixed on branch
-  `fix/validation-live` (CA read as California, price without "$", carriers@ ranked as a person), not yet merged.
-  Owner next: set `sender.*` + `landing.privacyContact`, contact 6–7 good-fit brokers (Horizon, Qeep first), edit drafts.
+  interview kit and landing page are good; prospect yield 46% email, ~50% real broker fit. Branch
+  `fix/validation-live` (not yet merged, 604 tests green) fixes the 3 live defects (CA read as California, price
+  without "$", carriers@ ranked as a person) and adds: **outreach.v2** drafts (an "I'm building …" line and one yes/no
+  question, both written from the case; no figures in the cold email or follow-up 1; follow-up 2 may use only the offer
+  term and verified figures; ≤ 90/60 words); **`validate --redraft`** (regenerates drafts only for prospects still
+  `new` or `drafted`; contacted prospects keep their stored drafts as the record of what was sent, and their stored
+  footers are no longer rewritten; P3-R24/R25); **pack-docs.v2** (interview-kit channels for each market country, e.g.
+  Canadian as well as US); Cloudflare-protected emails decoded; pack.md shows "you currently have N usable addresses"
+  next to the emails_sent gate; the price unit must be a short plain phrase (P3-R23), otherwise it is dropped and logged.
+  Owner next: **set `sender.name`, `sender.address`, `sender.contact` and `landing.privacyContact` (still unset)**, then
+  `validate <slug> --skip-prospects --redraft` to get v2 drafts at low cost, contact 6–7 good-fit brokers (Horizon, Qeep
+  first), edit drafts before sending.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -266,3 +275,10 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   research prompt said "CA, US" (read as California, 0 Canadian prospects), price lacked "$" ("1 per load processed"
   in a draft and the landing page), `carriers@` ranked above `info@`. Open: Cloudflare-obfuscated emails, re-ask reasons
   unlogged (43% of outreach calls), research re-runs every validate, 50-email gate vs ~11 usable addresses.
+- **2026-10-19 (later):** second round on `fix/validation-live` (rulings P3-R23–R25), TDD, 584 → 604 tests green:
+  outreach.v2 (case-derived intro line and yes/no question, freight wording only in labelled examples, one figures rule),
+  `--redraft` limited to `new`/`drafted` prospects, stored footers of contacted prospects left untouched, Cloudflare
+  `data-cfemail` decoding, usable-address count next to the emails_sent gate, pack-docs.v2 with per-country channels,
+  one market-country helper, price-unit charset rule with a log line. No longer open: Cloudflare emails; the 50-email
+  gate is now shown against the usable-address count (the threshold itself is still set before prospects exist). Still
+  open: re-ask reasons unlogged, research re-runs every validate, JSON-LD emails, prospect yield below `--prospects`.
