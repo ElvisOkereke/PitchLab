@@ -162,7 +162,14 @@ function interviewSection(k: PackDocs['interviewKit']): string[] {
     '',
     ...list(k.redFlags),
     '',
-    'Record each interview as a note starting "interview:" so the checklist counts it: `npm run gen -- outreach mark <email> note --note "interview: …"`.',
+    '### Logging interviews',
+    '',
+    'Record each interview as a note starting "interview:" so the checklist counts it:',
+    '',
+    '`npm run gen -- outreach mark <prospect-id|email> note --note "interview: <summary>"`',
+    '',
+    'Prospect ids are in prospects.csv. If the person you interviewed is not a prospect yet, add them first with ' +
+      '`npm run gen -- prospects import <case> --file <csv>` (columns name,website; optional email, contact_name, contact_role), then log the note.',
   ];
 }
 
@@ -256,11 +263,11 @@ export async function exportValidation(
   );
   const hidden = (p: (typeof allProspects)[number]) => p.status === 'unsubscribed' || (!!p.email && suppressed.has(p.email.toLowerCase()));
   write('prospects.csv', csvRows([
-    ['name', 'website', 'location', 'email', 'email_source_url', 'email_captured_at', 'casl_basis', 'status', 'fit_reason'],
+    ['prospect_id', 'name', 'website', 'location', 'email', 'email_source_url', 'email_captured_at', 'casl_basis', 'status', 'fit_reason'],
     ...allProspects.map((p) => {
       const showEmail = !!p.email && !hidden(p);
       return [
-        p.name, p.website, p.location, showEmail ? p.email : '', showEmail ? p.emailSourceUrl : '', showEmail ? isoDate(p.emailCapturedAt) : '',
+        p.id, p.name, p.website, p.location, showEmail ? p.email : '', showEmail ? p.emailSourceUrl : '', showEmail ? isoDate(p.emailCapturedAt) : '',
         p.caslBasis, p.status, p.fitReason,
       ];
     }),
@@ -270,9 +277,9 @@ export async function exportValidation(
   const sendable = await exportableOutreach(db, caseId, { includeWeak: opts.includeWeak });
   const body = (b: string | undefined) => (b === undefined ? '' : applyFooter(b, footer));
   write('outreach.csv', csvRows([
-    ['prospect', 'email', ...OUTREACH_KINDS.flatMap((k) => [`${k}_subject`, `${k}_body`])],
+    ['prospect_id', 'prospect', 'email', 'casl_basis', ...OUTREACH_KINDS.flatMap((k) => [`${k}_subject`, `${k}_body`])],
     ...sendable.map(({ prospect, drafts }) => [
-      prospect.name, prospect.email, ...OUTREACH_KINDS.flatMap((k) => [drafts[k]?.subject ?? '', body(drafts[k]?.body)]),
+      prospect.id, prospect.name, prospect.email, prospect.caslBasis, ...OUTREACH_KINDS.flatMap((k) => [drafts[k]?.subject ?? '', body(drafts[k]?.body)]),
     ]),
   ]));
 
@@ -296,7 +303,7 @@ export async function exportValidation(
   for (const p of shown) {
     md.push(`## ${line(p.name)} (${line(p.domain)})`, '');
     md.push(`- Email: ${p.email ? line(p.email) : 'none'}${p.emailSourceUrl ? ` (found on ${link(p.emailSourceUrl)})` : ''} · CASL basis: ${p.caslBasis}`);
-    md.push(`- Status: ${p.status}`);
+    md.push(`- Status: ${p.status} · Prospect id: ${p.id}`);
     if (!sendableIds.has(p.id)) {
       const why = p.status === 'not_interested' ? 'marked not interested' : `weak CASL basis (${p.caslBasis}); export with --include-weak`;
       md.push(`- Not in outreach.csv: ${why}`);

@@ -221,10 +221,13 @@ describe('exportValidation', () => {
     expect(pmd).toContain('## MVP spec');
     expect(pmd).toContain('## Pilot plan');
     expect(pmd).toContain('## Interview kit');
+    expect(pmd).toContain('outreach mark <prospect-id|email> note --note "interview: <summary>"');
+    expect(pmd).toMatch(/not a prospect yet.*prospects import/);
 
     const prospectsCsv = readCsv(readFileSync(join(dir, 'prospects.csv'), 'utf8'));
-    expect(prospectsCsv[0]).toEqual(['name', 'website', 'location', 'email', 'email_source_url', 'email_captured_at', 'casl_basis', 'status', 'fit_reason']);
-    expect(prospectsCsv[1]).toEqual([p.name, p.website, 'Toronto, ON', p.email, p.emailSourceUrl, '2026-10-19', 'self_published', 'new', 'fits']);
+    expect(prospectsCsv[0]).toEqual(['prospect_id', 'name', 'website', 'location', 'email', 'email_source_url', 'email_captured_at', 'casl_basis', 'status', 'fit_reason']);
+    expect(prospectsCsv[1]).toEqual([p.id, p.name, p.website, 'Toronto, ON', p.email, p.emailSourceUrl, '2026-10-19', 'self_published', 'new', 'fits']);
+    expect(readFileSync(join(dir, 'outreach-drafts.md'), 'utf8')).toContain(`Prospect id: ${p.id}`);
   });
 
   it('leaves visible markers and a loud warning block when sender settings are missing; none when set', async () => {
@@ -241,7 +244,7 @@ describe('exportValidation', () => {
       expect(md, f).toContain('sender.address');
     }
     const outreach = readCsv(readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8'));
-    expect(outreach[1]![3]).toContain('[SET SENDER NAME]');
+    expect(outreach[1]![5]).toContain('[SET SENDER NAME]');
 
     await setSetting(db, 'sender.name', 'Ann Owner');
     await setSetting(db, 'sender.address', '1 King St W, Toronto ON');
@@ -250,9 +253,9 @@ describe('exportValidation', () => {
     expect(r2.senderMissing).toEqual([]);
     expect(readFileSync(join(out, 'freight', 'pack.md'), 'utf8')).not.toMatch(/Sender identity is not set/);
     const outreach2 = readCsv(readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8'));
-    expect(outreach2[1]![3]).toContain('Ann Owner'); // footer refreshed from current settings at export
-    expect(outreach2[1]![3]).not.toContain('[SET SENDER');
-    expect(outreach2[1]![3].split(UNSUBSCRIBE_LINE)).toHaveLength(2);
+    expect(outreach2[1]![5]).toContain('Ann Owner'); // footer refreshed from current settings at export
+    expect(outreach2[1]![5]).not.toContain('[SET SENDER');
+    expect(outreach2[1]![5].split(UNSUBSCRIBE_LINE)).toHaveLength(2);
   });
 
   it('outreach.csv: injection-safe; suppressed, unsubscribed, not-interested and weak-basis prospects excluded by default', async () => {
@@ -275,9 +278,12 @@ describe('exportValidation', () => {
     await exportValidation(db, kase.id, out);
     const raw = readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8');
     const rows = readCsv(raw);
-    expect(rows[0]).toEqual(['prospect', 'email', 'cold_subject', 'cold_body', 'followup1_subject', 'followup1_body', 'followup2_subject', 'followup2_body']);
-    expect(rows.slice(1).map((r) => r[1])).toEqual([evil.email]);
-    expect(rows[1]![0]).toBe(`'=HYPERLINK("http://evil.example","click")`);
+    expect(rows[0]).toEqual([
+      'prospect_id', 'prospect', 'email', 'casl_basis',
+      'cold_subject', 'cold_body', 'followup1_subject', 'followup1_body', 'followup2_subject', 'followup2_body',
+    ]);
+    expect(rows.slice(1).map((r) => [r[0], r[2], r[3]])).toEqual([[evil.id, evil.email, 'self_published']]);
+    expect(rows[1]![1]).toBe(`'=HYPERLINK("http://evil.example","click")`);
     expect(raw).not.toContain(supp.email!);
     expect(raw).not.toContain(unsub.email!);
 
@@ -290,7 +296,8 @@ describe('exportValidation', () => {
     expect(drafts).not.toContain(unsub.email!);
 
     await exportValidation(db, kase.id, out, { includeWeak: true });
-    expect(readCsv(readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8')).slice(1).map((r) => r[1])).toEqual([evil.email, weak.email]);
+    expect(readCsv(readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8')).slice(1).map((r) => [r[2], r[3]]))
+      .toEqual([[evil.email, 'self_published'], [weak.email, 'unknown']]); // weak rows are visible as such
   });
 
   it('escapes hostile text in pack.md and outreach-drafts.md', async () => {
