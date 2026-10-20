@@ -172,6 +172,9 @@ describe('generateLanding', () => {
     let prompt = router.calls[0]!.prompt;
     for (const t of ['12%', '$75', '40%']) expect(prompt, t).not.toContain(t);
     expect(prompt).toContain('no verified figures: do not state any figures');
+    // P3-R22: the case's own price stays an allowed offer term, outside the untrusted block; no doubled lead-in.
+    expect(prompt.slice(prompt.indexOf('</case>'))).toMatch(/Allowed offer terms[^\n]*99 per month/);
+    expect(prompt).not.toMatch(/Figures, in every field: Figures/);
 
     await add('Average claim is $310', 'verified');
     await generateLanding({ db, router, log: () => {} }, kase.id);

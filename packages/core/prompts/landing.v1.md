@@ -10,7 +10,7 @@ Write these fields:
 - subhead: one or two sentences on what the service does and for whom.
 - whoItsFor: who the service is for (and, briefly, who it is not for).
 - problem: the problem in the buyer's own terms.
-- Figures, in every field: {{claimsRule}}
+- {{claimsRule}} This applies to every field; the offer field may state the allowed offer terms.
 - howItWorks: exactly 3 steps, each a short title and one or two sentences.
 - offer: what joining the pilot gets them, consistent with the case's price.
 - faq: 3 to 5 questions a buyer would really ask (use the case's objections), each with a short honest answer.

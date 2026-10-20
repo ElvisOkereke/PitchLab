@@ -7,7 +7,7 @@ import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { getSenderFields, getSetting } from './settings';
 import { LandingCopySchema, type LandingCopy } from './schema';
-import { figuresRule, verifiedClaimTexts } from './verified-claims';
+import { allowedOfferTerms, figuresRule, verifiedClaimTexts } from './verified-claims';
 
 // The page is a fixed template in code. Every copy string is HTML-escaped (R13): the model supplies text, never markup,
 // links or scripts. The only script is the fixed one below; the page makes no request except posting the form to the
@@ -303,7 +303,7 @@ export async function generateLanding(
     system: SYSTEM,
     prompt: prompt.render({
       caseText: wrapUntrusted('case', caseMaterial(kase.title, kase.sections, verified)),
-      claimsRule: figuresRule(verified),
+      claimsRule: figuresRule(verified, allowedOfferTerms(kase.sections)),
     }),
     schema: LandingCopySchema,
     schemaName: 'landing_copy',

@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { claims } from '../db/schema';
-import { capField, stripInvisible } from '../llm/untrusted';
+import { capField, neutralizeUntrusted, stripInvisible } from '../llm/untrusted';
 
 /** Claim sections whose texts state facts or figures a draft or landing page could quote (as deep-case writes them). */
 const QUOTABLE_SECTIONS = ['evidence', 'numbers'];
@@ -28,9 +28,26 @@ export async function verifiedClaimTexts(db: Db, caseId: string): Promise<string
   return [...ok].filter(([, verified]) => verified).map(([text]) => text).slice(0, MAX_CLAIMS);
 }
 
-/** The figures rule for a prompt, outside the untrusted block. */
-export function figuresRule(verified: string[]): string {
+/**
+ * The case's own offer terms, which the owner sets and may always state (P3-R22): its price ("99 per month"). The case
+ * schema has no separate pilot-offer field (pitch.pricingCopy is free model text that may carry unverified figures, so
+ * it is not exempt). Neutralised and capped: these appear outside the untrusted block.
+ */
+export function allowedOfferTerms(sections: unknown): string[] {
+  const price = (sections as { summary?: { price?: { amount?: unknown; per?: unknown } } } | null)?.summary?.price;
+  if (!price || typeof price.amount !== 'number' || !Number.isFinite(price.amount)) return [];
+  const per = typeof price.per === 'string' ? capField(neutralizeUntrusted(price.per), 50) : '';
+  return [per ? `${price.amount} per ${per}` : String(price.amount)];
+}
+
+/** The figures rule for a prompt, outside the untrusted block: verified claims, plus the case's own offer terms. */
+export function figuresRule(verified: string[], allowed: string[] = []): string {
+  const terms = allowed.length
+    ? ` Allowed offer terms (the case's own price; you may state these exactly): ${allowed.join('; ')}.`
+    : '';
   return verified.length > 0
-    ? 'Figures: quote a number only when it appears in the case\'s verifiedClaims list (each was checked against its source). Every other figure in the case is unverified: do not state it.'
-    : 'There are no verified figures: do not state any figures (no numbers, percentages or amounts taken from the case).';
+    ? 'Figures: quote a number only when it appears in the case\'s verifiedClaims list (each was checked against its source) ' +
+      `or in the allowed offer terms. Every other figure in the case is unverified: do not state it.${terms}`
+    : 'There are no verified figures: do not state any figures (no numbers, percentages or amounts taken from the case) ' +
+      `other than the allowed offer terms.${terms}`;
 }

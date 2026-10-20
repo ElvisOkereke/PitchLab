@@ -13,7 +13,7 @@ import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
-import { figuresRule, verifiedClaimTexts } from './verified-claims';
+import { allowedOfferTerms, figuresRule, verifiedClaimTexts } from './verified-claims';
 import { DraftEmailsSchema, hasNoLinksOrAddresses, removeLinksAndAddresses } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
@@ -240,7 +240,7 @@ export async function generateDrafts(
   const model = router.modelFor('outreach');
   const verified = toDraft.length ? await verifiedClaimTexts(db, caseId) : [];
   const caseText = wrapUntrusted('case', caseMaterial(kase.title, kase.sections, verified));
-  const claimsRule = figuresRule(verified);
+  const claimsRule = figuresRule(verified, allowedOfferTerms(kase.sections));
   const limit = pLimit(DRAFT_CONCURRENCY);
   await Promise.all(toDraft.map((p) => limit(async () => {
     try {

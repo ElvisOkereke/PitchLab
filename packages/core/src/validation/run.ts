@@ -80,8 +80,9 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
   // 2–4. Outreach chain.
   let chainBroken = false;
   // The pilot site domain is excluded at every step (P3-R21): dropped from new prospects, refused by fetchPage on every
-  // hop (blockHosts), never drafted for and never exported. isBannedSource covers only the static NEVER_FETCH_HOSTS,
-  // not this per-run pilot site. Existing rows are kept as they are (not deleted, not marked unsubscribed).
+  // hop (blockHosts), never drafted for and never exported. isBannedSource covers the static NEVER_FETCH_HOSTS,
+  // BANNED_DOMAINS and IP hosts, but not this per-run pilot site. Existing rows are kept as they are (not deleted, not
+  // marked unsubscribed).
   const blockHosts = pilotDomain ? [pilotDomain] : [];
   const fetchDeps: ValidationDeps = pilotDomain
     ? { ...deps, fetchPage: ((url: string, o = {}) => deps.fetchPage(url, { ...o, blockHosts })) as ValidationDeps['fetchPage'] }

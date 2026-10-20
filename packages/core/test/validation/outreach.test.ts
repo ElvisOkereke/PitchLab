@@ -122,6 +122,13 @@ describe('DraftEmailsSchema', () => {
     }
   });
 
+  it('links hidden behind a word character are caught on the host copy too (P3-R22)', () => {
+    for (const s of ['_http://3627732462/pay', 'xhttps://evil.com', 'see_https://3627732462', 'pay_www.evil.example/x']) {
+      expect(hasNoLinksOrAddresses(s), s).toBe(false);
+      expect(removeLinksAndAddresses(s), s).not.toMatch(/3627732462|evil/);
+    }
+  });
+
   it('stays fast on huge hostile input (P3-R17)', () => {
     const huge = 'a'.repeat(400_000) + '.a'.repeat(200_000) + '@'.repeat(100_000) + 'x.'.repeat(100_000) + '1';
     const t0 = Date.now();
@@ -353,6 +360,9 @@ describe('generateDrafts', () => {
     let prompt = router.calls[0]!.prompt;
     for (const t of ['12%', '$75', '40%', '99%']) expect(prompt, t).not.toContain(t);
     expect(prompt).toContain('no verified figures: do not state any figures');
+    // P3-R22: the case's own price stays an allowed offer term, outside the untrusted block.
+    expect(prompt).toContain('Allowed offer terms');
+    expect(prompt.slice(prompt.indexOf('</case>'))).toContain('99 per month');
 
     await add('Average detention claim is $310', 'verified');
     await add('Average detention claim is $310', 'verified', 'numbers');

@@ -238,10 +238,14 @@ export function guardText(s: string): string {
  */
 const hostText = (n: string) => n.replace(/[@_]|(?<![a-z0-9-])\.+/gi, ' ');
 
-/** guardText(s) with every link, email address, host and IPv4 literal replaced by a space. Callers cap `s` first. */
+/**
+ * guardText(s) with every link, email address, host and IPv4 literal replaced by a space. Links and emails are removed
+ * from the text, then everything again from the hostText copy (P3-R22: "_http://…" has no word boundary before "http"
+ * until the "_" becomes a space). Callers cap `s` first.
+ */
 export function removeLinksAndAddresses(s: string): string {
   const withoutLinks = TEXT_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), guardText(s));
-  return HOST_PATTERNS.reduce((acc, re) => acc.replace(re, ' '), hostText(withoutLinks));
+  return [...TEXT_PATTERNS, ...HOST_PATTERNS].reduce((acc, re) => acc.replace(re, ' '), hostText(withoutLinks));
 }
 
 /**
@@ -253,7 +257,8 @@ export function hasNoLinksOrAddresses(s: string): boolean {
   const n = guardText(s);
   if (TEXT_TESTERS.some((re) => re.test(n))) return false;
   const h = hostText(n);
-  return HOST_TESTERS.every((re) => !re.test(h));
+  // Links and emails are checked on the host copy too (P3-R22), so "_http://…" or "x_www.…" cannot hide behind a word character.
+  return [...TEXT_TESTERS, ...HOST_TESTERS].every((re) => !re.test(h));
 }
 const NO_LINKS_MESSAGE =
   'must not contain any link (URL, "www.", or a domain such as example.com) or email address; write company and product ' +
