@@ -141,15 +141,21 @@ Open after tuning-4:
 ## Validation live-run follow-ups (2026-10-19, `docs/runs/2026-10-19-validation-freight.md`)
 - Still open from Plan 3: live landing publish and the form endpoint need the hosted app; Places needs
   GOOGLE_PLACES_API_KEY; no email verification service is integrated.
-- Decode Cloudflare email obfuscation (`data-cfemail`); it hid self-published addresses on 3 of 14 spot-checked broker sites.
-  Consider JSON-LD `email` fields too.
-- Log structured-output re-ask issues (router): 10 of 23 outreach calls were re-asks and nothing records why.
-- `validate` re-runs prospect research ($0.45–0.58) every time; consider skipping it when enough prospects exist, or
+- Done (fix/validation-live round 2): Cloudflare `data-cfemail` / `/cdn-cgi/l/email-protection#` addresses are decoded.
+  Still open: JSON-LD `email` fields (Radius had `info@` only inside a script/JSON-LD block, which is stripped).
+- `llm_calls` does not log WHY a re-ask happened: 10 of 23 outreach calls (43%) and 1 pack call were structured-output
+  re-asks, and nothing records the validation issues. Store the issue text (capped) per re-ask so prompt changes can
+  target the real cause.
+- The prospect search reruns on every `validate` ($0.45–0.58 research plus extract) unless `--skip-prospects` is passed,
+  even when the case already has more prospects than asked for. Consider skipping it when enough prospects exist, or
   make `--skip-prospects` the documented re-export path.
 - Prospect yield is below `--prospects` (7–15 per call for 25 asked); size fit is loose (500-staff 3PLs, asset carriers).
   Ask research for broker authority/size evidence or run several narrower searches.
-- Kept drafts are never regenerated, so run-1 drafts keep the pre-fix "1 per load" text; a `--refresh-drafts` for
-  status `drafted` (never `sent`) prospects would help.
-- Checklist gate "50 emails" is about 4× what web research yields; the pack should size gates to the prospect sources.
+- Done: `validate --redraft` regenerates drafts of prospects that already have them (draft rows only; status, events
+  and suppressions untouched). It redrafts every eligible prospect, including ones already `sent`; a status filter
+  (only `drafted`) may still be wanted.
+- Checklist thresholds are set by the pack call before any prospect exists ("50 emails" is about 4× what web research
+  yielded). pack.md now shows "you currently have N usable addresses" next to the emails_sent gate, but the threshold
+  itself is still not sized to the prospect sources.
 - Same "CA, US" code rendering exists in harvest/ideate/deep-case prompts (`market.countries.join`); check whether it
   skews research there too.
