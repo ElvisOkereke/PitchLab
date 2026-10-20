@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from 'react';
 import { queueRunAction } from '@/actions/runs';
 import type { FormState } from '@/lib/form';
+import { useFormFields } from '@/lib/use-form-fields';
 
 type Seed = 'open' | 'sector' | 'lens' | 'idea';
 
@@ -12,21 +13,24 @@ const SEEDS: { value: Seed; label: string; hint: string }[] = [
   { value: 'lens', label: 'Lenses', hint: 'Only the idea patterns you tick.' },
   { value: 'idea', label: 'Your idea', hint: 'Build a case for an idea you describe.' },
 ];
+const isSeed = (v: string): v is Seed => SEEDS.some((s) => s.value === v);
 
 /**
  * Queue a run. HTML limits mirror the server's (ideas 1–30, advance 1–10, idea text ≤ 20,000), but only the server is
  * trusted. Without JS every seed's fields are shown (the server ignores the ones the chosen seed does not use); with JS
  * only the chosen seed's fields are shown. Sectors and lenses come from the server as props (no core import here).
+ * A refused run keeps everything the owner entered (useFormFields).
  */
 export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: { id: string; name: string }[] }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(queueRunAction, {});
-  const [seed, setSeed] = useState<Seed>('open');
+  const f = useFormFields({ seedType: 'open', sectors: [], lensIds: [], ideaText: '', ideaCount: '12', advanceCount: '3' }, state);
+  const seed: Seed = isSeed(f.text('seedType')) ? (f.text('seedType') as Seed) : 'open';
   const [js, setJs] = useState(false);
   useEffect(() => setJs(true), []);
   const shown = (s: Seed) => !js || seed === s;
 
   return (
-    <form action={formAction} className="queue-form" data-testid="queue-run">
+    <form key={f.formKey} action={formAction} className="queue-form" data-testid="queue-run">
       <fieldset className="seed-choice">
         <legend>Seed</legend>
         {SEEDS.map((s) => (
@@ -36,8 +40,8 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
               type="radio"
               name="seedType"
               value={s.value}
-              checked={seed === s.value}
-              onChange={() => setSeed(s.value)}
+              defaultChecked={seed === s.value}
+              onChange={() => f.set('seedType', s.value)}
             />
             <label htmlFor={`seed-${s.value}`}>{s.label}</label>
             <span className="muted small"> {s.hint}</span>
@@ -50,7 +54,14 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
         <div className="checks">
           {sectors.map((s, i) => (
             <div key={s} className="choice">
-              <input id={`sector-${i}`} type="checkbox" name="sectors" value={s} />
+              <input
+                id={`sector-${i}`}
+                type="checkbox"
+                name="sectors"
+                value={s}
+                defaultChecked={f.list('sectors').includes(s)}
+                onChange={(e) => f.toggle('sectors', s, e.target.checked)}
+              />
               <label htmlFor={`sector-${i}`}>{s}</label>
             </div>
           ))}
@@ -62,7 +73,14 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
         <div className="checks">
           {lenses.map((l) => (
             <div key={l.id} className="choice">
-              <input id={`lens-${l.id}`} type="checkbox" name="lensIds" value={l.id} />
+              <input
+                id={`lens-${l.id}`}
+                type="checkbox"
+                name="lensIds"
+                value={l.id}
+                defaultChecked={f.list('lensIds').includes(l.id)}
+                onChange={(e) => f.toggle('lensIds', l.id, e.target.checked)}
+              />
               <label htmlFor={`lens-${l.id}`}>{l.name}</label>
             </div>
           ))}
@@ -72,17 +90,44 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       <fieldset hidden={!shown('idea')} disabled={!shown('idea')} data-seed="idea">
         <legend>Idea (for “Your idea”)</legend>
         <label htmlFor="idea-text">Describe the idea (at least 50 characters)</label>
-        <textarea id="idea-text" name="ideaText" maxLength={20_000} rows={6} />
+        <textarea
+          id="idea-text"
+          name="ideaText"
+          maxLength={20_000}
+          rows={6}
+          defaultValue={f.text('ideaText')}
+          onChange={(e) => f.set('ideaText', e.target.value)}
+        />
       </fieldset>
 
       <div className="counts">
         <div>
           <label htmlFor="idea-count">Ideas to generate</label>
-          <input id="idea-count" type="number" name="ideaCount" min={1} max={30} step={1} defaultValue={12} inputMode="numeric" />
+          <input
+            id="idea-count"
+            type="number"
+            name="ideaCount"
+            min={1}
+            max={30}
+            step={1}
+            inputMode="numeric"
+            defaultValue={f.text('ideaCount')}
+            onChange={(e) => f.set('ideaCount', e.target.value)}
+          />
         </div>
         <div>
           <label htmlFor="advance-count">Ideas to turn into cases</label>
-          <input id="advance-count" type="number" name="advanceCount" min={1} max={10} step={1} defaultValue={3} inputMode="numeric" />
+          <input
+            id="advance-count"
+            type="number"
+            name="advanceCount"
+            min={1}
+            max={10}
+            step={1}
+            inputMode="numeric"
+            defaultValue={f.text('advanceCount')}
+            onChange={(e) => f.set('advanceCount', e.target.value)}
+          />
         </div>
       </div>
 
@@ -96,7 +141,7 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       ) : null}
       {state.ok ? (
         <p className="ok" role="status">
-          Queued. It starts when `npm run worker` is running.
+          Queued. It starts when <code>npm run worker</code> is running.
         </p>
       ) : null}
     </form>

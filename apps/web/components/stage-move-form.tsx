@@ -1,10 +1,11 @@
 'use client';
 
 import type { CaseStage } from '@bcg/core/db/schema';
-import { useActionState, useState } from 'react';
+import { useActionState } from 'react';
 import { moveStageAction, overturnKillAction } from '@/actions/stage';
 import type { FormState } from '@/lib/form';
 import { STAGES, STAGE_LABEL } from '@/lib/stages';
+import { useFormFields } from '@/lib/use-form-fields';
 
 /**
  * Move a case to another stage: a select of the other stages, a note (required to kill; checked on the server, hinted
@@ -14,12 +15,14 @@ import { STAGES, STAGE_LABEL } from '@/lib/stages';
 export function StageMoveForm({ caseId, slug, stage, returnTo }: { caseId: string; slug: string; stage: CaseStage; returnTo?: string }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(moveStageAction, {});
   const others = STAGES.filter((s) => s !== stage);
-  const [to, setTo] = useState<CaseStage>(others[0]!);
+  // A refusal keeps the chosen stage and the note; a success clears both (the case is now somewhere else).
+  const f = useFormFields({ to: others[0]!, note: '' }, state, { clearOnSuccess: ['to', 'note'] });
+  const to: CaseStage = (others as readonly string[]).includes(f.text('to')) ? (f.text('to') as CaseStage) : others[0]!;
   const killing = to === 'killed';
 
   return (
     <div className="stage-move">
-      <form action={formAction} data-testid="move-stage" className="stage-move-form">
+      <form key={f.formKey} action={formAction} data-testid="move-stage" className="stage-move-form">
         <input type="hidden" name="caseId" value={caseId} />
         <input type="hidden" name="from" value={stage} />
         <input type="hidden" name="slug" value={slug} />
@@ -27,7 +30,7 @@ export function StageMoveForm({ caseId, slug, stage, returnTo }: { caseId: strin
         <label className="visually-hidden" htmlFor={`to-${caseId}`}>
           Move to
         </label>
-        <select id={`to-${caseId}`} name="to" value={to} onChange={(e) => setTo(e.target.value as CaseStage)}>
+        <select id={`to-${caseId}`} name="to" defaultValue={to} onChange={(e) => f.set('to', e.target.value)}>
           {others.map((s) => (
             <option key={s} value={s}>
               {STAGE_LABEL[s]}
@@ -42,6 +45,8 @@ export function StageMoveForm({ caseId, slug, stage, returnTo }: { caseId: strin
           type="text"
           name="note"
           maxLength={500}
+          defaultValue={f.text('note')}
+          onChange={(e) => f.set('note', e.target.value)}
           required={killing}
           placeholder={killing ? 'Why kill it? (required)' : 'Note (optional; required to kill)'}
         />

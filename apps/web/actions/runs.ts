@@ -6,7 +6,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
-import { formToObject, toInt, type FormState } from '@/lib/form';
+import { formToObject, pickValues, toInt, type FormState } from '@/lib/form';
 import { runsHref, type RunsNotice } from '@/lib/runs-query';
 
 const REFUSAL = {
@@ -36,6 +36,8 @@ function issueMessage(issue: { path: PropertyKey[]; message: string }): string {
 export async function queueRunAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
   const raw = formToObject(fd, ['sectors', 'lensIds']);
+  // Echoed on a refusal so nothing typed is lost (the idea text can be 20,000 characters).
+  const values = pickValues(raw, ['seedType', 'ideaText', 'sectors', 'lensIds', 'ideaCount', 'advanceCount'], ['sectors', 'lensIds']);
   const parsed = QueueRunInputSchema.safeParse({
     seedType: raw.seedType,
     sectors: raw.sectors,
@@ -44,9 +46,9 @@ export async function queueRunAction(_prev: FormState, fd: FormData): Promise<Fo
     ideaCount: count(raw.ideaCount),
     advanceCount: count(raw.advanceCount),
   });
-  if (!parsed.success) return { error: issueMessage(parsed.error.issues[0]!) };
+  if (!parsed.success) return { error: issueMessage(parsed.error.issues[0]!), values };
   const r = await queueRun(getDb(), parsed.data);
-  if (!r.ok) return { error: REFUSAL[r.reason] };
+  if (!r.ok) return { error: REFUSAL[r.reason], values };
   revalidatePath('/runs');
   revalidatePath('/command');
   return { ok: true };

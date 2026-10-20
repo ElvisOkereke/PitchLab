@@ -3,6 +3,7 @@
 import { useActionState } from 'react';
 import { markOutreachAction } from '@/actions/outreach';
 import type { FormState } from '@/lib/form';
+import { useFormFields } from '@/lib/use-form-fields';
 
 const TYPES = [
   ['sent', 'I sent it'],
@@ -13,15 +14,19 @@ const TYPES = [
   ['unsubscribe', 'Unsubscribe'],
 ] as const;
 
-/** Log what happened with one prospect (the owner sends email himself; this only records it). Works without JS. */
+/**
+ * Log what happened with one prospect (the owner sends email himself; this only records it). Works without JS. An
+ * error keeps the choice and the note; a success clears the note so it is not recorded twice.
+ */
 export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slug: string }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(markOutreachAction, {});
+  const f = useFormFields({ type: 'sent', note: '' }, state, { clearOnSuccess: ['note'] });
   return (
-    <form action={formAction} className="mark-outreach" data-testid="mark-outreach">
+    <form key={f.formKey} action={formAction} className="mark-outreach" data-testid="mark-outreach">
       <input type="hidden" name="prospectId" value={prospectId} />
       <input type="hidden" name="slug" value={slug} />
       <label htmlFor={`type-${prospectId}`}>What happened</label>
-      <select id={`type-${prospectId}`} name="type" defaultValue="sent">
+      <select id={`type-${prospectId}`} name="type" defaultValue={f.text('type')} onChange={(e) => f.set('type', e.target.value)}>
         {TYPES.map(([value, label]) => (
           <option key={value} value={value}>
             {label}
@@ -29,7 +34,7 @@ export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slu
         ))}
       </select>
       <label htmlFor={`mnote-${prospectId}`}>Note (optional)</label>
-      <input id={`mnote-${prospectId}`} type="text" name="note" maxLength={500} />
+      <input id={`mnote-${prospectId}`} type="text" name="note" maxLength={500} defaultValue={f.text('note')} onChange={(e) => f.set('note', e.target.value)} />
       <button type="submit" disabled={pending}>
         {pending ? 'Saving…' : 'Record'}
       </button>

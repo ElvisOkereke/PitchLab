@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formToObject, toInt } from '@/lib/form';
+import { formToObject, pickValues, toInt } from '@/lib/form';
 
 describe('formToObject', () => {
   it('trims strings, turns repeated keys into arrays and keeps listed array keys as arrays', () => {
@@ -11,6 +11,14 @@ describe('formToObject', () => {
     fd.set('$ACTION_ID_abc', '');
     fd.set('file', new Blob(['x']), 'f.txt');
     expect(formToObject(fd, ['one', 'missing'])).toEqual({ a: 'x', r: ['1', '2'], one: ['only'], missing: [] });
+  });
+});
+
+describe('pickValues', () => {
+  it('echoes only the listed fields, as strings (arrays for array fields), capped in length', () => {
+    const raw = { a: 'x', many: ['1', '2'], n: 5, junk: 'never echoed', long: 'y'.repeat(30_000) };
+    expect(pickValues(raw, ['a', 'many', 'n', 'missing', 'long'], ['many'])).toEqual({ a: 'x', many: ['1', '2'], long: 'y'.repeat(20_000) });
+    expect(pickValues({ many: 'one' }, ['many'], ['many'])).toEqual({ many: ['one'] });
   });
 });
 

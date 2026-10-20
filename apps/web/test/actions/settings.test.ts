@@ -32,7 +32,8 @@ describe('saveSettingsAction', () => {
       'sender.name': '  Al Owner ', 'sender.address': '1 Main St, Toronto', 'landing.formEndpoint': 'https://forms.example/f',
       'landing.privacyContact': '', 'worker.status': '{"hacked":true}', 'other.key': 'x',
     }));
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, values: expect.objectContaining({ 'sender.name': 'Al Owner', 'landing.privacyContact': '' }) });
+    expect(r.values).not.toHaveProperty('worker.status');
     expect(await getSetting(state.db, 'sender.name')).toBe('Al Owner');
     expect(await getSetting(state.db, 'sender.address')).toBe('1 Main St, Toronto');
     expect(await getSetting(state.db, 'landing.formEndpoint')).toBe('https://forms.example/f');
@@ -45,10 +46,11 @@ describe('saveSettingsAction', () => {
   it('saveSettingsAction rejects a non-https formEndpoint', async () => {
     const before = await snapshotDb(state.db);
     for (const bad of ['http://forms.example/f', 'javascript:alert(1)', 'not a url', 'https://user:pw@forms.example/']) {
-      expect(await saveSettingsAction({}, form({ 'sender.name': 'Al', 'landing.formEndpoint': bad })))
-        .toEqual({ error: 'Form endpoint: The form endpoint must be an https URL (or empty).' });
+      expect(await saveSettingsAction({}, form({ 'sender.name': 'Al', 'landing.formEndpoint': bad, 'worker.status': 'x' })))
+        .toEqual({ error: 'Form endpoint: The form endpoint must be an https URL (or empty).', values: { 'sender.name': 'Al', 'landing.formEndpoint': bad } });
     }
-    expect(await saveSettingsAction({}, form({ 'sender.address': 'x'.repeat(501) }))).toEqual({ error: 'Mailing address: At most 500 characters.' });
+    expect(await saveSettingsAction({}, form({ 'sender.address': 'x'.repeat(501) })))
+      .toEqual({ error: 'Mailing address: At most 500 characters.', values: { 'sender.address': 'x'.repeat(501) } });
     expect(await snapshotDb(state.db)).toEqual(before);
   });
 });

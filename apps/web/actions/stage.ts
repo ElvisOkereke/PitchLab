@@ -8,7 +8,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
-import { formToObject, type FormState } from '@/lib/form';
+import { formToObject, pickValues, type FormState } from '@/lib/form';
 import { returnPath, withNotice } from '@/lib/return-to';
 
 const REFUSAL: Record<Extract<MoveStageResult, { ok: false }>['reason'], string> = {
@@ -32,6 +32,8 @@ function revalidateCase(slug: unknown) {
 export async function moveStageAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
   const raw = formToObject(fd);
+  // Echoed on a refusal so the form keeps the chosen stage and the note.
+  const values = pickValues(raw, ['to', 'note']);
   const parsed = MoveStageInputSchema.safeParse({
     caseId: raw.caseId,
     from: raw.from,
@@ -40,10 +42,10 @@ export async function moveStageAction(_prev: FormState, fd: FormData): Promise<F
   });
   if (!parsed.success) {
     const noteTooLong = parsed.error.issues.some((i) => i.path[0] === 'note');
-    return { error: noteTooLong ? 'The note is at most 500 characters.' : 'Invalid move. Refresh and try again.' };
+    return { error: noteTooLong ? 'The note is at most 500 characters.' : 'Invalid move. Refresh and try again.', values };
   }
   const r = await moveStage(getDb(), parsed.data);
-  if (!r.ok) return { error: REFUSAL[r.reason] };
+  if (!r.ok) return { error: REFUSAL[r.reason], values };
   revalidateCase(raw.slug);
   const back = returnPath(raw.returnTo);
   if (back) redirect(back);

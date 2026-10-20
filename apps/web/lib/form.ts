@@ -1,5 +1,30 @@
-/** What every `useActionState` Server Action returns. */
-export type FormState = { ok?: boolean; error?: string };
+/** Field values echoed back to a form (strings, or string lists for checkbox groups). */
+export type FormValues = Record<string, string | string[]>;
+
+/**
+ * What every `useActionState` Server Action returns. `values` echoes the submitted fields (allow-listed, capped) so
+ * the form can show them again: after an error nothing typed is lost, also without JS.
+ */
+export type FormState = { ok?: boolean; error?: string; values?: FormValues };
+
+const ECHO_MAX = 20_000;
+
+/** The listed fields of a parsed form as FormValues: strings capped at 20,000 chars, `arrays` fields as lists. */
+export function pickValues(raw: Record<string, unknown>, keys: readonly string[], arrays: readonly string[] = []): FormValues {
+  const out: FormValues = {};
+  const cap = (v: unknown) => (typeof v === 'string' ? v.slice(0, ECHO_MAX) : undefined);
+  for (const k of keys) {
+    const v = raw[k];
+    if (arrays.includes(k)) {
+      const list = (Array.isArray(v) ? v : v === undefined ? [] : [v]).map(cap).filter((x): x is string => x !== undefined);
+      out[k] = list;
+    } else {
+      const s = cap(Array.isArray(v) ? v[0] : v);
+      if (s !== undefined) out[k] = s;
+    }
+  }
+  return out;
+}
 
 /**
  * FormData as a plain object for zod: strings trimmed, repeated keys become arrays, keys listed in `arrays` are always

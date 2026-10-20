@@ -34,9 +34,11 @@ describe('saveOwnerScoresAction', () => {
     await state.db.insert(scores).values({ caseId: c.id, criterion: 'pain', value: 2, note: 'ai', by: 'ai', model: 'm', promptVersion: 'p' });
     const aiBefore = (await state.db.select().from(scores)).filter((r) => r.by === 'ai');
 
-    expect(await saveOwnerScoresAction({}, form({ caseId: c.id, slug: c.slug, value_gut: '4', note_gut: ' love it ', value_pain: '3', value_roi: '' })))
-      .toEqual({ ok: true });
-    expect(await saveOwnerScoresAction({}, form({ caseId: c.id, slug: c.slug, value_gut: '5', note_gut: 'b' }))).toEqual({ ok: true });
+    const first = await saveOwnerScoresAction({}, form({ caseId: c.id, slug: c.slug, value_gut: '4', note_gut: ' love it ', value_pain: '3', value_roi: '' }));
+    // The saved values come back (notes trimmed as stored) so the form shows exactly what was saved.
+    expect(first).toEqual({ ok: true, values: expect.objectContaining({ value_gut: '4', note_gut: 'love it', value_pain: '3', value_roi: '' }) });
+    expect(await saveOwnerScoresAction({}, form({ caseId: c.id, slug: c.slug, value_gut: '5', note_gut: 'b' })))
+      .toEqual({ ok: true, values: expect.objectContaining({ value_gut: '5', note_gut: 'b' }) });
 
     const rows = await ownerRows(c.id);
     expect(rows.map((r) => [r.criterion, r.value, r.note]).sort()).toEqual([['gut', 5, 'b'], ['pain', 3, '']]);
@@ -70,6 +72,16 @@ describe('saveOwnerScoresAction', () => {
 
   it('reports a case that no longer exists', async () => {
     expect(await saveOwnerScoresAction({}, form({ caseId: '00000000-0000-4000-8000-000000000000', value_gut: '3' })))
-      .toEqual({ error: 'This case no longer exists. Refresh.' });
+      .toEqual({ error: 'This case no longer exists. Refresh.', values: expect.objectContaining({ value_gut: '3' }) });
+  });
+
+  it('an error echoes every score field (and nothing else) so the form keeps the edits', async () => {
+    const c = await seedCase(state.db);
+    const r = await saveOwnerScoresAction({}, form({ caseId: c.id, value_gut: '6', note_gut: 'big', value_roi: '2', note_roi: 'ok', other: 'x' }));
+    expect(r.error).toMatch(/whole numbers/);
+    expect(r.values).toEqual({
+      value_pain: '', note_pain: '', value_roi: '2', note_roi: 'ok', value_evidence: '', note_evidence: '', value_speed: '', note_speed: '',
+      value_autonomy: '', note_autonomy: '', value_novelty: '', note_novelty: '', value_reach: '', note_reach: '', value_gut: '6', note_gut: 'big',
+    });
   });
 });

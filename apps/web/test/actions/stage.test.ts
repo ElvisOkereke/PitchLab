@@ -56,15 +56,24 @@ describe('moveStageAction', () => {
 
   it('maps core refusals to messages', async () => {
     const c = await seedCase(state.db, { stage: 'validating' });
+    const values = expect.any(Object);
     expect(await moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'pilot' })))
-      .toEqual({ error: 'This case moved since you loaded the page. Refresh.' });
+      .toEqual({ error: 'This case moved since you loaded the page. Refresh.', values });
     expect(await moveStageAction({}, form({ caseId: c.id, from: 'validating', to: 'killed', note: '  ' })))
-      .toEqual({ error: 'Add a note saying why you are killing it.' });
+      .toEqual({ error: 'Add a note saying why you are killing it.', values });
     expect(await moveStageAction({}, form({ caseId: c.id, from: 'validating', to: 'validating' })))
-      .toEqual({ error: 'Pick a different stage.' });
+      .toEqual({ error: 'Pick a different stage.', values });
     expect(await moveStageAction({}, form({ caseId: '00000000-0000-4000-8000-000000000000', from: 'new', to: 'pilot' })))
-      .toEqual({ error: 'This case no longer exists. Refresh.' });
+      .toEqual({ error: 'This case no longer exists. Refresh.', values });
     expect(await eventsOf(state.db, c.id)).toHaveLength(0);
+  });
+
+  it('a refusal echoes the chosen stage and the note (nothing else) so the form keeps them', async () => {
+    const c = await seedCase(state.db, { stage: 'validating' });
+    const r = await moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'killed', note: 'too crowded', slug: c.slug, junk: 'x' }));
+    expect(r).toEqual({ error: 'This case moved since you loaded the page. Refresh.', values: { to: 'killed', note: 'too crowded' } });
+    const invalid = await moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'killed', note: 'n'.repeat(501) }));
+    expect(invalid.values).toEqual({ to: 'killed', note: 'n'.repeat(501) });
   });
 
   it('a kill stores the note as the kill reason; a bad slug is not revalidated', async () => {
@@ -118,7 +127,7 @@ describe('returnTo (case page controls return to the case)', () => {
   it('moveStageAction still reports a refusal as a message (no redirect) when returnTo is set', async () => {
     const c = await seedCase(state.db, { stage: 'pilot' });
     expect(await moveStageAction({}, form({ caseId: c.id, from: 'new', to: 'live', returnTo: `/cases/${c.slug}` })))
-      .toEqual({ error: 'This case moved since you loaded the page. Refresh.' });
+      .toEqual({ error: 'This case moved since you loaded the page. Refresh.', values: { to: 'live' } });
   });
 
   it('an off-site returnTo is replaced by the board', async () => {

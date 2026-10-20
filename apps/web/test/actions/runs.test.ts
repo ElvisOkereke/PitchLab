@@ -67,12 +67,29 @@ describe('queueRunAction', () => {
       [{ seedType: 'everything' }, 'Pick how to seed the run.'],
       [{}, 'Pick how to seed the run.'],
     ];
-    for (const [fields, error] of refused) expect(await queueRunAction({}, form(fields)), JSON.stringify(fields).slice(0, 80)).toEqual({ error });
+    for (const [fields, error] of refused) {
+      expect(await queueRunAction({}, form(fields)), JSON.stringify(fields).slice(0, 80)).toEqual({ error, values: expect.any(Object) });
+    }
     expect(await snapshotDb(state.db)).toEqual(before);
 
     for (let i = 0; i < 3; i++) expect(await queueRunAction({}, form({ seedType: 'open', ideaCount: '1', advanceCount: '1' }))).toEqual({ ok: true });
-    expect(await queueRunAction({}, form({ seedType: 'open', ideaCount: '1', advanceCount: '1' }))).toEqual({ error: '3 runs are already queued. Wait for the worker.' });
+    expect(await queueRunAction({}, form({ seedType: 'open', ideaCount: '1', advanceCount: '1' })))
+      .toEqual({ error: '3 runs are already queued. Wait for the worker.', values: expect.any(Object) });
     expect(await state.db.select().from(runs)).toHaveLength(3);
+  });
+});
+
+describe('queueRunAction echoes the input on a refusal', () => {
+  it('a refused idea run gets back its idea text (up to 20,000 chars), seed, ticks and counts, nothing else', async () => {
+    const ideaText = 'Lead-flow checks for agencies, described at length. '.repeat(380).slice(0, 19_990);
+    for (let i = 0; i < 3; i++) await queueRunAction({}, form({ seedType: 'open', ideaCount: '1', advanceCount: '1' }));
+    const r = await queueRunAction({}, form({ seedType: 'idea', ideaText, sectors: ['HVAC'], ideaCount: '7', advanceCount: '2', junk: 'x' }));
+    expect(r).toEqual({
+      error: '3 runs are already queued. Wait for the worker.',
+      values: { seedType: 'idea', ideaText: ideaText.trim(), sectors: ['HVAC'], lensIds: [], ideaCount: '7', advanceCount: '2' },
+    });
+    const invalid = await queueRunAction({}, form({ seedType: 'idea', ideaText: 'short', ideaCount: '99' }));
+    expect(invalid.values).toMatchObject({ seedType: 'idea', ideaText: 'short', ideaCount: '99' });
   });
 });
 

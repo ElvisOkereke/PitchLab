@@ -81,7 +81,7 @@ describe('markOutreachAction', () => {
   });
 
   it('reports a prospect that no longer exists', async () => {
-    expect(await markOutreachAction({}, form({ prospectId: '00000000-0000-4000-8000-000000000000', type: 'sent' })))
-      .toEqual({ error: 'This prospect no longer exists. Refresh.' });
+    expect(await markOutreachAction({}, form({ prospectId: '00000000-0000-4000-8000-000000000000', type: 'replied', note: 'asked for price' })))
+      .toEqual({ error: 'This prospect no longer exists. Refresh.', values: { type: 'replied', note: 'asked for price' } });
   });
 });

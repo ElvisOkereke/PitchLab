@@ -6,7 +6,7 @@ import { OwnerScoresInputSchema, saveOwnerScores } from '@bcg/core/dashboard/sco
 import { revalidatePath } from 'next/cache';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
-import { formToObject, toInt, type FormState } from '@/lib/form';
+import { formToObject, pickValues, toInt, type FormState, type FormValues } from '@/lib/form';
 
 /** The first problem of a failed parse as a message the owner can act on (never zod's own text). */
 function issueMessage(issues: { path: PropertyKey[]; code: string }[]): string {
@@ -24,23 +24,29 @@ function issueMessage(issues: { path: PropertyKey[]; code: string }[]): string {
 export async function saveOwnerScoresAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
   const raw = formToObject(fd);
+  // Every score field, echoed back (as trimmed, i.e. as saved): after a save the form shows what was stored, after an
+  // error it keeps every choice and note.
+  const values: FormValues = {};
+  for (const c of OWNER_CRITERIA) {
+    for (const name of [`value_${c}`, `note_${c}`]) values[name] = pickValues(raw, [name])[name] ?? '';
+  }
   const entries: { criterion: (typeof OWNER_CRITERIA)[number]; value: number; note: string }[] = [];
   for (const c of OWNER_CRITERIA) {
     const value = raw[`value_${c}`];
     const note = typeof raw[`note_${c}`] === 'string' ? (raw[`note_${c}`] as string) : '';
     if (value === undefined || value === '') {
-      if (note !== '') return { error: `Pick a score for “${CRITERION_LABEL[c]}” or clear its note.` };
+      if (note !== '') return { error: `Pick a score for “${CRITERION_LABEL[c]}” or clear its note.`, values };
       continue;
     }
     entries.push({ criterion: c, value: toInt(value) ?? Number.NaN, note });
   }
   const parsed = OwnerScoresInputSchema.safeParse({ caseId: raw.caseId, entries });
-  if (!parsed.success) return { error: issueMessage(parsed.error.issues) };
+  if (!parsed.success) return { error: issueMessage(parsed.error.issues), values };
   const r = await saveOwnerScores(getDb(), parsed.data);
-  if (!r.ok) return { error: 'This case no longer exists. Refresh.' };
+  if (!r.ok) return { error: 'This case no longer exists. Refresh.', values };
   revalidatePath('/');
   revalidatePath('/leaderboard');
   revalidatePath('/command');
   if (typeof raw.slug === 'string' && CASE_SLUG.test(raw.slug)) revalidatePath(`/cases/${raw.slug}`);
-  return { ok: true };
+  return { ok: true, values };
 }
