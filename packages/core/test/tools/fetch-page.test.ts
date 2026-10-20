@@ -100,6 +100,35 @@ describe('fetchPage', () => {
     expect(entry.ok).toBe(true);
   });
 
+  it('non-canonical IPv4 literals are normalised by the URL parser before the checks', async () => {
+    for (const target of ['http://2130706433/', 'http://0x5db8d822/', 'http://0135.0270.0330.042/', 'http://93.184.55074/']) {
+      const f = vi.fn(async (u: any) =>
+        String(u) === 'http://a.test/' ? new Response(null, { status: 302, headers: { location: target } }) : respond('<p>x</p>'),
+      );
+      const r = await fetchPage('http://a.test/', { fetchImpl: f });
+      expect(r.reason, target).toBe('blocked_host');
+      expect(f, target).toHaveBeenCalledTimes(1);
+    }
+    // As entry urls they resolve to the canonical host and the allowed-IP rules apply.
+    const entry = async (url: string) => {
+      const f = htmlFetch('<p>ok</p>');
+      const r = await fetchPage(url, { fetchImpl: f });
+      return { r, requested: f.mock.calls.map((c) => String(c[0])) };
+    };
+    const loopback = await entry('http://2130706433/');
+    expect(loopback.r.reason).toBe('blocked_host');
+    expect(loopback.requested).toEqual([]);
+    for (const [url, canonical] of [
+      ['http://0x5db8d822/', 'http://93.184.216.34/'],
+      ['http://0135.0270.0330.042/', 'http://93.184.216.34/'],
+      ['http://93.184.55074/', 'http://93.184.215.34/'],
+    ]) {
+      const { r, requested } = await entry(url);
+      expect(r.ok, url).toBe(true);
+      expect(requested, url).toEqual([canonical]);
+    }
+  });
+
   it('passes text/plain through', async () => {
     const r = await fetchPage('https://a.test', { fetchImpl: typedFetch('text/plain') });
     expect(r.ok).toBe(true);
