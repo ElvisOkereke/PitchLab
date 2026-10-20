@@ -4,7 +4,8 @@
   "type": "module",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "test": "npm test -w packages/core",
+    "test": "npm test -w packages/core && npm test -w apps/web",
+    "web": "npm run dev -w apps/web",
     "gen": "npm run gen -w packages/core --",
     "worker": "npm run gen -w packages/core -- worker",
     "db:migrate": "npm run db:migrate -w packages/core",

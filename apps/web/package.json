@@ -1,0 +1,42 @@
+{
+  "name": "@bcg/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "hash-password": "tsx scripts/hash-password.ts",
+    "acceptance": "tsx scripts/acceptance.ts",
+    "check-bundle": "tsx scripts/check-bundle.ts"
+  },
+  "dependencies": {
+    "@bcg/core": "*",
+    "@next/env": "~16.3.8",
+    "drizzle-orm": "^0.45.4",
+    "jose": "^6.2.12",
+    "next": "~16.3.8",
+    "pg": "^8.23.1",
+    "react": "~19.2.8",
+    "react-dom": "~19.2.8",
+    "server-only": "^0.0.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.5",
+    "jsdom": "^29.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^5.0.5"
+  }
+}
