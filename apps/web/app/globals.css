@@ -620,6 +620,39 @@ blockquote {
   margin: 0;
 }
 
+.score-form,
+.mark-outreach {
+  display: grid;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.score-row {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.score-row legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.score-row select,
+.mark-outreach select,
+.mark-outreach input[type='text'] {
+  width: 100%;
+}
+
+.pack-doc summary h3 {
+  margin: 0;
+  display: inline;
+}
+
+.badge + .badge {
+  margin-left: 4px;
+}
+
 /* Phones: a .stacked table shows each row as a card with labelled cells (labels from data-label). */
 @media (max-width: 767px) {
   table.stacked thead {

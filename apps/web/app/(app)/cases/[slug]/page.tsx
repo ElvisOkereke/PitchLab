@@ -1,5 +1,6 @@
 import { linkFlags } from '@bcg/core/case/review';
 import { getCaseView } from '@bcg/core/dashboard/case-view';
+import { getValidateView } from '@bcg/core/dashboard/validate-view';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { CaseHeader } from '@/components/case-header';
@@ -7,7 +8,9 @@ import { CompetitorsTab } from '@/components/tabs/competitors';
 import { EvidenceTab } from '@/components/tabs/evidence';
 import { NumbersTab } from '@/components/tabs/numbers';
 import { PitchTab } from '@/components/tabs/pitch';
+import { ScoreTab } from '@/components/tabs/score';
 import { SummaryTab } from '@/components/tabs/summary';
+import { ValidateTab } from '@/components/tabs/validate';
 import { requireOwner } from '@/lib/auth/require-owner';
 import { parseCaseQuery } from '@/lib/case-query';
 import { getDb } from '@/lib/db';
@@ -44,8 +47,12 @@ export default async function CasePage({ params, searchParams }: Props) {
     case 'pitch':
       content = <PitchTab view={view} />;
       break;
-    default:
-      content = <p className="muted">This tab is not available yet.</p>;
+    case 'validate':
+      content = <ValidateTab view={view} validate={await getValidateView(db, view.case.id, { page: query.page })} page={query.page} />;
+      break;
+    case 'score':
+      content = <ScoreTab view={view} />;
+      break;
   }
 
   return (

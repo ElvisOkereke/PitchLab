@@ -1,6 +1,6 @@
 import type { Db } from '@bcg/core/db/client';
 import * as schema from '@bcg/core/db/schema';
-import { cases, gateVerdicts, ideas, runs, stageEvents } from '@bcg/core/db/schema';
+import { cases, gateVerdicts, ideas, prospects, runs, stageEvents } from '@bcg/core/db/schema';
 import { defaultRunConfig } from '@bcg/core/pipeline/types';
 import { createTestDb } from '@bcg/core/db/test-db';
 import { eq, getTableName, is } from 'drizzle-orm';
@@ -40,6 +40,24 @@ export async function seedGatedOutIdea(db: Db, title = 'Killed idea') {
     { ideaId: idea!.id, check: 'evidence', pass: true, reasoning: 'fine', model: 'm', promptVersion: 'p' },
   ]);
   return idea!;
+}
+
+/** A case with one prospect (email set). Returns both. */
+export async function seedProspect(db: Db, o: Partial<typeof prospects.$inferInsert> = {}) {
+  const kase = await seedCase(db);
+  const [p] = await db.insert(prospects).values({
+    caseId: kase.id, name: 'Agency', website: 'https://agency.example', domain: `agency-${kase.slug}.example`, location: 'Toronto',
+    fitReason: 'fit', source: 'manual', email: `hello@${kase.slug}.example`, status: 'drafted', ...o,
+  }).returning();
+  return { kase, prospect: p! };
+}
+
+/** A run in `failed` status. */
+export async function seedFailedRun(db: Db, error = 'boom') {
+  const [run] = await db.insert(runs).values({
+    config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'failed', error, currentStage: 'ideate',
+  }).returning();
+  return run!;
 }
 
 export async function getCase(db: Db, id: string) {

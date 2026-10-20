@@ -7,7 +7,7 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Db } from '@bcg/core/db/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { createTestDb, seedCase, seedGatedOutIdea, snapshotDb } from '../helpers/db';
+import { createTestDb, seedCase, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
 import { TEST_SECRET, resetRequest, useTestEnv } from '../helpers/next-mocks';
 
 const state = vi.hoisted(() => ({ db: undefined as unknown as Db }));
@@ -36,6 +36,18 @@ const SPECS: Record<string, Spec> = {
   },
   'stage.ts#rerunGateKillAction': {
     seed: async (db) => ({ ideaId: (await seedGatedOutIdea(db)).id }),
+  },
+  'scores.ts#saveOwnerScoresAction': {
+    seed: async (db) => {
+      const c = await seedCase(db);
+      return { caseId: c.id, slug: c.slug, value_gut: '4', note_gut: 'promising' };
+    },
+  },
+  'outreach.ts#markOutreachAction': {
+    seed: async (db) => {
+      const { kase, prospect } = await seedProspect(db);
+      return { prospectId: prospect.id, slug: kase.slug, type: 'sent', note: '' };
+    },
   },
 };
 
@@ -78,7 +90,10 @@ beforeAll(async () => {
 describe('every Server Action requires a session and a same-origin request', () => {
   it('finds the action modules and has a spec for every exported action', () => {
     const names = actions.map(([n]) => n);
-    expect(names).toEqual(expect.arrayContaining(['stage.ts#moveStageAction', 'stage.ts#overturnKillAction', 'stage.ts#rerunGateKillAction']));
+    expect(names).toEqual(expect.arrayContaining([
+      'stage.ts#moveStageAction', 'stage.ts#overturnKillAction', 'stage.ts#rerunGateKillAction',
+      'scores.ts#saveOwnerScoresAction', 'outreach.ts#markOutreachAction',
+    ]));
     expect(names.filter((n) => !SPECS[n])).toEqual([]);
   });
 
