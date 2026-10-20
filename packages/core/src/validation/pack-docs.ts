@@ -78,7 +78,7 @@ export async function generatePackDocs({ db, router, log }: PackDeps, caseId: st
     prompt: prompt.render({
       caseText: wrapUntrusted('case', caseJson),
       // Owner-configured market row (two-letter codes only), so it may sit outside the untrusted block.
-      marketCountries: (await caseMarketCountries(db, caseId)) || '(not given)',
+      marketCountries: await caseMarketCountries(db, caseId),
       pilotSite: pilotSiteBlock(opts.pilotSite),
       metricKeys: CHECKLIST_METRIC_KEYS.join(', '),
       defaultGates: DEFAULT_CHECKLIST_GATES.map((g) => `- ${g.id}: ${g.description} (${g.metricKey} ≥ ${g.threshold})`).join('\n'),

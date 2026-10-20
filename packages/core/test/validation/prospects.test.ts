@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { dataCalls, prospects } from '../../src/db/schema';
+import { dataCalls, markets, prospects } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import { loadEnv } from '../../src/config/env';
 import {
-  DIRECTORY_DOMAINS, normalizeCandidates, parseProspectCsv, placesSource, prospectDomain, upsertProspects, webResearchSource,
+  DIRECTORY_DOMAINS, caseMarketCountries, normalizeCandidates, parseProspectCsv, placesSource, prospectDomain, upsertProspects, webResearchSource,
   type ProspectCandidate,
 } from '../../src/validation/prospects';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -120,6 +120,26 @@ describe('webResearchSource', () => {
     expect(out[0]).toMatchObject({ website: 'https://www.acme-freight.com/', location: 'Toronto, ON', country: 'CA', sizeNote: '40 staff', sourceUrls: ['https://news.com/acme'] });
     expect(out[1]!.country).toBeUndefined();
     expect(logs.join('\n')).toMatch(/invented-broker\.com|not named in the research/);
+  });
+
+  it('research and the pack share one market-country helper: two-letter, upper-case, filtered, CA/US default (P3-R25)', async () => {
+    const db = await testDb();
+    await db.insert(markets).values({ id: 'odd', name: 'Odd', countries: ['us', ' ca ', 'X1', 'Canada', 'US'], language: 'en', currency: 'USD', sectors: [] });
+    await db.insert(markets).values({ id: 'empty', name: 'Empty', countries: ['Canada'], language: 'en', currency: 'USD', sectors: [] });
+    const caseIn = async (marketId: string, slug: string) => {
+      const run = await insertRun(db, { ...defaultRunConfig({ seedType: 'open' }), marketId });
+      const idea = await insertIdea(db, run.id, { buyerType: 'freight broker' });
+      return insertCase(db, idea.id, { slug });
+    };
+    const odd = await caseIn('odd', 'odd');
+    const router = fakeRouter({ research: { prospect: [{ text: '', sources: [] }] }, structured: { extract: [{ prospects: [] }] } });
+    await webResearchSource.find(ctx(db, router, odd.id));
+    expect(router.calls[0]!.prompt).toContain('United States, Canada');
+    expect(router.calls[0]!.prompt).not.toMatch(/X1|\bus\b, /);
+    expect(await caseMarketCountries(db, odd.id)).toBe('United States (US), Canada (CA)');
+    // No usable code, or no market row: the CA, US default.
+    expect(await caseMarketCountries(db, (await caseIn('empty', 'empty')).id)).toBe('Canada (CA), United States (US)');
+    expect(await caseMarketCountries(db, (await caseIn('missing-market', 'missing')).id)).toBe('Canada (CA), United States (US)');
   });
 
   it('neutralises hostile case text in the research prompt', async () => {

@@ -163,20 +163,26 @@ export function normalizeCandidates<T extends ProspectCandidate>(
 
 const COUNTRY_NAMES: Record<string, string> = { CA: 'Canada', US: 'United States' };
 
+const DEFAULT_COUNTRIES = ['CA', 'US'];
+
+/**
+ * The single source of a case's market country codes (research, Places and the pack prompt): the owner-configured
+ * markets row of the case's run (default market `ca-us`), trimmed, upper-cased, two-letter codes only, deduplicated.
+ * No market row, or no usable code, gives the CA, US default like the rest of the pipeline.
+ */
+async function marketCountryCodes(db: Db, marketId: string | undefined): Promise<string[]> {
+  const [market] = await db.select({ countries: markets.countries }).from(markets).where(eq(markets.id, marketId ?? 'ca-us'));
+  const codes = [...new Set((market?.countries ?? []).map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c)))];
+  return codes.length ? codes : DEFAULT_COUNTRIES;
+}
+
 /**
  * The case's market countries for a prompt, named and coded: "Canada (CA), United States (US)". A bare "CA" was read as
- * California (first live run), so the name always comes first. Codes come from the owner-configured markets row (via
- * the case's run); anything that is not a two-letter code is dropped. Defaults to CA, US like the rest of the pipeline.
+ * California (first live run), so the name always comes first. Same codes as prospect research (loadTarget).
  */
 export async function caseMarketCountries(db: Db, caseId: string): Promise<string> {
-  const [row] = await db.select({ config: runs.config })
-    .from(cases)
-    .innerJoin(ideas, eq(ideas.id, cases.ideaId))
-    .innerJoin(runs, eq(runs.id, ideas.runId))
-    .where(eq(cases.id, caseId));
-  const [market] = await db.select({ countries: markets.countries }).from(markets).where(eq(markets.id, row?.config?.marketId ?? 'ca-us'));
-  const codes = (market?.countries ?? ['CA', 'US']).map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c));
-  return codes.map((c) => (COUNTRY_NAMES[c] ? `${COUNTRY_NAMES[c]} (${c})` : c)).join(', ');
+  const { countries } = await loadTarget(db, caseId);
+  return countries.map((c) => (COUNTRY_NAMES[c] ? `${COUNTRY_NAMES[c]} (${c})` : c)).join(', ');
 }
 
 type Target = { buyerType: string; buyer: string; oneLiner: string; problem: string; countries: string[] };
@@ -191,7 +197,6 @@ async function loadTarget(db: Db, caseId: string): Promise<Target> {
     .innerJoin(runs, eq(runs.id, ideas.runId))
     .where(eq(cases.id, caseId));
   if (!row) throw new Error(`prospects: unknown case ${caseId}`);
-  const [market] = await db.select().from(markets).where(eq(markets.id, row.config?.marketId ?? 'ca-us'));
   const summary = ((row.sections as unknown as { summary?: Record<string, unknown> } | null)?.summary ?? {});
   const buyer = asText(summary.buyer, 500) || capField(row.ideaBuyer, 500);
   return {
@@ -199,7 +204,7 @@ async function loadTarget(db: Db, caseId: string): Promise<Target> {
     buyer,
     oneLiner: asText(summary.oneLiner, 500),
     problem: asText(summary.problem, 500),
-    countries: market?.countries ?? ['CA', 'US'],
+    countries: await marketCountryCodes(db, row.config?.marketId),
   };
 }
 
