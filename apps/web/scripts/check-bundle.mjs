@@ -1,8 +1,8 @@
 // npm run check-bundle -w apps/web   (after `npm run build -w apps/web`, with the same web env as the build)
 // Searches every file the browser can download (apps/web/.next/static) for the secrets this app holds and for
 // server-only markers. Prints file names and labels only, never a value. Exit 0 = no hits, 1 = hits, 2 = no build.
-//   Secrets: SESSION_SECRET, OWNER_PASSWORD_HASH, DATABASE_URL and its password (from the process env), LLM_API_KEY
-//   (from the process env, else read from the repo-root .env only to search for it), ACCEPT_PASSWORD when set.
+//   Secrets (process env first, else the repo-root .env, read only to search): SESSION_SECRET, OWNER_PASSWORD_HASH,
+//   DATABASE_URL and its password, LLM_API_KEY, ACCEPT_PASSWORD when set.
 //   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -32,22 +32,27 @@ function dbPassword(url) {
   }
 }
 
-/** The LLM key from the process env, else from the repo-root .env (read only to search for it). */
-function llmKey(env) {
-  if (env.LLM_API_KEY) return env.LLM_API_KEY;
+/**
+ * The repo-root .env overlaid by the process env (the process env wins, as with Next and the CLI). Empty values count
+ * as unset.
+ */
+export function loadEnv(processEnv = process.env) {
   const file = join(repoRoot, '.env');
-  if (!existsSync(file)) return undefined;
-  return parseEnv(readFileSync(file, 'utf8')).LLM_API_KEY || undefined;
+  const fromFile = existsSync(file) ? parseEnv(readFileSync(file, 'utf8')) : {};
+  const merged = { ...fromFile };
+  for (const [k, v] of Object.entries(processEnv)) if (v !== undefined && v !== '') merged[k] = v;
+  for (const [k, v] of Object.entries(merged)) if (v === '') delete merged[k];
+  return merged;
 }
 
 /** Labelled needles: every secret that is set and long enough, plus the fixed markers. */
-export function bundleNeedles(env = process.env) {
+export function bundleNeedles(env = loadEnv()) {
   const secrets = {
     SESSION_SECRET: env.SESSION_SECRET,
     OWNER_PASSWORD_HASH: env.OWNER_PASSWORD_HASH,
     DATABASE_URL: env.DATABASE_URL,
     'DATABASE_URL password': env.DATABASE_URL ? dbPassword(env.DATABASE_URL) : undefined,
-    LLM_API_KEY: llmKey(env),
+    LLM_API_KEY: env.LLM_API_KEY,
     ACCEPT_PASSWORD: env.ACCEPT_PASSWORD,
   };
   const needles = [];
@@ -61,7 +66,7 @@ export function bundleNeedles(env = process.env) {
 }
 
 /** Scans `.next/static`; returns the hits as `{ file, label }` (never the value). */
-export function checkBundle(env = process.env, staticDir = join(webRoot, '.next', 'static')) {
+export function checkBundle(env = loadEnv(), staticDir = join(webRoot, '.next', 'static')) {
   if (!existsSync(staticDir)) return { ok: false, missing: true, files: 0, hits: [], skipped: [] };
   const { needles, skipped } = bundleNeedles(env);
   const files = walk(staticDir);

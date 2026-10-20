@@ -2,12 +2,13 @@
 // without JavaScript does (the form's hidden Next action fields + the visible fields, multipart/form-data, POSTed to the
 // form's action URL with Origin = the app origin, cookies kept in a jar).
 //
-//   BASE_URL=http://127.0.0.1:3000 ACCEPT_PASSWORD=... DATABASE_URL=postgres://... npm run acceptance -w apps/web
+//   BASE_URL=http://127.0.0.1:3000 ACCEPT_PASSWORD=... npm run acceptance -w apps/web
 //
-// Env: BASE_URL (default http://127.0.0.1:3000), ACCEPT_PASSWORD (the owner password, never printed), DATABASE_URL (the
-// same database the server uses; the script reads it and undoes its own writes), SESSION_SECRET / OWNER_PASSWORD_HASH
-// (only searched for in the bundle check), ACCEPT_IDEA (idea text for the queued run), KEEP_QUEUED_RUN=1 (leave the run
-// the script queues for `npm run worker -- --once`; by default it is deleted again).
+// Env (process env first, else the repo-root .env, like the server): BASE_URL (default http://127.0.0.1:3000),
+// ACCEPT_PASSWORD (the owner password, never printed), DATABASE_URL (the same database the server uses; the script
+// reads it and undoes its own writes), SESSION_SECRET / OWNER_PASSWORD_HASH / LLM_API_KEY (only searched for in the
+// bundle check), ACCEPT_IDEA (idea text for the queued run), KEEP_QUEUED_RUN=1 (leave the run the script queues for
+// `npm run worker -- --once`; by default it is deleted again).
 // Run it against a production build (`next build && next start`) with `.next` from the same env. It trips the login
 // rate limiter on purpose (last check): restart the server before running it again.
 // Prints PASS/FAIL per check; exit 0 only when every check passes. Never prints a secret, a cookie or a URL with a password.
@@ -18,16 +19,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseHTML } from 'linkedom';
 import pg from 'pg';
-import { checkBundle } from './check-bundle.mjs';
+import { checkBundle, loadEnv } from './check-bundle.mjs';
 
+const ENV = loadEnv();
 const webRoot = fileURLToPath(new URL('..', import.meta.url));
-const BASE = new URL(process.env.BASE_URL ?? 'http://127.0.0.1:3000');
+const BASE = new URL(ENV.BASE_URL ?? 'http://127.0.0.1:3000');
 const ORIGIN = BASE.origin;
-const PASSWORD = process.env.ACCEPT_PASSWORD ?? '';
+const PASSWORD = ENV.ACCEPT_PASSWORD ?? '';
 const COOKIE = 'bcg_session'; // COOKIE_SECURE=false (plain http on localhost); `__Host-bcg_session` over https
-const IDEA = process.env.ACCEPT_IDEA
+const IDEA = ENV.ACCEPT_IDEA
   ?? 'A weekly email for Ontario landlords with 3-20 units listing new Landlord and Tenant Board rule changes and the exact notice forms affected.';
-const KEEP_QUEUED_RUN = process.env.KEEP_QUEUED_RUN === '1';
+const KEEP_QUEUED_RUN = ENV.KEEP_QUEUED_RUN === '1';
 const UNKNOWN_SLUG = 'no-such-case-acceptance';
 
 // ---- results ----------------------------------------------------------------------------------------------------------
@@ -202,8 +204,8 @@ function forgedTokens() {
 
 async function main() {
   assert(PASSWORD.length >= 12, 'set ACCEPT_PASSWORD (the owner password)');
-  assert(/^postgres(ql)?:\/\//.test(process.env.DATABASE_URL ?? ''), 'set DATABASE_URL (postgres://) to the server database');
-  const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  assert(/^postgres(ql)?:\/\//.test(ENV.DATABASE_URL ?? ''), 'set DATABASE_URL (postgres://) to the server database');
+  const db = new pg.Client({ connectionString: ENV.DATABASE_URL });
   await db.connect();
   const q = async (text, params = []) => (await db.query(text, params)).rows;
 
@@ -542,7 +544,7 @@ async function main() {
 
     // (j) bundle
     await check('j. .next/static holds no secret and no server markers', async () => {
-      const r = checkBundle(process.env);
+      const r = checkBundle(ENV);
       assert(!r.missing, 'no .next/static (build first)');
       assert(r.skipped.length === 0 || r.skipped.every((s) => s === 'ACCEPT_PASSWORD'), `secrets not available to search: ${r.skipped.join(', ')}`);
       assert(r.ok, r.hits.map((h) => `${h.label} in ${h.file}`).join('; '));
