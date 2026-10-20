@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { validationPacks } from '../../src/db/schema';
+import { markets, validationPacks } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import {
   CHECKLIST_METRIC_KEYS, ChecklistSchema, InterviewKitSchema, MvpSpecSchema, PERMISSION_ISSUE_MARKER, PackDocsSchema, PilotPlanSchema,
@@ -243,7 +243,7 @@ describe('generatePackDocs', () => {
     expect(router.calls.map((c) => `${c.stage}:${c.kind}`)).toEqual(['pack:structured']);
     expect(first.mvpSpec.summary).toBe('A shipper detention packet builder');
     const [row1] = await db.select().from(validationPacks).where(eq(validationPacks.caseId, kase.id));
-    expect(row1).toMatchObject({ model: 'claude-opus-5-5', promptVersion: 'pack-docs.v1' });
+    expect(row1).toMatchObject({ model: 'claude-opus-5-5', promptVersion: 'pack-docs.v2' });
 
     await generatePackDocs(deps(db, router), kase.id);
     const rows = await db.select().from(validationPacks);
@@ -251,6 +251,31 @@ describe('generatePackDocs', () => {
     expect(rows[0]!.id).toBe(row1!.id);
     expect((rows[0]!.sections as { mvpSpec: { summary: string } }).mvpSpec.summary).toBe('second version');
     expect(rows[0]!.updatedAt.getTime()).toBeGreaterThanOrEqual(row1!.updatedAt.getTime());
+  });
+
+  it('passes the market countries (as names, outside the untrusted block) and asks for channels in each one', async () => {
+    const db = await testDb();
+    const kase = await aCase(db); // default market ca-us
+    const router = fakeRouter({ structured: { pack: [packFixture()] } });
+    await generatePackDocs(deps(db, router), kase.id);
+    const prompt = router.calls[0]!.prompt;
+    const outsideCase = prompt.slice(prompt.indexOf('</case>'));
+    expect(outsideCase).toContain('Market countries: Canada (CA), United States (US)');
+    expect(outsideCase).toMatch(/whereToFind: .*for each market country/);
+    expect(outsideCase).toMatch(/associations/);
+  });
+
+  it('a market with one country names only that country', async () => {
+    const db = await testDb();
+    await db.insert(markets).values({ id: 'us-only', name: 'US', countries: ['US'], language: 'en', currency: 'USD', sectors: [] });
+    const run = await insertRun(db, { ...defaultRunConfig({ seedType: 'open' }), marketId: 'us-only' });
+    const idea = await insertIdea(db, run.id);
+    const kase = await insertCase(db, idea.id, { slug: 'us-case', title: 'US case' });
+    const router = fakeRouter({ structured: { pack: [packFixture()] } });
+    await generatePackDocs(deps(db, router), kase.id);
+    const prompt = router.calls[0]!.prompt;
+    expect(prompt).toContain('Market countries: United States (US)');
+    expect(prompt).not.toContain('Canada (CA)');
   });
 
   it('always forbids form submissions / test leads without written permission', async () => {

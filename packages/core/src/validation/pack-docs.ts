@@ -5,6 +5,7 @@ import { loadPrompt } from '../llm/prompts';
 import { StructuredOutputError } from '../llm/types';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
+import { caseMarketCountries } from './prospects';
 import {
   CHECKLIST_METRIC_KEYS, DEFAULT_CHECKLIST_GATES, PERMISSION_ISSUE_MARKER, PackDocsLooseSchema, PackDocsSchema,
   needsPermissionWording, type PackDocs, type PilotPlan,
@@ -76,6 +77,8 @@ export async function generatePackDocs({ db, router, log }: PackDeps, caseId: st
     system: SYSTEM,
     prompt: prompt.render({
       caseText: wrapUntrusted('case', caseJson),
+      // Owner-configured market row (two-letter codes only), so it may sit outside the untrusted block.
+      marketCountries: (await caseMarketCountries(db, caseId)) || '(not given)',
       pilotSite: pilotSiteBlock(opts.pilotSite),
       metricKeys: CHECKLIST_METRIC_KEYS.join(', '),
       defaultGates: DEFAULT_CHECKLIST_GATES.map((g) => `- ${g.id}: ${g.description} (${g.metricKey} ≥ ${g.threshold})`).join('\n'),

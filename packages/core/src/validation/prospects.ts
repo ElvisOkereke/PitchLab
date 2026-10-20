@@ -163,6 +163,22 @@ export function normalizeCandidates<T extends ProspectCandidate>(
 
 const COUNTRY_NAMES: Record<string, string> = { CA: 'Canada', US: 'United States' };
 
+/**
+ * The case's market countries for a prompt, named and coded: "Canada (CA), United States (US)". A bare "CA" was read as
+ * California (first live run), so the name always comes first. Codes come from the owner-configured markets row (via
+ * the case's run); anything that is not a two-letter code is dropped. Defaults to CA, US like the rest of the pipeline.
+ */
+export async function caseMarketCountries(db: Db, caseId: string): Promise<string> {
+  const [row] = await db.select({ config: runs.config })
+    .from(cases)
+    .innerJoin(ideas, eq(ideas.id, cases.ideaId))
+    .innerJoin(runs, eq(runs.id, ideas.runId))
+    .where(eq(cases.id, caseId));
+  const [market] = await db.select({ countries: markets.countries }).from(markets).where(eq(markets.id, row?.config?.marketId ?? 'ca-us'));
+  const codes = (market?.countries ?? ['CA', 'US']).map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c));
+  return codes.map((c) => (COUNTRY_NAMES[c] ? `${COUNTRY_NAMES[c]} (${c})` : c)).join(', ');
+}
+
 type Target = { buyerType: string; buyer: string; oneLiner: string; problem: string; countries: string[] };
 
 const asText = (v: unknown, max: number) => (typeof v === 'string' ? capField(v, max) : '');
