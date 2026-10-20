@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { claims, landingPages } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
@@ -95,6 +96,22 @@ describe('renderLandingHtml', () => {
       expect(href.startsWith(u) || u === 'https://owner.ca/privacy', u).toBe(true);
     }
     expect(html).not.toContain('evil.example');
+  });
+
+  it('the CSP hashes match the rendered inline script and style exactly', () => {
+    for (const opts of [{ privacyContact: 'x' }, { privacyContact: 'x', formEndpoint: 'https://forms.owner.ca/x' }]) {
+      const html = renderLandingHtml(copy(), opts);
+      const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/.exec(html)![1]!.replace(/&#39;/g, "'");
+      const inner = (tag: string) => {
+        const m = html.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'g'))!;
+        expect(m, tag).toHaveLength(1);
+        return m[0]!.slice(tag.length + 2, -(tag.length + 3));
+      };
+      const hash = (s: string) => `'sha256-${createHash('sha256').update(s, 'utf8').digest('base64')}'`;
+      expect(csp).toContain(`script-src ${hash(inner('script'))}`);
+      expect(csp).toContain(`style-src ${hash(inner('style'))}`);
+      expect(csp).toContain("default-src 'none'");
+    }
   });
 
   it('refuses a non-http form endpoint', () => {
