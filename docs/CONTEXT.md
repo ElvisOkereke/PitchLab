@@ -37,9 +37,16 @@
   first), edit drafts before sending.
   **Plan 2 (Dashboard) built on branch `plan-2`:** chunks A–C reviewed and green (Postgres in docker-compose, auth,
   board/leaderboard/command/case tabs/runs/settings, worker for queued runs, `db:copy`); guide in `docs/dashboard.md`.
-  Remaining: the local acceptance check against real Postgres (Plan 2 Task 16), then merge.
-  Owner actions: **start Docker Desktop**; **set sender identity** (`gen config set sender.*`, also editable in the
-  dashboard's Settings); **choose a dashboard password** (`npm run hash-password -w apps/web`).
+  **Task 16 local acceptance done 2026-10-20 on a PGlite-over-socket stand-in for Postgres (Docker was not running)**
+  (`docs/runs/2026-10-20-dashboard-acceptance.md`). db:copy matched every table (cases 9), and a second copy inserted 0.
+  `npm run acceptance -w apps/web` passed 13/13 (routes behind login, cookie, board counts, 10 cases × 7 tabs, export,
+  stage moves, scores, hostile posts, queueing, rate limit, bundle scan). A live worker run queued from the dashboard
+  succeeded ($4.37, 1 case). No product defect was found. Still owed before merge, ideally: the same run on Docker
+  Postgres with `TEST_DATABASE_URL` (the real-Postgres worker claim test), plus a real phone check.
+  Owner actions: **start Docker Desktop** and repeat the acceptance (commands at the end of the results doc);
+  **set sender identity** (`gen config set sender.*`, also editable in the dashboard's Settings); **choose a dashboard
+  password** (`npm run hash-password -w apps/web`). Your local DB lacks migration 0006: back up `.data/pglite`, then
+  `npm run db:migrate` before `db:copy`.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -293,3 +300,15 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   from the dashboard (max 3 queued). Docs: `docs/dashboard.md`; `.env.example` lists every variable; dashboard
   follow-ups added to `docs/plan-1-followups.md`. Remaining: Task 16 (local acceptance with real Postgres), then merge.
   Open owner actions: start Docker Desktop, set sender identity, choose a password.
+- **2026-10-20 (later):** Plan 2 Task 16, local acceptance (`docs/runs/2026-10-20-dashboard-acceptance.md`). Docker was
+  not running, so a throwaway PGlite served by `@electric-sql/pglite-socket` stood in for Postgres. Everything temporary
+  was deleted, and the real `.data/pglite` was not touched (fingerprint unchanged). The real DB is behind by migration
+  0006 (the copy was migrated first). db:copy: every table ok, second run 0 inserted, no CRLF hash mismatch. Added
+  `apps/web/scripts/acceptance.mjs` (a no-JS form driver with 13 checks that undoes its writes) and `check-bundle.mjs`;
+  the package scripts had pointed at missing files. Result: 13/13 PASS on 9 cases and again on 10 cases. Worker
+  `--once` on a dashboard-queued owner idea: queued → running → succeeded in 6 min 20 s, $4.37, case
+  `ontario-ltb-form-change-alerts-for-small-landlords` (it exists only in the deleted throwaway DB; its Markdown export
+  is in `output/cases/`). Guide fixes: use `npm run db:migrate` for a behind local DB; npm echoes `--to` URLs; new
+  acceptance section. Observation: leaderboard `.by-toggle` links are 32px tall (rule: 44px). Not verified: Docker
+  Postgres, advisory locks and SKIP LOCKED (`TEST_DATABASE_URL` test skipped), a real phone. A socket-multiplexer slot
+  leak (fallback only) caused one spurious failed run.

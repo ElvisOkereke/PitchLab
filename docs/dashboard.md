@@ -27,15 +27,18 @@ All variables go in the repo-root `.env` (there is no `apps/web/.env`). `.env.ex
    npm run db:copy -- --dry-run     # optional: checks migrations and prints source row counts, copies nothing
    npm run db:copy -- --from pglite://.data/pglite
    ```
-   - `--to` defaults to `DATABASE_URL`. The URL is never printed.
+   - `--to` defaults to `DATABASE_URL`. The script never prints the URL, but npm echoes the command line, so a URL
+     passed with `--to` (password included) appears in the terminal. Prefer leaving `--to` out.
    - It applies the migrations to the target, checks that source and target recorded the same migrations, copies every
      table, and prints a SOURCE / INSERTED / TARGET / OK table. It exits 0 only when every table matches
      ("Copy complete: every table matches."), 1 on a row-count mismatch, 2 on a usage or migration problem.
    - The target must be EMPTY (a fresh `docker compose up -d`). Rows are inserted with ON CONFLICT DO NOTHING, so a
      target that already holds rows keeps its own version of any conflicting row, and counts can match while rows differ.
    - Close anything else using the PGlite folder first (`gen`, a worker, a dashboard on PGlite).
-   - If it says "Local DB is behind the code", run any `npm run gen -- ...` command once with
-     `DATABASE_URL=pglite://.data/pglite` to migrate the local database, then copy.
+   - If it says "Local DB is behind the code", migrate the local database first, then copy:
+     `npm run db:migrate`. That command does not read `.env`, so with no `DATABASE_URL` set in the shell it migrates
+     `.data/pglite`. Expect this the first time: the local database made before Plan 2 lacks migration
+     `0006_stage_events` (seen in the 2026-10-20 acceptance).
    - If `assertSameMigrations` reports a mismatch while the counts match, the migration hashes differ, usually
      because of CRLF line endings on Windows. Re-checkout `packages/core/drizzle/*.sql` as LF
      (`git ls-files --eol` shows the endings; `git checkout -- packages/core/drizzle`), drop and recreate the target
@@ -136,7 +139,8 @@ How things work:
 - Single owner: one password, checked against a scrypt hash. A signed session cookie (7 days) keeps you in.
 - Failed logins are rate limited: 5 failures per client per 10 minutes, and 30 overall. The limiter is in memory and
   resets when the server restarts. See `TRUST_PROXY_HOPS` above for what the client key is.
-- No secrets are in the browser bundle (no `NEXT_PUBLIC_*`; `npm run check-bundle -w apps/web` checks a build). All case text is rendered as text, never HTML.
+- No secrets are in the browser bundle (no `NEXT_PUBLIC_*`; `npm run check-bundle -w apps/web`, run with the same env
+  as the build, searches `.next/static` for the secrets, the LLM key and server-only markers). All case text is rendered as text, never HTML.
 - Log out everywhere by changing `SESSION_SECRET`.
 - Never expose the app to the internet without TLS (HTTPS). Over plain http the password and cookie travel readable.
 - What the system never does: send email (it drafts; you send), or touch the pilot site gamersgetaway.ca
@@ -146,6 +150,19 @@ How things work:
 Railway: a Postgres service, a web service (`next start`) and a worker service (`npm run worker`) sharing the same
 `DATABASE_URL`. Set `TRUST_PROXY_HOPS=1`, `ALLOWED_ORIGINS=<the public host>`, and serve HTTPS only. Remote Postgres
 needs TLS options and the rate limiter needs a shared store; both are listed in `docs/plan-1-followups.md`.
+
+## Acceptance check (after a change, or on a new machine)
+With a production build running (`npm run build -w apps/web`, then `npm run start -w apps/web`, plain http so
+`COOKIE_SECURE=false` and `ALLOW_INSECURE_COOKIE=true`):
+```
+BASE_URL=http://localhost:3000 ACCEPT_PASSWORD=<your password> npm run acceptance -w apps/web
+```
+It reads the same env as the server (the shell first, else the repo-root `.env`). PowerShell:
+`$env:BASE_URL='http://localhost:3000'; $env:ACCEPT_PASSWORD='<your password>'; npm run acceptance -w apps/web`. It submits every form the way a browser without JavaScript does and prints PASS/FAIL per
+check (routes behind login, login cookie, board counts, every case tab and export, stage moves, scores, hostile posts,
+queueing a run, logout, the login rate limit, the bundle scan). Every write it makes is undone (its stage events,
+score rows and queued run are deleted again); `KEEP_QUEUED_RUN=1` keeps the queued run so `npm run worker -- --once`
+can execute it (live LLM, about $1). The last check trips the login rate limiter on purpose: restart the server afterwards.
 
 ## Troubleshooting
 - **App refuses to start** (`Invalid web environment: NAME (rule)`): fix the named variable in the repo-root `.env`
