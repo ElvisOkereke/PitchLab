@@ -22,8 +22,16 @@ const NO_REPLY = /^(?:no[-_.]?reply|do[-_.]?not[-_.]?reply)/;
 /** Shared inboxes; ranked after named people (both are allowed). */
 const ROLE_INBOXES = new Set([
   'info', 'contact', 'contactus', 'sales', 'hello', 'hi', 'office', 'admin', 'support', 'help', 'dispatch', 'team', 'enquiries',
-  'inquiries', 'enquiry', 'inquiry', 'mail', 'careers', 'jobs', 'hr', 'billing', 'accounts', 'accounting', 'service', 'services',
-  'marketing', 'booking', 'bookings', 'orders', 'operations', 'general', 'reception', 'webmaster', 'privacy', 'media', 'press',
+  'inquiries', 'enquiry', 'inquiry', 'mail', 'billing', 'accounts', 'accounting', 'service', 'services', 'brokerage', 'ops',
+  'marketing', 'booking', 'bookings', 'orders', 'operations', 'general', 'reception', 'quotes', 'quote',
+]);
+/**
+ * Inboxes for another audience (carriers, drivers, job seekers, press, site admin); ranked after the general role inboxes.
+ * In the first live run `carriers@` (a broker's carrier-recruitment inbox) was picked over `info@` on the same page.
+ */
+const OTHER_AUDIENCE_INBOXES = new Set([
+  'carriers', 'carrier', 'carrierrelations', 'carriersetup', 'carrieronboarding', 'onboarding', 'drivers', 'driver',
+  'recruiting', 'recruitment', 'careers', 'jobs', 'hr', 'webmaster', 'privacy', 'media', 'press',
 ]);
 
 const EMAIL_RE = /[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}/gi;
@@ -131,12 +139,15 @@ function acceptable(email: string, siteDomain: string): boolean {
   return r.domain === siteDomain || FREE_MAIL.has(host);
 }
 
-const isRole = (email: string) => ROLE_INBOXES.has(email.slice(0, email.indexOf('@')).replace(/[._-]/g, ''));
+const localKey = (email: string) => email.slice(0, email.indexOf('@')).replace(/[._-]/g, '');
+/** 0 a named person, 1 a general role inbox, 2 an inbox for another audience (carriers, drivers, jobs, press). */
+const inboxTier = (email: string) => (OTHER_AUDIENCE_INBOXES.has(localKey(email)) ? 2 : ROLE_INBOXES.has(localKey(email)) ? 1 : 0);
 
 /**
  * Plausible addresses published on one page of a site: from `mailto:` links and visible text (with simple `[at]`/`[dot]`
  * obfuscation decoded), lowercased, deduplicated. Kept only on the site's registrable domain or a free-mail host;
- * asset names, placeholder domains and no-reply inboxes are dropped. Same-domain addresses come before free-mail ones, and named people before role inboxes.
+ * asset names, placeholder domains and no-reply inboxes are dropped. Same-domain addresses come before free-mail ones,
+ * named people before role inboxes, and role inboxes before inboxes for another audience (carriers, drivers, jobs, press).
  */
 export function extractEmails(html: string, siteUrl: string): FoundEmail[] {
   return extractFromDoms(cleanDoms(html), siteUrl);
@@ -155,8 +166,8 @@ function extractFromDoms(documents: PageDom[], siteUrl: string): FoundEmail[] {
     seen.add(email);
     if (acceptable(email, siteDomain)) kept.push(email);
   }
-  // Rank: same-domain named, same-domain role, free-mail named, free-mail role; page order within each group.
-  const rank = (e: string) => (FREE_MAIL.has(e.slice(e.indexOf('@') + 1)) ? 2 : 0) + (isRole(e) ? 1 : 0);
+  // Rank: same-domain named, role, other-audience; then free-mail in the same order; page order within each group.
+  const rank = (e: string) => (FREE_MAIL.has(e.slice(e.indexOf('@') + 1)) ? 3 : 0) + inboxTier(e);
   return kept
     .map((email, i) => ({ email, i }))
     .sort((a, b) => rank(a.email) - rank(b.email) || a.i - b.i)

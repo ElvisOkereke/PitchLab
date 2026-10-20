@@ -48,6 +48,15 @@ describe('extractEmails', () => {
     expect(emails(html)).toEqual(['maria.lopez@acme-freight.com', 'tom@acme-freight.com', 'info@acme-freight.com', 'sales@acme-freight.com']);
   });
 
+  it('ranks inboxes for carriers, drivers, jobs or press after the general role inboxes (live run: carriers@ was picked over info@)', () => {
+    expect(emails('<p>carriers@acme-freight.com info@acme-freight.com</p>')).toEqual(['info@acme-freight.com', 'carriers@acme-freight.com']);
+    const html = '<p>careers@acme-freight.com, drivers@acme-freight.com, carrier-onboarding@acme-freight.com, brokerage@acme-freight.com, press@acme-freight.com, ops.lead@acme-freight.com</p>';
+    expect(emails(html)).toEqual([
+      'ops.lead@acme-freight.com', 'brokerage@acme-freight.com',
+      'careers@acme-freight.com', 'drivers@acme-freight.com', 'carrier-onboarding@acme-freight.com', 'press@acme-freight.com',
+    ]);
+  });
+
   it('ranks same-domain addresses (named, then role) above free-mail ones', () => {
     const html = '<p>bob.trucking@gmail.com, info@acme-freight.com, ann@yahoo.com, jane@acme-freight.com</p>';
     expect(emails(html)).toEqual(['jane@acme-freight.com', 'info@acme-freight.com', 'bob.trucking@gmail.com', 'ann@yahoo.com']);
