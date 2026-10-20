@@ -181,3 +181,15 @@ export const PackDocsLooseSchema = z.object({ ...packShape, pilotPlan: PilotPlan
  */
 export const PackSectionsSchema = z.object({ ...packShape, pilotPlan: PilotPlanLooseSchema, reviewNotes: z.array(z.string()).optional() });
 export type PackDocs = z.infer<typeof PackSectionsSchema>;
+
+// ---- Outreach drafts (outreach.v1) ---------------------------------------------------------------
+
+/** One plain-text email. The subject is a single line; code appends the CASL footer to the body. */
+const draftEmail = z.object({
+  subject: text.max(200).refine((s) => !/[\r\n]/.test(s), { message: 'subject must be a single line' }),
+  body: text.max(5000),
+});
+
+/** What one `outreach` call returns for one prospect. */
+export const DraftEmailsSchema = z.object({ cold: draftEmail, followup1: draftEmail, followup2: draftEmail });
+export type DraftEmails = z.infer<typeof DraftEmailsSchema>;

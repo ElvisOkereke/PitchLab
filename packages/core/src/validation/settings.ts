@@ -25,11 +25,17 @@ export async function setSetting(db: Db, key: string, value: unknown): Promise<v
 /** A trimmed non-empty string value, else null (unset, blank or not a string). */
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
 
-/** The sender identity when complete, plus the required keys that are missing (in SENDER_KEYS order). */
-export async function getSender(db: Db): Promise<{ sender: Sender | null; missing: string[] }> {
+/** Every sender field, trimmed; null when unset, blank or not a string. */
+export async function getSenderFields(db: Db): Promise<Record<SenderKey, string | null>> {
   const rows = await db.select().from(settings).where(inArray(settings.key, [...SENDER_KEYS]));
   const values = new Map<string, string | null>(rows.map((r) => [r.key, str(r.value)]));
-  for (const key of SENDER_KEYS) if (!values.has(key)) values.set(key, null);
+  return Object.fromEntries(SENDER_KEYS.map((k) => [k, values.get(k) ?? null])) as Record<SenderKey, string | null>;
+}
+
+/** The sender identity when complete, plus the required keys that are missing (in SENDER_KEYS order). */
+export async function getSender(db: Db): Promise<{ sender: Sender | null; missing: string[] }> {
+  const fields = await getSenderFields(db);
+  const values = new Map<string, string | null>(Object.entries(fields));
   const missing = REQUIRED_SENDER_KEYS.filter((k) => values.get(k) === null);
   if (missing.length) return { sender: null, missing };
   const company = values.get('sender.company');
