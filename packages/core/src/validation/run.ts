@@ -27,6 +27,8 @@ export type ValidationOpts = {
   pilotSite?: string;
   /** Regenerate the pack and landing page even when they exist (otherwise kept: no model call). */
   refresh?: boolean;
+  /** Regenerate the outreach drafts of prospects that already have them (draft rows only; owner edits are replaced). */
+  redraft?: boolean;
 };
 
 export const VALIDATION_STEPS = ['pack', 'prospects', 'emails', 'drafts', 'landing', 'export'] as const;
@@ -62,6 +64,9 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`runValidation: unknown case ${caseId}`);
+  if (opts.redraft) {
+    log('validate: WARNING: --redraft replaces existing outreach drafts; drafts you edited in the database are replaced (status, events and suppressions are kept)');
+  }
 
   // 1. Pack documents (kept when present unless --refresh: the model call is the expensive part).
   try {
@@ -144,7 +149,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
     record('drafts', 'skipped', 'an earlier outreach step failed');
   } else {
     try {
-      const r = await generateDrafts(fetchDeps, caseId, { includeWeak: opts.includeWeak ?? false, pilotDomain });
+      const r = await generateDrafts(fetchDeps, caseId, { includeWeak: opts.includeWeak ?? false, pilotDomain, regenerate: opts.redraft ?? false });
       const detail = `${r.generated} drafted, ${r.refreshed} footers refreshed, ${r.unchanged} kept, ${r.failed} failed` +
         (r.excludedWeak ? `, ${r.excludedWeak} weak-basis left out` : '');
       // Every attempted prospect failing is a real failure; some failing is a warning (the rest are saved).

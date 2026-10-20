@@ -47,6 +47,7 @@ export type ValidateCliOpts = {
   includeWeak?: boolean;
   pilotSite?: string;
   refresh?: boolean;
+  redraft?: boolean;
 };
 
 export const MARK_TYPES = ['sent', 'replied', 'positive', 'meeting', 'not_interested', 'unsubscribe', 'note'] as const;
@@ -139,6 +140,7 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--include-weak', 'also draft and export emails whose CASL basis is not self-published')
     .option('--pilot-site <url>', 'http(s) URL of the site named in the pilot plan (never fetched, contacted, listed or exported)', pilotSiteArg)
     .option('--refresh', 'regenerate the pack and landing page even if they exist')
+    .option('--redraft', 'regenerate outreach drafts for prospects that already have them (replaces edited drafts; status and tracking kept)')
     .action(async (slug: string, opts: ValidateCliOpts) => {
       process.exitCode = await h.validate(slug, opts);
     });

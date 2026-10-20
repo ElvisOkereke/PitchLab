@@ -25,10 +25,18 @@ async function parse(args: string[]) {
 
 describe('gen validate', () => {
   it('parses every option', async () => {
-    const h = await parse(['validate', 'freight', '--prospects', '10', '--source', 'places', '--include-weak', '--pilot-site', 'https://pilot-site.com', '--refresh']);
+    const h = await parse([
+      'validate', 'freight', '--prospects', '10', '--source', 'places', '--include-weak', '--pilot-site', 'https://pilot-site.com', '--refresh', '--redraft',
+    ]);
     expect(h.validate).toHaveBeenCalledWith('freight', {
-      prospects: 10, source: 'places', includeWeak: true, pilotSite: 'https://pilot-site.com', refresh: true,
+      prospects: 10, source: 'places', includeWeak: true, pilotSite: 'https://pilot-site.com', refresh: true, redraft: true,
     });
+  });
+
+  it('--redraft is a flag of its own', async () => {
+    expect((await parse(['validate', 'freight', '--redraft'])).validate).toHaveBeenCalledWith('freight', { redraft: true });
+    expect((await parse(['validate', 'freight', '--skip-prospects', '--redraft'])).validate)
+      .toHaveBeenCalledWith('freight', { skipProspects: true, redraft: true });
   });
 
   it('defaults to no options; --skip-prospects is a flag', async () => {

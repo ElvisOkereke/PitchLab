@@ -248,7 +248,7 @@ describe('generateDrafts', () => {
       expect(d.body).toContain('+1 416 555 0100');
       expect(d.body).toContain(UNSUBSCRIBE_LINE);
       expect(d.model).toBe('claude-sonnet-5-5');
-      expect(d.promptVersion).toBe('outreach.v1');
+      expect(d.promptVersion).toBe('outreach.v2');
     }
     const [after] = await db.select().from(prospects).where(eq(prospects.id, p.id));
     expect(after!.status).toBe('drafted');
@@ -291,6 +291,58 @@ describe('generateDrafts', () => {
     }
     const [after] = await db.select().from(prospects).where(eq(prospects.id, p.id));
     expect(after!.status).toBe('replied');
+  });
+
+  it('renders the outreach.v2 rules: who is writing, one yes/no question, no early figures, no lecture, shorter', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    await aProspect(db, kase.id);
+    const router = fakeRouter({ structured: { outreach: [drafts()] } });
+    await generateDrafts(deps(db, router), kase.id);
+    const prompt = router.calls[0]!.prompt;
+    expect(new Set((await db.select().from(outreachDrafts)).map((d) => d.promptVersion))).toEqual(new Set(['outreach.v2']));
+    const rules = prompt.slice(prompt.indexOf('Rules:'));
+    expect(rules).toContain(`"I'm building ..."`);
+    expect(rules).toMatch(/Never invent credentials, customers, employers/);
+    expect(rules).toMatch(/ONE specific, easy yes\/no question/);
+    expect(rules).toContain('Does your team ever eat a detention charge a shipper refuses to pay because proof was missing?');
+    expect(rules).toMatch(/Never ask a stranger to send data/);
+    expect(rules).toMatch(/cold email and followup1 contain NO price, NO numbers, NO amounts and NO percentages/);
+    expect(rules).toMatch(/Followup2 may mention the price, and only as the case's allowed offer term/);
+    expect(rules).toMatch(/Do not explain the prospect's own business to them/);
+    expect(rules).toMatch(/cold email at most 90 words, each follow-up at most 60 words/);
+    // v1 rules kept: honesty, no links or addresses, only verified figures, plain text, no signature.
+    expect(rules).toMatch(/Never invent facts about the prospect/);
+    expect(rules).toMatch(/Never include links or email addresses/);
+    expect(rules).toMatch(/Plain text only/);
+    expect(rules).toMatch(/Do not add a signature/);
+    expect(rules).toContain('Allowed offer terms');
+    expect(rules).toContain('$99 per month');
+  });
+
+  it('regenerate: true replaces drafts but never touches status, events or suppressions', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const fresh = await aProspect(db, kase.id); // has drafts but status left at new (e.g. reset by hand)
+    const sent = await aProspect(db, kase.id);
+    const unsub = await aProspect(db, kase.id);
+    const router = fakeRouter({ structured: { outreach: [drafts(' A'), drafts(' A'), drafts(' A'), drafts(' B'), drafts(' B')] } });
+    await generateDrafts(deps(db, router), kase.id);
+    await db.update(prospects).set({ status: 'new' }).where(eq(prospects.id, fresh.id));
+    await markOutreach(db, sent.id, 'sent');
+    await markOutreach(db, unsub.email!, 'unsubscribe');
+    const events = await db.select().from(outreachEvents);
+    const supp = await db.select().from(suppressions);
+
+    const r = await generateDrafts(deps(db, router), kase.id, { regenerate: true });
+    expect(r).toMatchObject({ generated: 2, failed: 0 });
+    const rows = await db.select().from(outreachDrafts);
+    expect(rows).toHaveLength(9);
+    for (const d of rows) expect(d.subject.endsWith(d.prospectId === unsub.id ? ' A' : ' B'), d.subject).toBe(true);
+    const status = Object.fromEntries((await db.select().from(prospects)).map((p) => [p.id, p.status]));
+    expect(status).toEqual({ [fresh.id]: 'new', [sent.id]: 'sent', [unsub.id]: 'unsubscribed' });
+    expect(await db.select().from(outreachEvents)).toEqual(events);
+    expect(await db.select().from(suppressions)).toEqual(supp);
   });
 
   it('regenerate: true replaces the same three rows', async () => {

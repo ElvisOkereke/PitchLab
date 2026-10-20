@@ -147,6 +147,42 @@ describe('runValidation', () => {
     expect(after.map((p) => p.email)).toEqual([acme!.email, north!.email]);
   });
 
+  it('--redraft replaces existing drafts only: status, events and suppressions untouched; without it drafts are kept', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const redrafted = () => ({ ...drafts(), cold: { subject: 'Quick question', body: 'I\'m building a small tool. Does this happen to you?' } });
+    const { router, logs, deps } = setup(db, {
+      structured: { pack: [pack()], extract: [extract()], outreach: [drafts(), drafts(), redrafted()], landing: [landing()] },
+      research: { prospect: [research()] },
+    });
+    await runValidation(deps, kase.id, {});
+    const [acme, north] = await db.select().from(prospects).orderBy(prospects.name);
+    await markOutreach(db, acme!.id, 'sent');
+    await markOutreach(db, north!.email!, 'unsubscribe');
+    const statusOf = async () => (await db.select().from(prospects).orderBy(prospects.name)).map((p) => p.status);
+    const before = { status: await statusOf(), events: await db.select().from(outreachEvents), supp: await db.select().from(suppressions) };
+    const coldOf = async (id: string) =>
+      (await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, id))).find((d) => d.kind === 'cold')!.subject;
+
+    // Without --redraft: the existing drafts are kept, no outreach call.
+    await runValidation(deps, kase.id, { skipProspects: true });
+    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(2);
+    expect(await coldOf(acme!.id)).toBe('Detention claims');
+    expect(logs.join('\n')).not.toMatch(/--redraft/);
+
+    const r = await runValidation(deps, kase.id, { skipProspects: true, redraft: true });
+    expect(r.exitCode).toBe(0);
+    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(3); // the unsubscribed prospect is not redrafted
+    expect(await coldOf(acme!.id)).toBe('Quick question');
+    expect(await coldOf(north!.id)).toBe('Detention claims');
+    expect(await db.select().from(outreachDrafts)).toHaveLength(6);
+    expect(await statusOf()).toEqual(before.status);
+    expect(await db.select().from(outreachEvents)).toEqual(before.events);
+    expect(await db.select().from(suppressions)).toEqual(before.supp);
+    expect(logs.filter((l) => /--redraft replaces/.test(l))).toHaveLength(1);
+    expect(logs.join('\n')).toMatch(/drafts you edited in the database are replaced/i);
+  });
+
   it('--refresh regenerates the pack and landing page in the same rows', async () => {
     const db = await testDb();
     const kase = await aCase(db);

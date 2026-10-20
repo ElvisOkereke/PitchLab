@@ -192,8 +192,10 @@ async function draftable(
  * Outreach drafts for a case: for each prospect with a usable email (CASL basis `self_published`, or any basis with
  * `includeWeak`; never suppressed, unsubscribed or not interested), one `outreach` call writes a cold email and two
  * follow-ups; code appends the sender footer to every body. Prospects that already have all three drafts make no call
- * (only their footer is refreshed from the current settings) unless `regenerate`. Drafts are upserted by
- * (prospect, kind) in one transaction per prospect, and a prospect's status becomes `drafted` only when it was `new`.
+ * (only their footer is refreshed from the current settings) unless `regenerate` (`validate --redraft`), which replaces
+ * their draft rows (owner edits included) and nothing else. Drafts are upserted by (prospect, kind) in one transaction
+ * per prospect; a first-time draft moves the prospect's status to `drafted` only when it was `new`, a redraft never
+ * changes status, events or suppressions.
  */
 export async function generateDrafts(
   { db, router, log, fetchPage }: DraftDeps,
@@ -216,11 +218,14 @@ export async function generateDrafts(
 
   const result: DraftResult = { generated: 0, refreshed: 0, unchanged: 0, excludedWeak, failed: 0, senderMissing: missing };
   const toDraft: Prospect[] = [];
+  /** Prospects that already had complete drafts and are redrafted (regenerate): only their draft rows change. */
+  const redrafts = new Set<string>();
   for (const p of eligible) {
     const have = byProspect.get(p.id) ?? [];
     const complete = OUTREACH_KINDS.every((k) => have.some((d) => d.kind === k));
     if (!complete || opts.regenerate) {
       toDraft.push(p);
+      if (complete) redrafts.add(p.id);
       continue;
     }
     // Complete: keep the owner's drafts, only bring the footer up to date with the current settings.
@@ -276,7 +281,10 @@ export async function generateDrafts(
               set: { subject, body, model, promptVersion: prompt.version },
             });
         }
-        await tx.update(prospects).set({ status: 'drafted' }).where(and(eq(prospects.id, p.id), eq(prospects.status, 'new')));
+        // A redraft replaces draft rows only: the owner's tracking (status, events, suppressions) is never touched.
+        if (!redrafts.has(p.id)) {
+          await tx.update(prospects).set({ status: 'drafted' }).where(and(eq(prospects.id, p.id), eq(prospects.status, 'new')));
+        }
       });
       result.generated++;
     } catch (err) {
