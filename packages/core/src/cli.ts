@@ -3,7 +3,8 @@ import { join, resolve } from 'node:path';
 import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizzle-orm';
 import { caseToMarkdown } from './case/export-markdown';
 import {
-  CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
+  type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { loadEnv, type Env } from './config/env';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
@@ -13,7 +14,7 @@ import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settin
 import { seedDefaults } from './db/seed';
 import { buildRouter } from './llm/router';
 import { buildStageDeps } from './pipeline/deps';
-import { createRun, executeRun } from './pipeline/run';
+import { createRun, executeRunWithSetup } from './pipeline/run';
 import { defaultRunConfig, type RunConfig } from './pipeline/types';
 import { fetchPage } from './tools/fetch-page';
 import { computeChecklistStatus } from './validation/checklist';
@@ -86,7 +87,8 @@ async function exportCase(db: Db, slug: string): Promise<string> {
 async function executeAndReport(db: Db, env: Env, id: string): Promise<number> {
   const [row] = await db.select().from(runs).where(eq(runs.id, id));
   if (!row) throw new CliError(`Run not found: ${id}`, 1);
-  const status = await executeRun(await buildStageDeps(env, db, row.config, out), id);
+  // A setup failure (e.g. model config) marks the run failed instead of leaving it running.
+  const status = await executeRunWithSetup(db, id, () => buildStageDeps(env, db, row.config, out));
   const [final] = await db.select().from(runs).where(eq(runs.id, id));
   const cost = `$${Number(final!.costUsd).toFixed(4)}`;
 
@@ -122,6 +124,11 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
       // Created as running (not queued) so a `gen worker` on the same database never claims it.
       id = (await createRun(db, config!, { status: 'running' })).id;
       out(`Run ${id} created`);
+    } else {
+      const [row] = await db.select({ status: runs.status }).from(runs).where(eq(runs.id, id));
+      if (!row) throw new CliError(`Run not found: ${id}`, 1);
+      const refusal = resumeRefusal(row.status);
+      if (refusal) throw new CliError(`Cannot resume ${id}: ${refusal}`, 1);
     }
     return await executeAndReport(db, env, id);
   } finally {

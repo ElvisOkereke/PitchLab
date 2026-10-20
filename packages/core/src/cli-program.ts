@@ -69,6 +69,13 @@ export type CliHandlers = {
 
 export type WorkerCliOpts = { interval: number; once?: boolean };
 
+/** Why `gen resume` refuses a run with this status, or null when it may resume it (failed or running only). */
+export function resumeRefusal(status: 'queued' | 'running' | 'succeeded' | 'failed'): string | null {
+  if (status === 'queued') return 'run is queued for the worker; let the worker take it or requeue after it fails';
+  if (status === 'succeeded') return 'run already succeeded; nothing to resume';
+  return null;
+}
+
 /** Seconds between queue checks while idle: a whole number, at least 2. */
 export const WORKER_INTERVAL_DEFAULT_S = 10;
 function intervalSeconds(v: string): number {

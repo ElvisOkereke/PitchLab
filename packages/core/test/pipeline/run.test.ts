@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { runs, runStages } from '../../src/db/schema';
-import { createRun, executeRun } from '../../src/pipeline/run';
+import { createRun, executeRun, executeRunWithSetup } from '../../src/pipeline/run';
 import { defaultRunConfig, STAGES, type Stage, type StageDeps, type StageFn } from '../../src/pipeline/types';
 import { testDb } from '../helpers/db';
 
@@ -58,6 +58,23 @@ describe('executeRun', () => {
     expect(await executeRun(deps(db), id, stageImpls)).toBe('failed');
     const [row] = await db.select().from(runs).where(eq(runs.id, id));
     expect(row!.error).toBe('401 from https://api.test/v1 with Bearer [redacted] at ideate');
+  });
+
+  it('executeRunWithSetup marks the run failed (scrubbed) when setup throws, never leaving it running (D2-R3)', async () => {
+    const db = await testDb();
+    const { id } = await createRun(db, defaultRunConfig({ seedType: 'open' }), { status: 'running' });
+    const status = await executeRunWithSetup(db, id, async () => { throw new Error('Model config: bad api_key=zzz'); });
+    expect(status).toBe('failed');
+    const [row] = await db.select().from(runs).where(eq(runs.id, id));
+    expect(row).toMatchObject({ status: 'failed', error: 'Model config: bad api_key=[redacted]' });
+    expect(row!.finishedAt).toBeInstanceOf(Date);
+  });
+
+  it('executeRunWithSetup runs the stages with the deps setup returns', async () => {
+    const db = await testDb();
+    const { id } = await createRun(db, defaultRunConfig({ seedType: 'open' }), { status: 'running' });
+    const stageImpls = Object.fromEntries(STAGES.map((s) => [s, async () => FULL]));
+    expect(await executeRunWithSetup(db, id, async () => deps(db), stageImpls)).toBe('succeeded');
   });
 
   it('resumes from the failed stage without re-running done stages', async () => {

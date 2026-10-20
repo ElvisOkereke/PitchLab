@@ -59,6 +59,26 @@ export async function createRun(
 }
 
 /**
+ * Builds the stage deps with `setup` (model router, sources…), then executes the run. A setup failure (e.g. a model
+ * config error) marks the run `failed` with the scrubbed message instead of leaving it `running` (D2-R3).
+ */
+export async function executeRunWithSetup(
+  db: Db,
+  runId: string,
+  setup: () => Promise<StageDeps>,
+  stageImpls: Partial<Record<Stage, StageFn>> = {},
+): Promise<'succeeded' | 'failed'> {
+  let deps: StageDeps;
+  try {
+    deps = await setup();
+  } catch (err) {
+    await db.update(runs).set({ status: 'failed', error: errorMessage(err), finishedAt: new Date() }).where(eq(runs.id, runId));
+    return 'failed';
+  }
+  return executeRun(deps, runId, stageImpls);
+}
+
+/**
  * Runs every stage in order, persisting each stage's output. Stages already `done` are reused, so calling
  * this again on a failed run resumes from the failed stage (stages are idempotent per item, R20).
  */

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CliError, buildProgram, checkConfigKey, checkConfigValue, type CliHandlers } from '../src/cli-program';
+import { CliError, buildProgram, checkConfigKey, checkConfigValue, resumeRefusal, type CliHandlers } from '../src/cli-program';
 
 function handlers() {
   const ok = async () => 0;
@@ -107,6 +107,13 @@ describe('gen prospects import / outreach / config', () => {
     for (const bad of ['1', '0', 'ten', '2.5']) {
       await expect(parse(['worker', '--interval', bad]), bad).rejects.toThrow(/--interval/);
     }
+  });
+
+  it('resume takes failed or running runs only (D2-R3)', () => {
+    expect(resumeRefusal('failed')).toBeNull();
+    expect(resumeRefusal('running')).toBeNull();
+    expect(resumeRefusal('queued')).toBe('run is queued for the worker; let the worker take it or requeue after it fails');
+    expect(resumeRefusal('succeeded')).toMatch(/already succeeded/);
   });
 
   it('existing commands keep their options', async () => {
