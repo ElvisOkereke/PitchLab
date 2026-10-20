@@ -137,3 +137,19 @@ Open after tuning-4:
 - The stored landing_pages.html keeps the settings at generation time; a future live publish must re-render from the stored copy fields, not publish the stored html.
 - Bare URLs inside pack.md model text can autolink in GitHub-flavoured Markdown viewers (drafts are guarded, pack text is not).
 - Email verification service is not integrated; Places needs GOOGLE_PLACES_API_KEY; live landing publish and the form endpoint need the hosted app.
+
+## Validation live-run follow-ups (2026-10-19, `docs/runs/2026-10-19-validation-freight.md`)
+- Still open from Plan 3: live landing publish and the form endpoint need the hosted app; Places needs
+  GOOGLE_PLACES_API_KEY; no email verification service is integrated.
+- Decode Cloudflare email obfuscation (`data-cfemail`); it hid self-published addresses on 3 of 14 spot-checked broker sites.
+  Consider JSON-LD `email` fields too.
+- Log structured-output re-ask issues (router): 10 of 23 outreach calls were re-asks and nothing records why.
+- `validate` re-runs prospect research ($0.45–0.58) every time; consider skipping it when enough prospects exist, or
+  make `--skip-prospects` the documented re-export path.
+- Prospect yield is below `--prospects` (7–15 per call for 25 asked); size fit is loose (500-staff 3PLs, asset carriers).
+  Ask research for broker authority/size evidence or run several narrower searches.
+- Kept drafts are never regenerated, so run-1 drafts keep the pre-fix "1 per load" text; a `--refresh-drafts` for
+  status `drafted` (never `sent`) prospects would help.
+- Checklist gate "50 emails" is about 4× what web research yields; the pack should size gates to the prospect sources.
+- Same "CA, US" code rendering exists in harvest/ideate/deep-case prompts (`market.countries.join`); check whether it
+  skews research there too.

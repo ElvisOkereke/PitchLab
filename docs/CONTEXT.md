@@ -21,6 +21,11 @@
   gate, **0 passed** (autonomy 4, generic 2, control 2, regulation 1). Generic kills now about function, not buyer;
   autonomy is the binding check; operator-only evidence collapsed ideas onto two signal sets. Next: owner decision on
   run-5 Read 5–6 (feed all kill reasons + an autonomy rule into ideate; fix signal supply), then Plan 2 (Dashboard).
+  **Plan 3 (validation pack) built on main and run live 2026-10-19 on the freight case**
+  (`docs/runs/2026-10-19-validation-freight.md`): migrations 0004/0005 applied cleanly, exit 0, $3.14 over 3 runs; pack,
+  interview kit and landing page are good; prospect yield 46% email, ~50% real broker fit; 3 defects fixed on branch
+  `fix/validation-live` (CA read as California, price without "$", carriers@ ranked as a person), not yet merged.
+  Owner next: set `sender.*` + `landing.privacyContact`, contact 6–7 good-fit brokers (Horizon, Qeep first), edit drafts.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -250,3 +255,14 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   plain ranking gives the same 5; 0 re-asks. No case, no defect; $4.42, 0 × 429. Recommended next: feed all gate kill
   reasons (not only generic) and an autonomy rule into ideate; exclude problem catalogs from operator voice; sector-aware
   WordPress queries.
+- **2026-10-19:** Plan 3 Task 9, first live validation run, freight case (`docs/runs/2026-10-19-validation-freight.md`).
+  Backup `.data/pglite-backup-20261019-222601`; migrations 0004/0005 applied; signals 161 / ideas 68 / cases 9 / claims 220
+  unchanged. Run 1 (main) $1.04: pack, 10 prospects, 4 emails, 12 drafts, landing. Run 2 (idempotency) $0.58: pack and
+  landing kept, no duplicates, exit 0. Run 3 (fix branch, --refresh) $1.52. Final: 28 prospects, 13 emails, all
+  self_published role inboxes (CASL: self_published 13 / unknown 15 / third_party 0), 39 drafts. Spot-check 14 sites: all
+  real, ~7 good-fit brokers, 5 poor (asset carriers, 500-staff 3PLs). Drafts honest, only verified figures, `[SET SENDER …]`
+  markers shown, no links; too generic and ask too much to send unedited. MVP spec 9–22 days, credible; pilot plan
+  permission-first, tripwire fallback did not fire. Defects fixed TDD on `fix/validation-live` (584 tests green):
+  research prompt said "CA, US" (read as California, 0 Canadian prospects), price lacked "$" ("1 per load processed"
+  in a draft and the landing page), `carriers@` ranked above `info@`. Open: Cloudflare-obfuscated emails, re-ask reasons
+  unlogged (43% of outreach calls), research re-runs every validate, 50-email gate vs ~11 usable addresses.
