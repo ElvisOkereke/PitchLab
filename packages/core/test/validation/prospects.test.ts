@@ -108,7 +108,9 @@ describe('webResearchSource', () => {
     const rp = router.calls[0]!.prompt;
     expect(rp).toContain('<target>');
     expect(rp).toContain('freight broker');
-    expect(rp).toContain('CA, US');
+    // Country codes are written out: the model read "CA, US" as California (live run 2026-10-19).
+    expect(rp).toContain('Canada, United States');
+    expect(rp).not.toContain('CA, US');
     expect(rp).toMatch(/up to 10/);
     expect(rp).toContain('linkedin.com');
     expect(rp).toContain('yelp.com');

@@ -228,7 +228,8 @@ export const webResearchSource: ProspectSource = {
       {
         system: RESEARCH_SYSTEM,
         prompt: researchPrompt.render({
-          countries: t.countries.join(', '),
+          // Names, not codes: the model read "CA, US" as California (live run 2026-10-19).
+          countries: t.countries.map((c) => COUNTRY_NAMES[c] ?? c).join(', '),
           target: wrapUntrusted('target', target),
           count: String(limit),
           excludedDomains: [...BANNED_DOMAINS, ...DIRECTORY_DOMAINS].join(', '),
