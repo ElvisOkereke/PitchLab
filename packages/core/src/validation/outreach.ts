@@ -193,11 +193,11 @@ async function draftable(
 /**
  * Outreach drafts for a case: for each prospect with a usable email (CASL basis `self_published`, or any basis with
  * `includeWeak`; never suppressed, unsubscribed or not interested), one `outreach` call writes a cold email and two
- * follow-ups; code appends the sender footer to every body. Prospects that already have all three drafts make no call
- * (only their footer is refreshed from the current settings) unless `regenerate` (`validate --redraft`), which replaces
- * their draft rows (owner edits included) and nothing else, and only while their status is `new` or `drafted`: once a
- * prospect has been contacted its draft rows are the record of what was sent and stay untouched (P3-R24). Drafts are upserted by (prospect, kind) in one transaction
- * per prospect; a first-time draft moves the prospect's status to `drafted` only when it was `new`, a redraft never
+ * follow-ups; code appends the sender footer to every body. Once a prospect has been contacted (status past `drafted`),
+ * its complete draft rows are the record of what was sent and stay untouched: no redraft, no footer refresh (P3-R24,
+ * P3-R25). For prospects still `new` or `drafted` with all three drafts, no call is made and only the stored footer is
+ * refreshed from the current settings, unless `regenerate` (`validate --redraft`), which replaces their draft rows
+ * (owner edits included) and nothing else. Drafts are upserted by (prospect, kind) in one transaction per prospect; a first-time draft moves the prospect's status to `drafted` only when it was `new`, a redraft never
  * changes status, events or suppressions.
  */
 export async function generateDrafts(
@@ -227,9 +227,10 @@ export async function generateDrafts(
   for (const p of eligible) {
     const have = byProspect.get(p.id) ?? [];
     const complete = OUTREACH_KINDS.every((k) => have.some((d) => d.kind === k));
-    if (complete && opts.regenerate && !REDRAFTABLE.includes(p.status)) {
-      // P3-R24: once contacted, the draft text is the record of what was sent; its rows stay untouched (footer too).
-      contactedSkipped++;
+    if (complete && !REDRAFTABLE.includes(p.status)) {
+      // P3-R24/R25: once contacted, the stored draft text is the record of what was sent; its rows stay untouched (no
+      // redraft, no footer refresh). The export still renders the current footer.
+      if (opts.regenerate) contactedSkipped++;
       result.unchanged++;
       continue;
     }

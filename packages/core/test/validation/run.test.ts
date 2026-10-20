@@ -8,6 +8,7 @@ import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { runValidation, type ValidationDeps } from '../../src/validation/run';
 import { markOutreach } from '../../src/validation/outreach';
+import { setSetting } from '../../src/validation/settings';
 import type { LandingCopy } from '../../src/validation/schema';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 import { fakeRouter, type FakeScript } from '../helpers/fake-router';
@@ -185,6 +186,33 @@ describe('runValidation', () => {
     expect(await db.select().from(suppressions)).toEqual(before.supp);
     expect(logs.filter((l) => /--redraft replaces/.test(l))).toHaveLength(1);
     expect(logs.join('\n')).toMatch(/drafts you edited in the database are replaced/i);
+  });
+
+  it('a plain validate with new sender settings refreshes stored footers of drafted prospects only, never sent ones (P3-R25)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const { outDir, deps } = setup(db, {
+      structured: { pack: [pack()], extract: [extract()], outreach: [drafts(), drafts()], landing: [landing()] },
+      research: { prospect: [research()] },
+    });
+    await runValidation(deps, kase.id, {});
+    const [acme, north] = await db.select().from(prospects).orderBy(prospects.name);
+    await markOutreach(db, north!.id, 'sent');
+    const sentRows = await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, north!.id));
+    await setSetting(db, 'sender.name', 'Ann Owner');
+    await setSetting(db, 'sender.address', '1 King St W, Toronto ON');
+    await setSetting(db, 'sender.contact', '+1 416 555 0100');
+
+    const r = await runValidation(deps, kase.id, { skipProspects: true });
+    expect(r.exitCode).toBe(0);
+    expect(await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, north!.id))).toEqual(sentRows);
+    for (const d of await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, acme!.id))) {
+      expect(d.body).toContain('Ann Owner');
+      expect(d.body).not.toContain('[SET SENDER');
+    }
+    // The export still renders the current footer for everyone.
+    const md = readFileSync(join(outDir, 'freight', 'outreach-drafts.md'), 'utf8');
+    expect(md).not.toContain('[SET SENDER');
   });
 
   it('logs once when the case price unit is dropped by the charset rule, so the owner can edit it (P3-R25)', async () => {

@@ -273,19 +273,23 @@ describe('generateDrafts', () => {
     expect(logs.join('\n')).toMatch(/sender settings missing/i);
   });
 
-  it('is idempotent: a re-run makes no new call or rows, keeps an edited status, and refreshes the footer once settings exist', async () => {
+  it('is idempotent: a re-run makes no new call or rows, keeps an edited status, and refreshes the footer of uncontacted prospects only', async () => {
     const db = await testDb();
     const kase = await aCase(db);
     const p = await aProspect(db, kase.id);
-    const router = fakeRouter({ structured: { outreach: [drafts()] } });
+    const q = await aProspect(db, kase.id);
+    const router = fakeRouter({ structured: { outreach: [drafts(), drafts()] } });
     await generateDrafts(deps(db, router), kase.id);
     await db.update(prospects).set({ status: 'replied' }).where(eq(prospects.id, p.id));
+    const repliedRows = await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, p.id));
 
     await setSender(db);
     const r2 = await generateDrafts(deps(db, router), kase.id); // no scripted response left: any call would throw
-    expect(r2).toMatchObject({ generated: 0, refreshed: 1, failed: 0 });
-    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(1);
-    const rows = await db.select().from(outreachDrafts);
+    expect(r2).toMatchObject({ generated: 0, refreshed: 1, unchanged: 1, failed: 0 });
+    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(2);
+    // P3-R25: a contacted prospect's stored drafts are the record of what was sent: the footer is not rewritten.
+    expect(await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, p.id))).toEqual(repliedRows);
+    const rows = await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, q.id));
     expect(rows).toHaveLength(3);
     for (const d of rows) {
       expect(d.body).toContain('Ann Owner');
