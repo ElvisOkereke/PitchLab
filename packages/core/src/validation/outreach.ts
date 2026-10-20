@@ -7,12 +7,13 @@ import {
   type OutreachEventType, type OutreachKind, type ProspectStatus,
 } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
+import { StructuredOutputError } from '../llm/types';
 import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
-import { DraftEmailsSchema } from './schema';
+import { DraftEmailsSchema, EMAIL_IN_TEXT, LINK_IN_TEXT } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
 
@@ -74,7 +75,9 @@ export function applyFooter(body: string, footer: string): string {
 const CASE_MAX = 12000;
 const FIELD_MAX = 500;
 const FIT_MAX = 1000;
-const SNIPPET_MAX = 300;
+/** Homepage snippet: title + meta description, at most this many characters together (P3-R14). */
+const SNIPPET_MAX = 400;
+const SNIPPET_TITLE_MAX = 120;
 const CLAIMS_MAX = 8;
 const DRAFT_MAX_TOKENS = 3000;
 const DRAFT_CONCURRENCY = 4;
@@ -137,8 +140,11 @@ async function siteSnippet(fetchPage: StageDeps['fetchPage'] | undefined, p: Pro
       }
     }
   }
-  const title = capField(stripInvisible(page.title), SNIPPET_MAX);
-  description = capField(stripInvisible(description), SNIPPET_MAX);
+  // P3-R14: only the title and meta description (never page body), links and addresses removed, ≤ SNIPPET_MAX chars in all.
+  const plain = (s: string, max: number) =>
+    capField(stripInvisible(s).replace(LINK_IN_TEXT, ' ').replace(EMAIL_IN_TEXT, ' '), max);
+  const title = plain(page.title, SNIPPET_TITLE_MAX);
+  description = plain(description, SNIPPET_MAX - title.length);
   if (!title && !description) return null;
   return [`Title: ${title || '(none)'}`, `Description: ${description || '(none)'}`].join('\n');
 }
@@ -260,7 +266,8 @@ export async function generateDrafts(
       result.generated++;
     } catch (err) {
       result.failed++;
-      log(`outreach: drafting for ${capField(p.name, 100)} (${p.domain}) failed: ${capField(err instanceof Error ? err.message : String(err), 300)}`);
+      const detail = err instanceof StructuredOutputError ? `${err.message}: ${err.issues}` : err instanceof Error ? err.message : String(err);
+      log(`outreach: drafting for ${capField(p.name, 100)} (${p.domain}) failed: ${capField(detail, 400)}`);
     }
   })));
 

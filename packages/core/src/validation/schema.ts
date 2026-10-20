@@ -184,10 +184,24 @@ export type PackDocs = z.infer<typeof PackSectionsSchema>;
 
 // ---- Outreach drafts (outreach.v1) ---------------------------------------------------------------
 
+/** A link in text: an http(s)/ftp URL or a bare `www.` host. Global: use with replace/match only. */
+export const LINK_IN_TEXT = /\b(?:(?:https?|ftp):\/\/|www\.)[^\s<>"']*/gi;
+/** An email address in text. Global: use with replace/match only. */
+export const EMAIL_IN_TEXT = /[a-z0-9._%+'-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
+
+/**
+ * Ruling P3-R14: model-written email text never carries a link or an email address (prospect-site text could otherwise
+ * steer a draft the owner sends). The sender's own contact details are added by code after validation, in the footer.
+ */
+const noLinksOrAddresses = (s: string) => !s.match(LINK_IN_TEXT) && !s.match(EMAIL_IN_TEXT);
+const NO_LINKS_MESSAGE = 'must not contain any link (URL, www.) or email address; contact details are added automatically';
+
 /** One plain-text email. The subject is a single line; code appends the CASL footer to the body. */
 const draftEmail = z.object({
-  subject: text.max(200).refine((s) => !/[\r\n]/.test(s), { message: 'subject must be a single line' }),
-  body: text.max(5000),
+  subject: text.max(200)
+    .refine((s) => !/[\r\n]/.test(s), { message: 'subject must be a single line' })
+    .refine(noLinksOrAddresses, { message: `subject ${NO_LINKS_MESSAGE}` }),
+  body: text.max(5000).refine(noLinksOrAddresses, { message: `body ${NO_LINKS_MESSAGE}` }),
 });
 
 /** What one `outreach` call returns for one prospect. */
