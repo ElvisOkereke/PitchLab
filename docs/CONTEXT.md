@@ -35,10 +35,15 @@
   Owner next: **set `sender.name`, `sender.address`, `sender.contact` and `landing.privacyContact` (still unset)**, then
   `validate <slug> --skip-prospects --redraft` to get v2 drafts at low cost, contact 6–7 good-fit brokers (Horizon, Qeep
   first), edit drafts before sending.
+  **Plan 2 (Dashboard) built on branch `plan-2`:** chunks A–C reviewed and green (Postgres in docker-compose, auth,
+  board/leaderboard/command/case tabs/runs/settings, worker for queued runs, `db:copy`); guide in `docs/dashboard.md`.
+  Remaining: the local acceptance check against real Postgres (Plan 2 Task 16), then merge.
+  Owner actions: **start Docker Desktop**; **set sender identity** (`gen config set sender.*`, also editable in the
+  dashboard's Settings); **choose a dashboard password** (`npm run hash-password -w apps/web`).
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
-- **Last updated:** 2026-10-19
+- **Last updated:** 2026-10-20
 
 ## The Goal (in the user's words, summarised)
 Build a repeatable **software-service business case generator**: something run consistently to research and produce
@@ -282,3 +287,9 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   one market-country helper, price-unit charset rule with a log line. No longer open: Cloudflare emails; the 50-email
   gate is now shown against the usable-address count (the threshold itself is still set before prospects exist). Still
   open: re-ask reasons unlogged, research re-runs every validate, JSON-LD emails, prospect yield below `--prospects`.
+- **2026-10-20:** Plan 2 (Dashboard) built on `plan-2`, chunks A–C reviewed and green. Next.js app in `apps/web` (single
+  owner, scrypt password + signed 7-day cookie, in-memory login rate limit), local Postgres via `docker-compose.yml`
+  (127.0.0.1:5433), `npm run db:copy` (PGlite to Postgres, target must be empty), `npm run worker` executes runs queued
+  from the dashboard (max 3 queued). Docs: `docs/dashboard.md`; `.env.example` lists every variable; dashboard
+  follow-ups added to `docs/plan-1-followups.md`. Remaining: Task 16 (local acceptance with real Postgres), then merge.
+  Open owner actions: start Docker Desktop, set sender identity, choose a password.

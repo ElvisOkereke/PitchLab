@@ -161,3 +161,14 @@ Open after tuning-4:
   skews research there too.
 
 - Timing-ceiling tests (hostile 500KB/1MB inputs, e.g. nested-div parse, scrub linear-time) can flake under parallel suite load; a one-off core suite failure was seen once during dashboard chunk B. Consider a looser ceiling or running timing tests in a separate project.
+
+## Dashboard follow-ups (Plan 2, `docs/dashboard.md`)
+- The login rate limiter is in memory and per instance (resets on restart). Plan 4: a shared store or a proxy-level limit.
+- `next build` needs the web env present at build time (dummy values work); consider lazy env reads.
+- Forms lose keyboard focus after a submit (the form remounts).
+- The timing-ceiling tests may flake under load (see above).
+- HSTS is tested through `securityHeaders(true)`, not through the full Next config.
+- The proxy matcher test imports a Next internal; it may break on a Next upgrade.
+- The case page shows the same "something went wrong" message for any error thrown by a tab.
+- `gen resume`'s status check is not atomic: two resumes at once can both pass it (see also the orchestrator item in Plan 4).
+- No dedicated "database not reachable" banner: only Settings shows Database "not reachable"; other pages fall to an error page.
