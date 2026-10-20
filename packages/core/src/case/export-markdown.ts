@@ -13,7 +13,8 @@ export type ScoreRow = typeof scores.$inferSelect;
 
 /** Escape for inline Markdown text: HTML-significant chars and link brackets. */
 export function esc(s: string): string {
-  return s
+  // P3-R16: invisible/bidi/control characters go first, so every helper built on esc is safe by construction.
+  return stripInvisible(s)
     .replace(/\\/g, '\\\\')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

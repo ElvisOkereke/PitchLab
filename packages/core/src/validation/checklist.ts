@@ -52,8 +52,8 @@ async function landingConversion(db: Db, caseId: string): Promise<number | null>
 /**
  * The stored checklist gates of a case with each metric's current value from tracked data: emails_sent, positive_replies
  * and meetings count distinct prospects with a `sent` / `positive` / `meeting` event; interviews_done counts `note`
- * events starting "interview:"; landing_conversion_pct is submits ÷ visits. A gate passes when value ≥ threshold.
- * Empty when the case has no (valid) pack.
+ * events starting "interview:"; landing_conversion_pct is submits ÷ visits. A gate passes when value ≥ threshold and the
+ * threshold is positive. Empty when the case has no (readable) pack.
  */
 export async function computeChecklistStatus(db: Db, caseId: string): Promise<GateStatus[]> {
   const [row] = await db.select({ sections: validationPacks.sections }).from(validationPacks).where(eq(validationPacks.caseId, caseId));
@@ -83,7 +83,8 @@ export async function computeChecklistStatus(db: Db, caseId: string): Promise<Ga
       metricKey: g.metricKey,
       value,
       threshold: g.threshold,
-      state: value !== null && value >= g.threshold ? 'pass' : 'pending',
+      // P3-R16: a non-positive or non-finite threshold (legacy packs) never passes.
+      state: value !== null && Number.isFinite(g.threshold) && g.threshold > 0 && value >= g.threshold ? 'pass' : 'pending',
     });
   }
   return out;

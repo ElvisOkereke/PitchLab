@@ -9,7 +9,7 @@ import { setSetting } from '../../src/validation/settings';
 import { computeChecklistStatus } from '../../src/validation/checklist';
 import { csvCell, csvRows, exportValidation } from '../../src/validation/export';
 import { UNSUBSCRIBE_LINE, markOutreach } from '../../src/validation/outreach';
-import type { LandingCopy, PackDocs } from '../../src/validation/schema';
+import { ChecklistSchema, type LandingCopy, type PackDocs } from '../../src/validation/schema';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 type Db = Awaited<ReturnType<typeof testDb>>;
@@ -120,7 +120,24 @@ describe('csvCell', () => {
     expect(csvCell('=HYPERLINK("http://x","y")')).toBe(`"'=HYPERLINK(""http://x"",""y"")"`);
     for (const s of ['+1', '-2', '@SUM(A1)', '\tx', '\rx']) expect(csvCell(s).startsWith(`"'`), JSON.stringify(s)).toBe(true);
     expect(csvCell(null)).toBe('""');
+    // P3-R16: invisible characters are stripped first, so they cannot hide a formula start.
+    expect(csvCell('​=cmd()')).toBe(`"'=cmd()"`);
+    expect(csvCell('a‮b‍c')).toBe('"abc"');
+    expect(csvCell('line1\r\nline2')).toBe('"line1\nline2"');
     expect(csvRows([['a', 'b'], ['c', 'd']])).toBe('﻿"a","b"\r\n"c","d"\r\n');
+  });
+});
+
+describe('ChecklistSchema thresholds (P3-R16)', () => {
+  it('must be positive; a landing conversion is at most 100', () => {
+    const gate = { id: 'g', description: 'd', metricKey: 'emails_sent' as const, threshold: 5 };
+    expect(ChecklistSchema.safeParse({ gates: [gate] }).success).toBe(true);
+    expect(ChecklistSchema.safeParse({ gates: [{ ...gate, threshold: 0 }] }).success).toBe(false);
+    expect(ChecklistSchema.safeParse({ gates: [{ ...gate, threshold: -3 }] }).success).toBe(false);
+    const conv = { ...gate, metricKey: 'landing_conversion_pct' as const };
+    expect(ChecklistSchema.safeParse({ gates: [{ ...conv, threshold: 100 }] }).success).toBe(true);
+    expect(ChecklistSchema.safeParse({ gates: [{ ...conv, threshold: 101 }] }).success).toBe(false);
+    expect(ChecklistSchema.safeParse({ gates: [{ ...gate, threshold: 500 }] }).success).toBe(true);
   });
 });
 
@@ -157,6 +174,22 @@ describe('computeChecklistStatus', () => {
     expect(status.find((g) => g.id === 'landing')).toMatchObject({ value: 2.5, state: 'pending' });
   });
 
+  it('a stored legacy gate with threshold 0 (or below) stays pending even when the value meets it (P3-R16)', async () => {
+    const db = await testDb();
+    const legacy = pack({
+      gates: [
+        { id: 'zero', description: 'zero', metricKey: 'emails_sent', threshold: 0 },
+        { id: 'neg', description: 'neg', metricKey: 'meetings', threshold: -1 },
+      ],
+    });
+    const kase = await aCase(db, 'freight', legacy);
+    const status = await computeChecklistStatus(db, kase.id);
+    expect(status.map((g) => [g.id, g.value, g.state])).toEqual([['zero', 0, 'pending'], ['neg', 0, 'pending']]);
+    const out = tmp();
+    await exportValidation(db, kase.id, out); // a legacy pack still renders
+    expect(readFileSync(join(out, 'freight', 'pack.md'), 'utf8')).toContain('## MVP spec');
+  });
+
   it('is empty when the case has no pack', async () => {
     const db = await testDb();
     const kase = await aCase(db);
@@ -184,7 +217,7 @@ describe('exportValidation', () => {
     const pmd = readFileSync(join(dir, 'pack.md'), 'utf8');
     expect(pmd).toContain('# Validation pack: Freight &lt;b&gt;detention&lt;/b&gt;');
     expect(pmd).toContain('## Validation checklist');
-    expect(pmd).toMatch(/Send 3 emails.*\|\s*0\s*\|\s*3\s*\|\s*pending/);
+    expect(pmd).toMatch(/Send 3 emails.*\|\s*0\s*\|\s*3 \(differs from default 50\)\s*\|\s*pending/);
     expect(pmd).toContain('## MVP spec');
     expect(pmd).toContain('## Pilot plan');
     expect(pmd).toContain('## Interview kit');
@@ -280,6 +313,40 @@ describe('exportValidation', () => {
     }
     const pmd = readFileSync(join(out, 'freight', 'pack.md'), 'utf8');
     expect(pmd).toContain('\\| broken \\|');
+  });
+
+  it('bidi overrides and zero-width characters never reach the Markdown or CSV files (P3-R16)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id);
+    const kase = await insertCase(db, idea.id, { slug: 'freight', title: 'Freight‮ noitneted​', sections: { summary: {} } as unknown as CaseSections });
+    await db.insert(validationPacks).values({ caseId: kase.id, sections: pack({ summary: 'Sum⁦mary‍' }), model: 'm', promptVersion: 'v' });
+    const p = await aProspect(db, kase.id, { name: 'Acme‮Freight​', fitReason: 'fits⁧' });
+    await db.insert(outreachDrafts).values({ prospectId: p.id, kind: 'cold', subject: 'Hi‮ there​', body: 'Body​‮ text', model: 'm', promptVersion: 'v' });
+    const out = tmp();
+    await exportValidation(db, kase.id, out);
+    for (const f of ['pack.md', 'outreach-drafts.md', 'prospects.csv', 'outreach.csv']) {
+      const text = readFileSync(join(out, 'freight', f), 'utf8');
+      expect(text, f).not.toMatch(/[‪-‮⁦-⁩​-‍]/);
+    }
+    expect(readFileSync(join(out, 'freight', 'outreach.csv'), 'utf8')).toContain('AcmeFreight');
+    expect(readFileSync(join(out, 'freight', 'pack.md'), 'utf8')).toContain('Freight noitneted');
+  });
+
+  it('pack.md notes a gate threshold that differs from its default (P3-R16)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db, 'freight', pack({
+      gates: [
+        { id: 'sent', description: 'Send 3 emails', metricKey: 'emails_sent', threshold: 3 },
+        { id: 'conv', description: '5% conversion', metricKey: 'landing_conversion_pct', threshold: 5 },
+      ],
+    }));
+    const out = tmp();
+    await exportValidation(db, kase.id, out);
+    const md = readFileSync(join(out, 'freight', 'pack.md'), 'utf8');
+    expect(md).toMatch(/Send 3 emails.*3 \(differs from default 50\)/);
+    expect(md).toMatch(/5% conversion[^\n]*\| 5% \|/);
+    expect(md).not.toMatch(/5% conversion[^\n]*differs/);
   });
 
   it('works for a case with no pack, prospects or landing page yet', async () => {

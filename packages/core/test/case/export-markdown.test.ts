@@ -44,6 +44,20 @@ function aiScores(): ScoreRow[] {
 }
 
 describe('caseToMarkdown', () => {
+  it('strips bidi overrides and zero-width characters from every escaped field (P3-R16)', () => {
+    const c = caseFixture({
+      title: 'Lead‮ flow​',
+      mutate: (s) => {
+        s.summary.oneLiner = 'One⁦ liner‍';
+        s.competitors.list[0]!.name = 'Comp‮etitor';
+      },
+    });
+    const md = caseToMarkdown(c, [claim('verified', { text: 'Claim​ text‮' })], aiScores());
+    expect(md).not.toMatch(/[‪-‮⁦-⁩​-‍]/);
+    expect(md).toContain('# Lead flow');
+    expect(md).toContain('Competitor');
+  });
+
   it('renders markdown with gate flags, formulas and claim statuses', () => {
     const md = caseToMarkdown(caseFixture({ gateFlags: ['evidence'] }), [claim('verified'), claim('unreachable')], aiScores());
     expect(md).toMatch(/⚠️ Gate flags: evidence/);

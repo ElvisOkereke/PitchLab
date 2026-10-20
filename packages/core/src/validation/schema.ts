@@ -161,13 +161,25 @@ export const DEFAULT_CHECKLIST_GATES: readonly { id: string; description: string
   { id: 'landing-conversion', description: 'At least 5% of landing page visitors leave their email', metricKey: 'landing_conversion_pct', threshold: 5 },
 ];
 
+const gateShape = { id: text, description: text, metricKey: z.enum(CHECKLIST_METRIC_KEYS) };
+
+/** What the model returns (P3-R16): every threshold positive (a 0 gate would pass with no evidence); a conversion is a percentage ≤ 100. */
 export const ChecklistSchema = z.object({
   gates: z
-    .array(z.object({ id: text, description: text, metricKey: z.enum(CHECKLIST_METRIC_KEYS), threshold: z.number().min(0) }))
+    .array(z.object({ ...gateShape, threshold: z.number().positive() }).refine(
+      (g) => g.metricKey !== 'landing_conversion_pct' || g.threshold <= 100,
+      { message: 'landing_conversion_pct threshold is a percentage: at most 100', path: ['threshold'] },
+    ))
     .min(1)
     .refine((gates) => new Set(gates.map((g) => g.id)).size === gates.length, { message: 'gate ids must be unique' }),
 });
 export type Checklist = z.infer<typeof ChecklistSchema>;
+
+/**
+ * A stored checklist as read back: any finite threshold, so packs stored before P3-R16 (threshold 0) still render.
+ * computeChecklistStatus never passes a gate whose threshold is not positive.
+ */
+export const ChecklistStoredSchema = z.object({ gates: z.array(z.object({ ...gateShape, threshold: z.number() })) });
 
 const packShape = { mvpSpec: MvpSpecSchema, interviewKit: InterviewKitSchema, checklist: ChecklistSchema };
 
@@ -180,7 +192,12 @@ export const PackDocsLooseSchema = z.object({ ...packShape, pilotPlan: PilotPlan
  * What `validation_packs.sections` stores: the documents plus `reviewNotes`, which only code writes (never the model:
  * it is not in the schemas sent to the model), e.g. when the fallback added permission reminders.
  */
-export const PackSectionsSchema = z.object({ ...packShape, pilotPlan: PilotPlanLooseSchema, reviewNotes: z.array(z.string()).optional() });
+export const PackSectionsSchema = z.object({
+  ...packShape,
+  checklist: ChecklistStoredSchema,
+  pilotPlan: PilotPlanLooseSchema,
+  reviewNotes: z.array(z.string()).optional(),
+});
 export type PackDocs = z.infer<typeof PackSectionsSchema>;
 
 // ---- Outreach drafts (outreach.v1) ---------------------------------------------------------------

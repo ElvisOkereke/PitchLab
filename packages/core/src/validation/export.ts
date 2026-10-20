@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import { eq, inArray } from 'drizzle-orm';
 import { block, cell, line, link, table } from '../case/export-markdown';
 import type { Db } from '../db/client';
+import { stripInvisible } from '../llm/untrusted';
 import { OUTREACH_KINDS, cases, landingPages, outreachDrafts, prospects, suppressions, validationPacks, type OutreachKind } from '../db/schema';
 import { computeChecklistStatus, type GateStatus } from './checklist';
 import { landingOptions, renderLandingHtml } from './landing';
 import { applyFooter, exportableOutreach, outreachCounts, senderFooter, type OutreachCounts } from './outreach';
-import { LandingCopySchema, PackSectionsSchema, type PackDocs } from './schema';
+import { DEFAULT_CHECKLIST_GATES, LandingCopySchema, PackSectionsSchema, type PackDocs } from './schema';
 
 // All LLM- and web-derived text is escaped for its output format (R13): Markdown via the case export helpers, HTML by
 // the landing template, CSV by csvCell (quoted, formula starts defused).
@@ -17,9 +18,12 @@ import { LandingCopySchema, PackSectionsSchema, type PackDocs } from './schema';
 /** Characters that make a spreadsheet treat a cell as a formula (or that can precede one). */
 const FORMULA_START = /^[=+\-@\t\r\n]|^\s+[=+\-@]/;
 
-/** One CSV cell: always quoted, quotes doubled, newlines kept inside the quotes; a formula-looking start gets a `'`. */
+/**
+ * One CSV cell: line ends unified to \n (a lone CR becomes \n), invisible/bidi/control characters stripped (P3-R16),
+ * then a formula-looking start gets a `'`; always quoted, quotes doubled, newlines kept inside the quotes.
+ */
 export function csvCell(v: string | number | null | undefined): string {
-  let s = v === null || v === undefined ? '' : String(v);
+  let s = stripInvisible((v === null || v === undefined ? '' : String(v)).replace(/\r\n?/g, '\n'));
   if (FORMULA_START.test(s)) s = `'${s}`;
   return `"${s.replace(/"/g, '""')}"`;
 }
@@ -50,7 +54,13 @@ function senderWarning(missing: string[]): string[] {
 
 const fmtValue = (g: GateStatus) =>
   g.value === null ? 'n/a' : g.metricKey === 'landing_conversion_pct' ? `${g.value}%` : String(g.value);
-const fmtThreshold = (g: GateStatus) => (g.metricKey === 'landing_conversion_pct' ? `${g.threshold}%` : String(g.threshold));
+const fmtNumber = (g: GateStatus, n: number) => (g.metricKey === 'landing_conversion_pct' ? `${n}%` : String(n));
+/** The threshold, noting when it differs from the default gate for the same metric (P3-R16). */
+const fmtThreshold = (g: GateStatus) => {
+  const def = DEFAULT_CHECKLIST_GATES.find((d) => d.metricKey === g.metricKey);
+  const note = def && def.threshold !== g.threshold ? ` (differs from default ${fmtNumber(g, def.threshold)})` : '';
+  return `${fmtNumber(g, g.threshold)}${note}`;
+};
 
 function checklistSection(status: GateStatus[]): string[] {
   const passed = status.filter((g) => g.state === 'pass').length;
