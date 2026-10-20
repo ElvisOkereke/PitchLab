@@ -53,32 +53,47 @@ export const THIRD_PARTY_ACTION = new RegExp(String.raw`\b(?:${THIRD_PARTY_ACTIO
 const PERMISSION_WORD = /\b(?:permission|consent(?:s|ed|ing)?|authori[sz](?:e|es|ed|ing|ation|ations)|agreed)\b/gi;
 /** A negation shortly before the keyword ("no", "without", "don't need" … permission). */
 const NEGATION_BEFORE = /\b(?:no|without|not|never|don['’]?t|doesn['’]?t|unnecessary|needless)\b/i;
-/** A negation right after the keyword ("permission is not required", "consent unnecessary"). */
-const NEGATION_AFTER = /^\W*(?:(?:is|are|was|were)\s+)?(?:not\s+(?:required|needed|necessary)|unnecessary|needless|optional)\b/i;
+/** A negation right after the keyword ("permission is not required", "consent unnecessary", ", it is not needed"). */
+const NEGATION_AFTER =
+  /^\W*(?:(?:it|this|that|which)\s+)?(?:(?:is|are|was|were)\s+)?(?:not\s+(?:required|needed|necessary)|unnecessary|needless|optional)\b/i;
+/** After "without … permission": wording that approves acting without it ("without permission is fine"). */
+const WITHOUT_OK_AFTER = /^\W*(?:(?:it|this|that|which)\s+)?(?:is|are|was|'s)\s+(?:fine|ok(?:ay)?|acceptable|allowed|needed)\b/i;
 const NEGATION_WINDOW = 20;
-/** A prohibition earlier in the clause turns "without … permission" into a rule: "Never submit test leads without permission". */
-const PROHIBITION = /\b(?:never|no|do\s+not|don['’]?t|must\s+not|may\s+not|cannot|can['’]?t)\b/i;
 
-/** True when `clause` (text before a permission keyword) reads "<prohibition> … without …" with "without" near the keyword. */
+// Best-effort tripwire for advisory text; permission reminders are also appended by the fallback in pack-docs.
+// The prohibition exception (P3-R9) is deliberately narrow; other wording edge cases are documented limitations.
+/** A prohibition token within PROHIBITION_REACH chars before "without", in the same clause. */
+const PROHIBITION_TOKEN = /\b(?:never|do\s+not|don['’]?t|must\s+not|may\s+not|cannot|can['’]?t)\b/i;
+const PROHIBITION_REACH = 40;
+/** "no <up to 3 words>" directly followed by "without": "No test leads without prior permission". */
+const NO_PHRASE_BEFORE_WITHOUT = /\bno\s+(?:\S+\s+){0,3}$/i;
+/** "without" at most 2 words before the keyword (the clause ends right before the keyword). */
+const WITHOUT_NEAR_KEYWORD = /\bwithout\s+(?:\S+\s+){0,2}$/i;
+
+/** True when `clause` (the text before a permission keyword) reads "<prohibition> … without [≤2 words]". */
 function isProhibitionWithout(clause: string): boolean {
-  const near = clause.slice(-NEGATION_WINDOW);
-  const w = near.search(/\bwithout\b/i);
-  if (w < 0) return false;
-  return PROHIBITION.test(clause.slice(0, clause.length - near.length + w));
+  const w = WITHOUT_NEAR_KEYWORD.exec(clause);
+  if (!w) return false;
+  const beforeWithout = clause.slice(0, w.index);
+  return PROHIBITION_TOKEN.test(beforeWithout.slice(-PROHIBITION_REACH)) || NO_PHRASE_BEFORE_WITHOUT.test(beforeWithout);
 }
 
 /**
  * True when the text mentions permission (or consent, authorisation, "agreed") at least once affirmatively: not negated
- * ("no permission needed", "permission not required"), unless the negation is a prohibition ("never … without permission").
+ * before ("no permission needed") or after ("permission not required"), except that a prohibition makes
+ * "never … without permission" affirmative unless wording after it approves acting without it.
  */
 export function hasPermissionWording(s: string): boolean {
   for (const m of s.matchAll(PERMISSION_WORD)) {
-    // The clause before the keyword stops at the previous sentence or clause break.
-    const clause = s.slice(0, m.index).split(/[.;!?]/).at(-1)!;
-    if (isProhibitionWithout(clause)) return true;
-    const before = clause.slice(-NEGATION_WINDOW);
-    const after = s.slice(m.index + m[0].length, m.index + m[0].length + NEGATION_WINDOW + 5);
-    if (!NEGATION_BEFORE.test(before) && !NEGATION_AFTER.test(after)) return true;
+    // The clause before the keyword stops at the previous sentence or clause break (incl. dashes).
+    const clause = s.slice(0, m.index).split(/[.;!?—–]/).at(-1)!;
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + NEGATION_WINDOW + 10);
+    if (NEGATION_AFTER.test(after)) continue;
+    if (isProhibitionWithout(clause)) {
+      if (!WITHOUT_OK_AFTER.test(after)) return true;
+      continue;
+    }
+    if (!NEGATION_BEFORE.test(clause.slice(-NEGATION_WINDOW))) return true;
   }
   return false;
 }

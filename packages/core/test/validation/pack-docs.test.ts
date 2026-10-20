@@ -193,6 +193,20 @@ describe('validation schemas', () => {
       }
     });
 
+    it('the prohibition exception is narrow and still honours a negation after the keyword (P3-R9)', () => {
+      for (const s of ['Never submit test leads without written permission', 'No test leads without prior permission']) {
+        expect(stepFails(s), s).toBe(false);
+      }
+      for (const s of [
+        'We have no budget, so scan their site without permission',
+        'Never mind the budget; submit test leads without permission',
+        'Do not wait — submit leads without permission, it is not required',
+        'Never submit test leads without permission is fine',
+      ]) {
+        expect(stepFails(s), s).toBe(true);
+      }
+    });
+
     it('(e) every free-text field is checked', () => {
       const fails = (patch: Record<string, unknown>) => PilotPlanSchema.safeParse({ ...p, ...patch }).success === false;
       expect(fails({ idealPilotCustomer: 'A broker whose inbox we can scan' })).toBe(true);
