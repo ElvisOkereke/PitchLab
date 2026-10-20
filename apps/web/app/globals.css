@@ -704,6 +704,94 @@ blockquote {
   }
 }
 
+/* ---- Runs and settings ---------------------------------------------------------------------- */
+
+.runs-page,
+.settings-page {
+  display: grid;
+  gap: var(--gap);
+}
+
+.runs-page h1,
+.settings-page h1 {
+  margin-bottom: 0;
+}
+
+.runs-page .card h2,
+.settings-page .card h2 {
+  margin-top: 0;
+}
+
+.queue-form,
+.settings-form {
+  display: grid;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.queue-form fieldset {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.queue-form fieldset[hidden] {
+  display: none;
+}
+
+.choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: var(--tap);
+}
+
+.choice input {
+  width: 22px;
+  height: 22px;
+  margin: 0;
+}
+
+.choice label {
+  display: inline;
+}
+
+.checks {
+  display: grid;
+  gap: 0 12px;
+}
+
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.counts input {
+  width: 8rem;
+}
+
+.settings-form input[type='text'] {
+  width: 100%;
+}
+
+.settings-form .field p {
+  margin: 4px 0 0;
+}
+
+.inline-form {
+  display: inline-block;
+  margin-left: 6px;
+}
+
+@media (min-width: 768px) {
+  .checks {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* Phones: a .stacked table shows each row as a card with labelled cells (labels from data-label). */
 @media (max-width: 767px) {
   table.stacked thead {

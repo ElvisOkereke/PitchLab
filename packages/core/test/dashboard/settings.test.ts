@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MODELS } from '../../src/config/models';
-import { EDITABLE_SETTING_KEYS, SettingsInputSchema, WORKER_STATUS_KEY, readWorkerStatus, saveSettings } from '../../src/dashboard/settings';
+import {
+  EDITABLE_SETTING_KEYS, SettingsInputSchema, WORKER_STATUS_KEY, databaseReachable, readEditableSettings, readWorkerStatus, saveSettings,
+} from '../../src/dashboard/settings';
 import { getSetting, setSetting } from '../../src/validation/settings';
 import { testDb } from '../helpers/db';
 
@@ -30,6 +32,25 @@ describe('dashboard settings', () => {
     expect(await getSetting(db, 'sender.name')).toBe('Al');
     expect(await getSetting(db, 'landing.formEndpoint')).toBe('');
     expect(await getSetting(db, WORKER_STATUS_KEY)).toEqual({ keep: true });
+  });
+
+  it('readEditableSettings returns every editable key as a string (blank when unset or not a string), nothing else', async () => {
+    const db = await testDb();
+    await setSetting(db, 'sender.name', 'Al');
+    await setSetting(db, 'sender.address', { not: 'a string' });
+    await setSetting(db, WORKER_STATUS_KEY, { at: 'x' });
+    const values = await readEditableSettings(db);
+    expect(Object.keys(values)).toEqual([...EDITABLE_SETTING_KEYS]);
+    expect(values['sender.name']).toBe('Al');
+    expect(values['sender.address']).toBe('');
+    expect(values['landing.formEndpoint']).toBe('');
+  });
+
+  it('databaseReachable answers select 1', async () => {
+    const db = await testDb();
+    expect(await databaseReachable(db)).toBe(true);
+    const broken = { execute: async () => { throw new Error('connect ECONNREFUSED postgres://u:secret@h/db'); } } as unknown as typeof db;
+    expect(await databaseReachable(broken)).toBe(false);
   });
 
   it('readWorkerStatus returns a well-formed heartbeat or null', async () => {

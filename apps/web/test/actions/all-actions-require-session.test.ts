@@ -7,7 +7,7 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Db } from '@bcg/core/db/client';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { createTestDb, seedCase, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
+import { createTestDb, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
 import { TEST_SECRET, resetRequest, useTestEnv } from '../helpers/next-mocks';
 
 const state = vi.hoisted(() => ({ db: undefined as unknown as Db }));
@@ -48,6 +48,15 @@ const SPECS: Record<string, Spec> = {
       const { kase, prospect } = await seedProspect(db);
       return { prospectId: prospect.id, slug: kase.slug, type: 'sent', note: '' };
     },
+  },
+  'runs.ts#queueRunAction': {
+    seed: async () => ({ seedType: 'open', ideaCount: '1', advanceCount: '1' }),
+  },
+  'runs.ts#requeueRunAction': {
+    seed: async (db) => ({ runId: (await seedFailedRun(db)).id }),
+  },
+  'settings.ts#saveSettingsAction': {
+    seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
   },
 };
 
@@ -93,6 +102,7 @@ describe('every Server Action requires a session and a same-origin request', () 
     expect(names).toEqual(expect.arrayContaining([
       'stage.ts#moveStageAction', 'stage.ts#overturnKillAction', 'stage.ts#rerunGateKillAction',
       'scores.ts#saveOwnerScoresAction', 'outreach.ts#markOutreachAction',
+      'runs.ts#queueRunAction', 'runs.ts#requeueRunAction', 'settings.ts#saveSettingsAction',
     ]));
     expect(names.filter((n) => !SPECS[n])).toEqual([]);
   });

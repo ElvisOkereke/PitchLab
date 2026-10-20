@@ -67,7 +67,9 @@ export type QueueRunInput = z.infer<typeof QueueRunInputSchema>;
 
 /** Most runs that may wait in the queue at once. */
 export const MAX_QUEUED = 3;
-const MARKET_ID = 'ca-us';
+/** The market every dashboard-queued run uses. */
+export const QUEUE_MARKET_ID = 'ca-us';
+const MARKET_ID = QUEUE_MARKET_ID;
 /** Serialises queue inserts so two submits cannot both pass the MAX_QUEUED check (transaction-scoped lock). */
 const QUEUE_LOCK_KEY = 0x6263_7131; // "bcq1"
 

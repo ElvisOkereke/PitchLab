@@ -45,6 +45,7 @@ describe('every page under app/(app) requires the owner', () => {
     const names = files.map((f) => relative(appDir, f).replaceAll('\\', '/'));
     expect(names).toEqual(expect.arrayContaining([
       'layout.tsx', 'page.tsx', 'cases/[slug]/page.tsx', 'cases/[slug]/export.md/route.ts', 'leaderboard/page.tsx', 'command/page.tsx',
+      'runs/page.tsx', 'settings/page.tsx',
     ]));
   });
 

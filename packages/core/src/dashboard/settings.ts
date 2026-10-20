@@ -1,3 +1,4 @@
+import { inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ModelStage } from '../config/models';
 import { MODEL_STAGES } from '../config/models';
@@ -41,6 +42,26 @@ export async function saveSettings(db: Db, input: SettingsInput): Promise<{ save
     }
   });
   return { saved: entries.length };
+}
+
+/** Every editable setting's current value for the form: the stored string, or '' when unset or not a string. */
+export async function readEditableSettings(db: Db): Promise<Record<EditableSettingKey, string>> {
+  const rows = await db.select().from(settings).where(inArray(settings.key, [...EDITABLE_SETTING_KEYS]));
+  const values = new Map(rows.map((r) => [r.key, r.value]));
+  return Object.fromEntries(EDITABLE_SETTING_KEYS.map((k) => {
+    const v = values.get(k);
+    return [k, typeof v === 'string' ? v : ''];
+  })) as Record<EditableSettingKey, string>;
+}
+
+/** True when the database answers `select 1`. The error (which may name the host) is swallowed, never shown. */
+export async function databaseReachable(db: Db): Promise<boolean> {
+  try {
+    await db.execute(sql`select 1`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Where `gen worker` writes its heartbeat. Never editable from the dashboard. */
