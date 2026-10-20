@@ -362,7 +362,9 @@ describe('generateDrafts', () => {
     expect(prompt).toContain('no verified figures: do not state any figures');
     // P3-R22: the case's own price stays an allowed offer term, outside the untrusted block.
     expect(prompt).toContain('Allowed offer terms');
-    expect(prompt.slice(prompt.indexOf('</case>'))).toContain('99 per month');
+    // With its currency sign: "1 per load processed" was copied verbatim into a live draft (2026-10-19).
+    expect(prompt.slice(prompt.indexOf('</case>'))).toContain('$99 per month');
+    expect(prompt.slice(0, prompt.indexOf('</case>'))).toContain('$99 per month');
 
     await add('Average detention claim is $310', 'verified');
     await add('Average detention claim is $310', 'verified', 'numbers');

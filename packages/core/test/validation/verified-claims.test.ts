@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { claims } from '../../src/db/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
-import { verifiedClaimTexts } from '../../src/validation/verified-claims';
+import { allowedOfferTerms, offerPrice, verifiedClaimTexts } from '../../src/validation/verified-claims';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 type Db = Awaited<ReturnType<typeof testDb>>;
@@ -50,5 +50,22 @@ describe('verifiedClaimTexts (P3-R19/R20)', () => {
     for (const s of ['unsupported', 'needs_review', 'unverified', 'unreachable'] as const) await add(`claim ${s}`, s);
     await add('Good claim', 'verified');
     expect(await verifiedClaimTexts(db, caseId)).toEqual(['Good claim']);
+  });
+});
+
+describe('offerPrice / allowedOfferTerms', () => {
+  const sections = (amount: unknown, per?: unknown) => ({ summary: { price: { amount, per } } });
+  it('states the case price with its currency sign, as the case export does', () => {
+    expect(offerPrice(sections(1, 'load processed'))).toBe('$1 per load processed');
+    expect(offerPrice(sections(1.5, 'invoice'))).toBe('$1.50 per invoice');
+    expect(offerPrice(sections(1200, 'month'))).toBe('$1,200 per month');
+    expect(offerPrice(sections(99))).toBe('$99');
+    expect(allowedOfferTerms(sections(1, 'load processed'))).toEqual(['$1 per load processed']);
+  });
+  it('gives nothing without a finite numeric price', () => {
+    for (const s of [sections('99', 'month'), sections(Number.NaN, 'month'), {}, null]) {
+      expect(offerPrice(s)).toBe('');
+      expect(allowedOfferTerms(s)).toEqual([]);
+    }
   });
 });

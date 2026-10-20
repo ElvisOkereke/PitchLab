@@ -34,10 +34,25 @@ export async function verifiedClaimTexts(db: Db, caseId: string): Promise<string
  * it is not exempt). Neutralised and capped: these appear outside the untrusted block.
  */
 export function allowedOfferTerms(sections: unknown): string[] {
+  const price = offerPrice(sections);
+  return price ? [price] : [];
+}
+
+/**
+ * The case price as text, with the currency sign the case export uses ("$1 per load processed", "$1.50 per invoice"),
+ * or '' without a finite numeric price. Without the sign the model copied "Pricing is 1 per load processed" verbatim
+ * into a live draft and landing page (2026-10-19). Neutralised and capped.
+ */
+export function offerPrice(sections: unknown): string {
   const price = (sections as { summary?: { price?: { amount?: unknown; per?: unknown } } } | null)?.summary?.price;
-  if (!price || typeof price.amount !== 'number' || !Number.isFinite(price.amount)) return [];
+  if (!price || typeof price.amount !== 'number' || !Number.isFinite(price.amount)) return '';
+  const whole = Number.isInteger(Math.round(price.amount * 100) / 100);
+  const amount = (price.amount < 0 ? '-$' : '$') + Math.abs(price.amount).toLocaleString('en-US', {
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
   const per = typeof price.per === 'string' ? capField(neutralizeUntrusted(price.per), 50) : '';
-  return [per ? `${price.amount} per ${per}` : String(price.amount)];
+  return per ? `${amount} per ${per}` : amount;
 }
 
 /** The figures rule for a prompt, outside the untrusted block: verified claims, plus the case's own offer terms. */

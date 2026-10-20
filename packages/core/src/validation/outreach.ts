@@ -13,7 +13,7 @@ import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
-import { allowedOfferTerms, figuresRule, verifiedClaimTexts } from './verified-claims';
+import { allowedOfferTerms, figuresRule, offerPrice, verifiedClaimTexts } from './verified-claims';
 import { DraftEmailsSchema, hasNoLinksOrAddresses, removeLinksAndAddresses } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
@@ -98,14 +98,13 @@ const asText = (v: unknown, max: number) => (typeof v === 'string' ? capField(v,
 function caseMaterial(title: string, raw: unknown, verifiedClaims: string[]): string {
   const s = (raw ?? {}) as Sections;
   const summary = s.summary ?? {};
-  const price = summary.price as { amount?: unknown; per?: unknown } | undefined;
   const material = {
     title: capField(title, FIELD_MAX),
     oneLiner: asText(summary.oneLiner, FIELD_MAX),
     buyer: asText(summary.buyer, FIELD_MAX),
     problem: asText(summary.problem, FIELD_MAX),
     solution: asText(summary.solution, FIELD_MAX),
-    price: price && typeof price.amount === 'number' ? `${price.amount} per ${asText(price.per, 50)}` : '',
+    price: offerPrice(raw),
     pitchEmails: (s.pitch?.emails ?? []).slice(0, 3).map((e) => ({ subject: asText(e.subject, 200), body: asText(e.body, 1500) })),
     // Verified claim texts only (P3-R19); their source URLs are not shown, since drafts may not contain links (P3-R14).
     verifiedClaims,

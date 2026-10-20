@@ -7,7 +7,7 @@ import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { getSenderFields, getSetting } from './settings';
 import { LandingCopySchema, type LandingCopy } from './schema';
-import { allowedOfferTerms, figuresRule, verifiedClaimTexts } from './verified-claims';
+import { allowedOfferTerms, figuresRule, offerPrice, verifiedClaimTexts } from './verified-claims';
 
 // The page is a fixed template in code. Every copy string is HTML-escaped (R13): the model supplies text, never markup,
 // links or scripts. The only script is the fixed one below; the page makes no request except posting the form to the
@@ -278,7 +278,7 @@ function caseMaterial(title: string, raw: unknown, verifiedClaims: string[]): st
     problem: asText(summary.problem, FIELD_MAX),
     solution: asText(summary.solution, FIELD_MAX),
     whyItWins: asText(summary.whyItWins, FIELD_MAX),
-    price: price && typeof price.amount === 'number' ? `${price.amount} per ${asText(price.per, 50)}` : '',
+    price: offerPrice(raw),
     priceRationale: asText(price?.rationale, FIELD_MAX),
     verifiedClaims,
     objections: (s.pitch?.objections ?? []).slice(0, 8).map((o) => ({ objection: asText(o.objection, 300), response: asText(o.response, 600) })),
