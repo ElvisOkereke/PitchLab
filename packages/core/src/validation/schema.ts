@@ -110,6 +110,9 @@ function* stringLeaves(v: unknown, path: (string | number)[] = []): Generator<[(
 const pathLabel = (path: (string | number)[]) =>
   path.map((p, i) => (typeof p === 'number' ? `[${p}]` : i === 0 ? p : `.${p}`)).join('');
 
+/** Text in every issue the permission refinement raises; pack-docs falls back only when all issues carry it (P3-R11). */
+export const PERMISSION_ISSUE_MARKER = 'interacts with a third party without mentioning permission';
+
 /** The pilot plan without the permission tripwire: used only by the loose fallback call (P3-R3), whose output is annotated by code. */
 export const PilotPlanLooseSchema = z.object({
   idealPilotCustomer: text,
@@ -128,9 +131,7 @@ export const PilotPlanSchema = PilotPlanLooseSchema
         ctx.addIssue({
           code: 'custom',
           path,
-          message:
-            `step ${pathLabel(path)} interacts with a third party without mentioning permission: ` +
-            "mention that the site owner's permission is obtained first",
+          message: `step ${pathLabel(path)} ${PERMISSION_ISSUE_MARKER}: mention that the site owner's permission is obtained first`,
         });
       }
     }

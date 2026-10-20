@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { validationPacks } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import {
-  CHECKLIST_METRIC_KEYS, ChecklistSchema, InterviewKitSchema, MvpSpecSchema, PackDocsSchema, PilotPlanSchema,
+  CHECKLIST_METRIC_KEYS, ChecklistSchema, InterviewKitSchema, MvpSpecSchema, PERMISSION_ISSUE_MARKER, PackDocsSchema, PilotPlanSchema,
 } from '../../src/validation/schema';
 import { PILOT_PERMISSION_STEP, generatePackDocs } from '../../src/validation/pack-docs';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -374,7 +374,10 @@ describe('generatePackDocs', () => {
       expect(out.pilotPlan.steps.at(-1)).toBe(`Crawl their site for broken forms${REMINDER}`);
       expect(out.pilotPlan.measures[1]!.successThreshold).toBe(`all test leads arrive${REMINDER}`);
       expect(out.pilotPlan.steps[0]).toBe('Collect last month of disputes'); // untouched
-      expect(out.reviewNotes).toEqual(['2 plan items touched third-party systems; permission reminders were added.']);
+      expect(out.reviewNotes).toEqual([
+        'pack generated via the loose fallback (permission rule not satisfied by the model); reminders added to 2 items',
+        '2 plan items touched third-party systems; permission reminders were added.',
+      ]);
       expect(PilotPlanSchema.safeParse(out.pilotPlan).success).toBe(true);
       const [row] = await db.select().from(validationPacks);
       expect(row!.sections).toEqual(out);
@@ -399,15 +402,43 @@ describe('generatePackDocs', () => {
       const out = await generatePackDocs(deps(db, router), kase.id, { pilotSite: 'pilot.example' });
       expect(router.calls).toHaveLength(2);
       expect(out.pilotPlan.firstStep.startsWith(PILOT_PERMISSION_STEP)).toBe(true);
-      expect(out.reviewNotes).toHaveLength(1);
+      expect(out.reviewNotes).toHaveLength(2);
+      expect(PackDocsSchema.safeParse(out).success).toBe(true);
     });
 
-    it('fails the stage when the loose call fails too', async () => {
+    it('fails the stage when the loose call fails too: the fallback runs at most once', async () => {
       const db = await testDb();
       const kase = await aCase(db);
-      const router = fakeRouter({ structured: { pack: [flagged(), { nonsense: true }] } });
+      const router = fakeRouter({ structured: { pack: [flagged(), { nonsense: true }, packFixture()] } });
       await expect(generatePackDocs(deps(db, router), kase.id)).rejects.toThrow(StructuredOutputError);
+      expect(router.calls).toHaveLength(2);
       expect(await db.select().from(validationPacks)).toHaveLength(0);
+    });
+
+    it('rethrows any structured failure that is not only the permission rule, storing nothing (P3-R11)', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const mixed = flagged();
+      mixed.interviewKit.questions = mixed.interviewKit.questions.slice(0, 5); // a second, unrelated issue
+      for (const bad of [{ nonsense: true }, mixed]) {
+        const router = fakeRouter({ structured: { pack: [bad, packFixture()] } });
+        await expect(generatePackDocs(deps(db, router), kase.id)).rejects.toThrow(StructuredOutputError);
+        expect(router.calls).toHaveLength(1);
+      }
+      expect(await db.select().from(validationPacks)).toHaveLength(0);
+      expect(PERMISSION_ISSUE_MARKER).toBe('interacts with a third party without mentioning permission');
+    });
+
+    it('writes the audit marker even when the loose answer needed no reminders (N = 0)', async () => {
+      const db = await testDb();
+      const kase = await aCase(db);
+      const logs: string[] = [];
+      const router = fakeRouter({ structured: { pack: [flagged(), packFixture()] } });
+      const out = await generatePackDocs(deps(db, router, logs), kase.id);
+      expect(out.reviewNotes).toEqual(['pack generated via the loose fallback (permission rule not satisfied by the model); reminders added to 0 items']);
+      const [row] = await db.select().from(validationPacks);
+      expect((row!.sections as { reviewNotes: string[] }).reviewNotes).toEqual(out.reviewNotes);
+      expect(logs.join('\n')).toMatch(/loose fallback/);
     });
   });
 
