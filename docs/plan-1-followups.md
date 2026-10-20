@@ -172,3 +172,6 @@ Open after tuning-4:
 - The case page shows the same "something went wrong" message for any error thrown by a tab.
 - `gen resume`'s status check is not atomic: two resumes at once can both pass it (see also the orchestrator item in Plan 4).
 - No dedicated "database not reachable" banner: only Settings shows Database "not reachable"; other pages fall to an error page.
+- Edits made while a save is still pending are overwritten when its result arrives (the form takes the echoed values and remounts). (D2-R7 N2)
+- The queue-run form keeps the idea text and seed after a successful queue, so a second tap queues the same run again (the 3-queued cap bounds it). (D2-R7 N3)
+- The backtick guard in `apps/web/test/guards.test.ts` only sees JSX text runs without `{…}` expressions; a backtick in a text run that also contains an expression is missed.
