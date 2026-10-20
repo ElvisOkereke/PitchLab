@@ -12,7 +12,7 @@ export type ScoreRow = typeof scores.$inferSelect;
 // All case-derived text is untrusted (R13): escape HTML and neutralise Markdown link/image syntax.
 
 /** Escape for inline Markdown text: HTML-significant chars and link brackets. */
-function esc(s: string): string {
+export function esc(s: string): string {
   return s
     .replace(/\\/g, '\\\\')
     .replace(/&/g, '&amp;')
@@ -23,10 +23,10 @@ function esc(s: string): string {
 }
 
 /** Single-line text (headings, list items). */
-const line = (s: string) => esc(s.replace(/\s+/g, ' ').trim());
+export const line = (s: string) => esc(s.replace(/\s+/g, ' ').trim());
 
 /** A table cell: single line, pipes escaped. */
-const cell = (s: string) => line(s).replace(/\|/g, '\\|');
+export const cell = (s: string) => line(s).replace(/\|/g, '\\|');
 
 // Quotes stored before entity decoding landed (legacy rows) may still hold `&#8217;` etc.: decode first, strip
 // control and invisible/bidi characters (decoded or stored raw), then escape (R13).
@@ -35,7 +35,7 @@ const quoteLine = (s: string) => line(cleanQuote(s));
 const quoteCell = (s: string) => cell(cleanQuote(s));
 
 /** Multi-line text: each line escaped and trimmed, line breaks kept as hard breaks, blank lines as paragraph breaks. */
-function block(s: string): string {
+export function block(s: string): string {
   return s
     .replace(/\r\n?/g, '\n')
     .trim()
@@ -45,7 +45,7 @@ function block(s: string): string {
 }
 
 /** `[host](url)` for http(s) urls; otherwise the url as escaped plain text. */
-function link(url: string): string {
+export function link(url: string): string {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -59,7 +59,7 @@ function link(url: string): string {
 }
 
 /** A link inside a table cell (a non-http url falls back to text, which may contain pipes). */
-const cellLink = (url: string) => link(url).replace(/\|/g, '\\|');
+export const cellLink = (url: string) => link(url).replace(/\|/g, '\\|');
 
 const money = (x: number) => {
   const whole = Number.isInteger(Math.round(x * 100) / 100);
@@ -70,7 +70,7 @@ const money = (x: number) => {
 };
 const orNone = (x: number | null, fmt: (n: number) => string) => (x === null ? 'n/a' : fmt(x));
 
-function table(headers: string[], rows: string[][]): string {
+export function table(headers: string[], rows: string[][]): string {
   return [
     `| ${headers.join(' | ')} |`,
     `| ${headers.map(() => '---').join(' | ')} |`,
