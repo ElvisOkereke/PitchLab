@@ -87,6 +87,19 @@ describe('fetchPage', () => {
     expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });
 
+  it('blocks a redirect to an IP-literal host; an IP-literal entry url behaves as before (P3-R7)', async () => {
+    for (const target of ['http://93.184.216.34/', 'http://[2001:4860:4860::8888]/']) {
+      const f = vi.fn(async (u: any) =>
+        String(u) === 'http://a.test/' ? new Response(null, { status: 302, headers: { location: target } }) : respond('<p>x</p>'),
+      );
+      const r = await fetchPage('http://a.test/', { fetchImpl: f });
+      expect(r.reason, target).toBe('blocked_host');
+      expect(f).toHaveBeenCalledTimes(1);
+    }
+    const entry = await fetchPage('http://93.184.216.34/', { fetchImpl: htmlFetch('<title>IP</title><p>ok</p>') });
+    expect(entry.ok).toBe(true);
+  });
+
   it('passes text/plain through', async () => {
     const r = await fetchPage('https://a.test', { fetchImpl: typedFetch('text/plain') });
     expect(r.ok).toBe(true);

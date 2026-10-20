@@ -130,12 +130,16 @@ function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-async function checkHost(u: URL, lookup: Resolver, signal: AbortSignal): Promise<'ok' | 'blocked_host' | 'network' | 'timeout'> {
+async function checkHost(
+  u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean,
+): Promise<'ok' | 'blocked_host' | 'network' | 'timeout'> {
   if (u.username || u.password) return 'blocked_host';
   let host = u.hostname.toLowerCase().replace(/\.$/, '');
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   if (host === 'localhost' || ['.localhost', '.local', '.internal'].some((s) => host.endsWith(s))) return 'blocked_host';
   if (isNeverFetchHost(host)) return 'blocked_host';
+  // A redirect may not point at an IP literal (it could bypass the never-fetch host set); the entry url still may.
+  if (isIP(host) && isRedirect) return 'blocked_host';
   if (isIP(host)) return isAllowedIp(host) ? 'ok' : 'blocked_host';
   try {
     const addrs = await raceAbort(lookup(host), signal);
@@ -190,7 +194,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
         return fail('blocked_scheme', 0, current);
       }
       if (!isHttp(parsed)) return fail('blocked_scheme', 0, current);
-      const hostCheck = await checkHost(parsed, lookup, controller.signal);
+      const hostCheck = await checkHost(parsed, lookup, controller.signal, hop > 0);
       if (hostCheck !== 'ok') return fail(hostCheck, 0, current);
       if (prevProtocol === 'https:' && parsed.protocol === 'http:') return fail('blocked_scheme', 0, current);
       prevProtocol = parsed.protocol;
