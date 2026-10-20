@@ -79,6 +79,43 @@ describe('DraftEmailsSchema', () => {
     expect(bad({ subject: 'Detention claims at 3 a.m.', body: 'Worth 15 minutes? Reply "yes" @ your convenience.' })).toBe(false);
   });
 
+  it('checks normalised text and scheme-less hosts; ordinary abbreviations pass (P3-R15)', () => {
+    const bad = (body: string) => DraftEmailsSchema.safeParse({ ...drafts(), cold: { subject: 'Hi', body } }).success === false;
+    for (const body of [
+      'Go to h​ttps://x.example now', 'w​ww.evil.example', 'mail a​@b.com', 'Try acme.io today', 'Pay at example.com/pay',
+      'See Monday.com for that', 'Visit Shop.Example.CA', 'billing.acme-freight.co.uk', 'evil.xyz/path?x=1',
+    ]) {
+      expect(bad(body), JSON.stringify(body)).toBe(true);
+    }
+    expect(DraftEmailsSchema.safeParse({ ...drafts(), cold: { subject: 'pay at acme.io', body: 'ok' } }).success).toBe(false);
+    for (const body of [
+      'Dr. Smith, approx. 20 loads, e.g. Friday', 'Mr. Lee at 9 a.m. vs. 5 p.m., i.e. the U.S. office', 'Rates rose 4.5% in Q3.',
+      'We help brokers. Co-ops too. Info: reply here.', 'Talk soon.Thanks',
+    ]) {
+      expect(bad(body), body).toBe(false);
+    }
+  });
+
+  it('re-asserts the guard on the final text before storing, even if a router skipped validation (P3-R15)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    await aProspect(db, kase.id);
+    await aProspect(db, kase.id);
+    const outputs = [
+      { ...drafts(), followup2: { subject: 'Last note', body: 'Pay at h​ttps://evil.example/pay' } },
+      drafts(),
+    ];
+    const lax = fakeRouter({});
+    const router = { ...lax, structured: async () => outputs.shift() } as unknown as typeof lax; // returns unvalidated output
+    const logs: string[] = [];
+    const r = await generateDrafts(deps(db, router, logs), kase.id);
+    expect(r).toMatchObject({ generated: 1, failed: 1 });
+    const rows = await db.select().from(outreachDrafts);
+    expect(rows).toHaveLength(3);
+    expect(rows.map((d) => d.body).join('\n')).not.toContain('evil.example');
+    expect(logs.join('\n')).toMatch(/link|address/i);
+  });
+
   it('a model draft with a link is re-asked: the router loop gets a validation error (P3-R14)', async () => {
     const db = await testDb();
     const kase = await aCase(db);

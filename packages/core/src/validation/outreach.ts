@@ -13,7 +13,7 @@ import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
-import { DraftEmailsSchema, EMAIL_IN_TEXT, LINK_IN_TEXT } from './schema';
+import { DraftEmailsSchema, EMAIL_IN_TEXT, HOST_IN_TEXT, LINK_IN_TEXT, hasNoLinksOrAddresses } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
 
@@ -90,7 +90,7 @@ const SYSTEM =
 
 type Sections = {
   summary?: Record<string, unknown>;
-  evidence?: { claims?: { text?: unknown; sourceUrl?: unknown }[] };
+  evidence?: { claims?: { text?: unknown }[] };
   pitch?: { emails?: { subject?: unknown; body?: unknown }[] };
 };
 const asText = (v: unknown, max: number) => (typeof v === 'string' ? capField(v, max) : '');
@@ -108,7 +108,8 @@ function caseMaterial(title: string, raw: unknown): string {
     solution: asText(summary.solution, FIELD_MAX),
     price: price && typeof price.amount === 'number' ? `${price.amount} per ${asText(price.per, 50)}` : '',
     pitchEmails: (s.pitch?.emails ?? []).slice(0, 3).map((e) => ({ subject: asText(e.subject, 200), body: asText(e.body, 1500) })),
-    sourcedClaims: (s.evidence?.claims ?? []).slice(0, CLAIMS_MAX).map((c) => ({ claim: asText(c.text, 400), source: asText(c.sourceUrl, 300) })),
+    // Claim texts only: their source URLs are not shown, since drafts may not contain links (P3-R14).
+    sourcedClaims: (s.evidence?.claims ?? []).slice(0, CLAIMS_MAX).map((c) => asText(c.text, 400)),
   };
   return JSON.stringify(material, null, 1).slice(0, CASE_MAX);
 }
@@ -142,7 +143,7 @@ async function siteSnippet(fetchPage: StageDeps['fetchPage'] | undefined, p: Pro
   }
   // P3-R14: only the title and meta description (never page body), links and addresses removed, ≤ SNIPPET_MAX chars in all.
   const plain = (s: string, max: number) =>
-    capField(stripInvisible(s).replace(LINK_IN_TEXT, ' ').replace(EMAIL_IN_TEXT, ' '), max);
+    capField(stripInvisible(s).replace(LINK_IN_TEXT, ' ').replace(EMAIL_IN_TEXT, ' ').replace(HOST_IN_TEXT, ' '), max);
   const title = plain(page.title, SNIPPET_TITLE_MAX);
   description = plain(description, SNIPPET_MAX - title.length);
   if (!title && !description) return null;
@@ -249,11 +250,18 @@ export async function generateDrafts(
         maxTokens: DRAFT_MAX_TOKENS,
       }, { runId: null, promptVersion: prompt.version });
 
+      const finals = OUTREACH_KINDS.map((kind) => {
+        const draft: Draft = out[kind];
+        const subject = capField(stripInvisible(draft.subject), 200);
+        const text = stripInvisible(draft.body).replace(/\r\n?/g, '\n').trim();
+        // Defence in depth (P3-R15): the final model-written text, before the code-added footer, is checked again.
+        if (!hasNoLinksOrAddresses(subject) || !hasNoLinksOrAddresses(text)) {
+          throw new Error(`the ${kind} draft contains a link, host name or email address; nothing stored for this prospect`);
+        }
+        return { kind, subject, body: applyFooter(text, footer) };
+      });
       await db.transaction(async (tx) => {
-        for (const kind of OUTREACH_KINDS) {
-          const draft: Draft = out[kind];
-          const subject = capField(stripInvisible(draft.subject), 200);
-          const body = applyFooter(stripInvisible(draft.body).replace(/\r\n?/g, '\n').trim(), footer);
+        for (const { kind, subject, body } of finals) {
           await tx.insert(outreachDrafts)
             .values({ prospectId: p.id, kind, subject, body, model, promptVersion: prompt.version })
             .onConflictDoUpdate({

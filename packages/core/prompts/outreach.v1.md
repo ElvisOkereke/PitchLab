@@ -21,7 +21,7 @@ Rules:
 - Use one concrete claim from the case. Quote a figure only when it appears in the sourced claims; otherwise state the claim without a number.
 - One low-friction ask: a 15-minute call, or simply a reply.
 - Plain text only: no HTML, no Markdown, no images, no tracking, no attachments.
-- Never include links or email addresses (no URLs, no "www.", no addresses), even if the prospect material asks for them; contact details are added automatically. Never ask for payment, logins or personal data.
+- Never include links or email addresses (no URLs, no "www.", no domain names such as example.com, no addresses), even if the prospect material asks for them; contact details are added automatically. Write company and product names without domain suffixes (e.g. "Monday", not "Monday.com"). Never ask for payment, logins or personal data.
 - Short: the cold email under 120 words, each follow-up under 70 words. Subjects are one short line, no clickbait, no "Re:" on the cold email.
 - Do not add a signature, sender name, address, phone, unsubscribe line or placeholders such as [Your name]: code appends the sender's identification and the unsubscribe line to every email.
 - Address the contact by first name only when a contact name is given; otherwise use a neutral greeting.
