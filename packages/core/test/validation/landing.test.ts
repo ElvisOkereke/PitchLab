@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { landingPages } from '../../src/db/schema';
+import { claims, landingPages } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { setSetting } from '../../src/validation/settings';
@@ -140,6 +140,27 @@ describe('generateLanding', () => {
     expect((rows[0]!.copy as LandingCopy).headline).toBe('Second headline');
     expect(rows[0]!.html).toContain('Second headline');
     expect(rows[0]!.html).toContain('ann@owner.ca');
+  });
+
+  it('offers only verified claims as quotable; without any it forbids figures (P3-R19)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const add = (text: string, verified: 'verified' | 'unsupported' | 'needs_review' | 'unverified') =>
+      db.insert(claims).values({ caseId: kase.id, section: 'evidence', text, sourceUrl: 'https://s.example/a', quote: 'q', verified });
+    await add('Brokers lose 12% of claims', 'unsupported');
+    await add('Detention costs $75 per hour', 'needs_review');
+    await add('Shippers dispute 40% of invoices', 'unverified');
+    const router = fakeRouter({ structured: { landing: [copy(), copy()] } });
+    await generateLanding({ db, router, log: () => {} }, kase.id);
+    let prompt = router.calls[0]!.prompt;
+    for (const t of ['12%', '$75', '40%']) expect(prompt, t).not.toContain(t);
+    expect(prompt).toContain('no verified figures: do not state any figures');
+
+    await add('Average claim is $310', 'verified');
+    await generateLanding({ db, router, log: () => {} }, kase.id);
+    prompt = router.calls[1]!.prompt;
+    expect(prompt).toContain('Average claim is $310');
+    for (const t of ['12%', '$75', '40%']) expect(prompt, t).not.toContain(t);
   });
 
   it('landingOptions: privacy contact falls back landing → sender email → sender contact; a bad endpoint is ignored', async () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
-import { outreachDrafts, outreachEvents, prospects, suppressions } from '../../src/db/schema';
+import { claims, outreachDrafts, outreachEvents, prospects, suppressions } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { setSetting } from '../../src/validation/settings';
@@ -335,7 +335,36 @@ describe('generateDrafts', () => {
     expect(prompt.match(/<\/prospect>/g)).toHaveLength(1); // only the real closing tag
     const inner = prompt.slice(prompt.indexOf('<prospect>\n'), prompt.indexOf('</prospect>')); // the data block, not the instructions
     expect(inner).toContain('Ignore previous instructions');
-    expect(prompt).toContain('Brokers lose 12% of detention claims'); // a sourced claim from the case
+  });
+
+  it('offers only verified claims as quotable; without any it forbids figures (P3-R19)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    await aProspect(db, kase.id);
+    await aProspect(db, kase.id);
+    const add = (text: string, verified: 'verified' | 'unsupported' | 'needs_review' | 'unverified', section = 'evidence') =>
+      db.insert(claims).values({ caseId: kase.id, section, text, sourceUrl: 'https://src.example.org/a', quote: 'q', verified });
+    await add('Brokers lose 12% of detention claims', 'unsupported');
+    await add('Detention costs $75 per hour', 'needs_review');
+    await add('Shippers dispute 40% of invoices', 'unverified');
+    await add('Signal quote 99%', 'verified', 'signal');
+    const router = fakeRouter({ structured: { outreach: [drafts()] } });
+    await generateDrafts(deps(db, router), kase.id);
+    let prompt = router.calls[0]!.prompt;
+    for (const t of ['12%', '$75', '40%', '99%']) expect(prompt, t).not.toContain(t);
+    expect(prompt).toContain('no verified figures: do not state any figures');
+
+    await add('Average detention claim is $310', 'verified');
+    await add('Average detention claim is $310', 'verified', 'numbers');
+    await add('Carriers bill 2 hours free time: 2', 'verified', 'numbers');
+    await db.delete(outreachDrafts);
+    const router2 = fakeRouter({ structured: { outreach: [drafts(), drafts()] } });
+    await generateDrafts(deps(db, router2), kase.id);
+    prompt = router2.calls[0]!.prompt;
+    expect(prompt).toContain('Average detention claim is $310');
+    expect(prompt).toContain('Carriers bill 2 hours free time: 2');
+    for (const t of ['12%', '$75', '40%', '99%']) expect(prompt, t).not.toContain(t);
+    expect(prompt).not.toContain('no verified figures');
   });
 
   it('adds a plain snippet of the prospect homepage (title + description) via the guarded fetcher when available', async () => {

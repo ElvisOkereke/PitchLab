@@ -9,7 +9,8 @@ Write these fields:
 - headline: the outcome the buyer gets, in under 12 words.
 - subhead: one or two sentences on what the service does and for whom.
 - whoItsFor: who the service is for (and, briefly, who it is not for).
-- problem: the problem in the buyer's own terms. Quote a figure only if it appears in the case's sourced claims.
+- problem: the problem in the buyer's own terms.
+- Figures, in every field: {{claimsRule}}
 - howItWorks: exactly 3 steps, each a short title and one or two sentences.
 - offer: what joining the pilot gets them, consistent with the case's price.
 - faq: 3 to 5 questions a buyer would really ask (use the case's objections), each with a short honest answer.

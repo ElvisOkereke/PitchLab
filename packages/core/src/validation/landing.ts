@@ -7,6 +7,7 @@ import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { getSenderFields, getSetting } from './settings';
 import { LandingCopySchema, type LandingCopy } from './schema';
+import { figuresRule, verifiedClaimTexts } from './verified-claims';
 
 // The page is a fixed template in code. Every copy string is HTML-escaped (R13): the model supplies text, never markup,
 // links or scripts. The only script is the fixed one below; the page makes no request except posting the form to the
@@ -261,12 +262,12 @@ const SYSTEM =
 
 type Sections = {
   summary?: Record<string, unknown>;
-  evidence?: { claims?: { text?: unknown }[] };
   pitch?: { objections?: { objection?: unknown; response?: unknown }[] };
 };
 const asText = (v: unknown, max: number) => (typeof v === 'string' ? capField(v, max) : '');
 
-function caseMaterial(title: string, raw: unknown): string {
+/** Case summary, price, objections and the verified claims only (P3-R19); capped. */
+function caseMaterial(title: string, raw: unknown, verifiedClaims: string[]): string {
   const s = (raw ?? {}) as Sections;
   const summary = s.summary ?? {};
   const price = summary.price as { amount?: unknown; per?: unknown; rationale?: unknown } | undefined;
@@ -279,7 +280,7 @@ function caseMaterial(title: string, raw: unknown): string {
     whyItWins: asText(summary.whyItWins, FIELD_MAX),
     price: price && typeof price.amount === 'number' ? `${price.amount} per ${asText(price.per, 50)}` : '',
     priceRationale: asText(price?.rationale, FIELD_MAX),
-    sourcedClaims: (s.evidence?.claims ?? []).slice(0, 8).map((c) => asText(c.text, 400)),
+    verifiedClaims,
     objections: (s.pitch?.objections ?? []).slice(0, 8).map((o) => ({ objection: asText(o.objection, 300), response: asText(o.response, 600) })),
   }, null, 1).slice(0, CASE_MAX);
 }
@@ -297,9 +298,13 @@ export async function generateLanding(
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`generateLanding: unknown case ${caseId}`);
   const prompt = loadPrompt('landing');
+  const verified = await verifiedClaimTexts(db, caseId);
   const copy = await router.structured('landing', {
     system: SYSTEM,
-    prompt: prompt.render({ caseText: wrapUntrusted('case', caseMaterial(kase.title, kase.sections)) }),
+    prompt: prompt.render({
+      caseText: wrapUntrusted('case', caseMaterial(kase.title, kase.sections, verified)),
+      claimsRule: figuresRule(verified),
+    }),
     schema: LandingCopySchema,
     schemaName: 'landing_copy',
     maxTokens: LANDING_MAX_TOKENS,

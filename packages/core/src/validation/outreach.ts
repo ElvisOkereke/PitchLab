@@ -13,6 +13,7 @@ import type { StageDeps } from '../pipeline/types';
 import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 import { getSenderFields } from './settings';
+import { figuresRule, verifiedClaimTexts } from './verified-claims';
 import { DraftEmailsSchema, hasNoLinksOrAddresses, removeLinksAndAddresses } from './schema';
 
 // The system only drafts: nothing here (or anywhere) sends email. The owner sends from his own mailbox.
@@ -78,7 +79,6 @@ const FIT_MAX = 1000;
 /** Homepage snippet: title + meta description, at most this many characters together (P3-R14). */
 const SNIPPET_MAX = 400;
 const SNIPPET_TITLE_MAX = 120;
-const CLAIMS_MAX = 8;
 const DRAFT_MAX_TOKENS = 3000;
 const DRAFT_CONCURRENCY = 4;
 /** Prospects that already said no, or unsubscribed, are never drafted again. */
@@ -90,13 +90,12 @@ const SYSTEM =
 
 type Sections = {
   summary?: Record<string, unknown>;
-  evidence?: { claims?: { text?: unknown }[] };
   pitch?: { emails?: { subject?: unknown; body?: unknown }[] };
 };
 const asText = (v: unknown, max: number) => (typeof v === 'string' ? capField(v, max) : '');
 
-/** The case material for the prompt: summary, pitch emails (angle and tone) and sourced claims; capped. */
-function caseMaterial(title: string, raw: unknown): string {
+/** The case material for the prompt: summary, pitch emails (angle and tone) and the verified claims only (P3-R19); capped. */
+function caseMaterial(title: string, raw: unknown, verifiedClaims: string[]): string {
   const s = (raw ?? {}) as Sections;
   const summary = s.summary ?? {};
   const price = summary.price as { amount?: unknown; per?: unknown } | undefined;
@@ -108,8 +107,8 @@ function caseMaterial(title: string, raw: unknown): string {
     solution: asText(summary.solution, FIELD_MAX),
     price: price && typeof price.amount === 'number' ? `${price.amount} per ${asText(price.per, 50)}` : '',
     pitchEmails: (s.pitch?.emails ?? []).slice(0, 3).map((e) => ({ subject: asText(e.subject, 200), body: asText(e.body, 1500) })),
-    // Claim texts only: their source URLs are not shown, since drafts may not contain links (P3-R14).
-    sourcedClaims: (s.evidence?.claims ?? []).slice(0, CLAIMS_MAX).map((c) => asText(c.text, 400)),
+    // Verified claim texts only (P3-R19); their source URLs are not shown, since drafts may not contain links (P3-R14).
+    verifiedClaims,
   };
   return JSON.stringify(material, null, 1).slice(0, CASE_MAX);
 }
@@ -233,7 +232,9 @@ export async function generateDrafts(
 
   const prompt = loadPrompt('outreach');
   const model = router.modelFor('outreach');
-  const caseText = wrapUntrusted('case', caseMaterial(kase.title, kase.sections));
+  const verified = toDraft.length ? await verifiedClaimTexts(db, caseId) : [];
+  const caseText = wrapUntrusted('case', caseMaterial(kase.title, kase.sections, verified));
+  const claimsRule = figuresRule(verified);
   const limit = pLimit(DRAFT_CONCURRENCY);
   await Promise.all(toDraft.map((p) => limit(async () => {
     try {
@@ -242,6 +243,7 @@ export async function generateDrafts(
         system: SYSTEM,
         prompt: prompt.render({
           caseText,
+          claimsRule,
           prospectText: wrapUntrusted('prospect', prospectText(p)),
           siteText: snippet ? wrapUntrusted('prospect-site', snippet) : '(not available)',
         }),
