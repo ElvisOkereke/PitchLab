@@ -16,6 +16,8 @@ export type RunConfig = {
   researchSearchesPerSector?: number;
   minSignals: number;
   dedupeThreshold: number;
+  /** Set when the owner re-runs a gate-killed idea from the dashboard: the idea this run overturns (feedback signal). */
+  overturnOfIdeaId?: string;
 };
 
 export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, 'seedType'>): RunConfig {

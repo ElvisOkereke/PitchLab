@@ -6,6 +6,10 @@ import { settings } from '../db/schema';
 export const SENDER_KEYS = ['sender.name', 'sender.company', 'sender.address', 'sender.contact', 'sender.email'] as const;
 export type SenderKey = (typeof SENDER_KEYS)[number];
 
+/** Landing-page settings read when the page is rendered (privacy contact, form endpoint). */
+export const LANDING_KEYS = ['landing.privacyContact', 'landing.formEndpoint'] as const;
+export type LandingKey = (typeof LANDING_KEYS)[number];
+
 /** A complete identity needs a name, a mailing address and one other contact method (phone or website). */
 const REQUIRED_SENDER_KEYS = ['sender.name', 'sender.address', 'sender.contact'] as const satisfies readonly SenderKey[];
 
