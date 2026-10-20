@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRateLimiter } from '@/lib/auth/rate-limit';
 
 function clock(start = 1_000_000) {
@@ -42,6 +42,41 @@ describe('login rate limiter', () => {
     expect(rl.check('fresh').allowed).toBe(false);
     c.t += 600_000;
     expect(rl.check('fresh').allowed).toBe(true);
+  });
+
+  it('reserve counts the attempt immediately, so parallel attempts cannot exceed the limit', () => {
+    const rl = createRateLimiter({ now: clock().now });
+    const results = Array.from({ length: 8 }, () => rl.reserve('a'));
+    expect(results.filter((r) => r.allowed)).toHaveLength(5);
+    expect(results.slice(5).every((r) => !r.allowed && r.retryAfterS === 600)).toBe(true);
+  });
+
+  it('succeed clears the key and releases the reserved global slot; a failed reservation stays counted', () => {
+    const rl = createRateLimiter({ now: clock().now, globalLimit: 3 });
+    const a = rl.reserve('a');
+    rl.reserve('b');
+    rl.reserve('c');
+    expect(rl.check('d').allowed).toBe(false); // global full: 3 reserved
+    rl.succeed('a', a.token!);
+    expect(rl.check('d').allowed).toBe(true); // a's slot released
+    expect(rl.check('a').allowed).toBe(true);
+    rl.succeed('a', a.token!); // a second release is a no-op
+    rl.reserve('d');
+    expect(rl.check('e').allowed).toBe(false);
+  });
+
+  it('follows a faked Date.now (the default clock is read at call time)', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-10-20T00:00:00Z'));
+      const rl = createRateLimiter();
+      for (let i = 0; i < 5; i++) rl.reserve('a');
+      expect(rl.check('a').allowed).toBe(false);
+      vi.setSystemTime(new Date('2026-10-20T00:10:01Z'));
+      expect(rl.check('a').allowed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bounds the number of tracked keys', () => {

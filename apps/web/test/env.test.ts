@@ -39,9 +39,18 @@ describe('parseWebEnv', () => {
     expect(env.DATABASE_URL).toBe('postgresql://a@b/c');
   });
 
-  it('defaults COOKIE_SECURE to true in production and lets it be turned off', () => {
+  it('defaults COOKIE_SECURE to true in production and lets it be turned off with the override', () => {
     expect(parseWebEnv({ ...ok, NODE_ENV: 'production' }).COOKIE_SECURE).toBe(true);
-    expect(parseWebEnv({ ...ok, NODE_ENV: 'production', COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
+    expect(parseWebEnv({ ...ok, NODE_ENV: 'production', COOKIE_SECURE: 'false', ALLOW_INSECURE_COOKIE: 'true' }).COOKIE_SECURE).toBe(false);
+  });
+
+  it('fails closed on an insecure cookie in production unless explicitly overridden (D2-R5)', () => {
+    expect(() => parseWebEnv({ ...ok, NODE_ENV: 'production', COOKIE_SECURE: 'false' })).toThrow(/COOKIE_SECURE.*ALLOW_INSECURE_COOKIE/);
+    expect(() => parseWebEnv({ ...ok, NODE_ENV: 'production', COOKIE_SECURE: '0', ALLOW_INSECURE_COOKIE: 'false' })).toThrow(/COOKIE_SECURE/);
+    expect(parseWebEnv({ ...ok, NODE_ENV: 'production', COOKIE_SECURE: 'false', ALLOW_INSECURE_COOKIE: 'true' }).COOKIE_SECURE).toBe(false);
+    expect(parseWebEnv({ ...ok, NODE_ENV: 'development', COOKIE_SECURE: 'false' }).COOKIE_SECURE).toBe(false);
+    expect(parseWebEnv({ ...ok, NODE_ENV: 'production' }).COOKIE_SECURE).toBe(true);
+    expect(() => parseWebEnv({ ...ok, ALLOW_INSECURE_COOKIE: 'yes' })).toThrow(/ALLOW_INSECURE_COOKIE/);
   });
 
   it('rejects pglite URLs and short secrets, naming vars only', () => {

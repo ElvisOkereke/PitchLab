@@ -29,8 +29,11 @@ const Schema = z.object({
   ALLOWED_ORIGINS: z.preprocess(blankToUndefined, z.string().optional())
     .transform((v) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean)),
   COOKIE_SECURE: z.preprocess(blankToUndefined, z.enum(['true', 'false', '1', '0'], { error: 'must be true or false' }).optional()),
+  ALLOW_INSECURE_COOKIE: z.preprocess(blankToUndefined, z.enum(['true', 'false', '1', '0'], { error: 'must be true or false' }).optional()),
   NODE_ENV: z.string().optional(),
 });
+
+const isTrue = (v: string | undefined) => v === 'true' || v === '1';
 
 /** Parses the web app's env. Errors name the variables and the rule, never a value. */
 export function parseWebEnv(raw: Record<string, string | undefined>): WebEnv {
@@ -39,11 +42,14 @@ export function parseWebEnv(raw: Record<string, string | undefined>): WebEnv {
     const problems = r.error.issues.map((i) => `${String(i.path[0] ?? '?')} (${i.message})`);
     throw new Error(`Invalid web environment: ${problems.join(', ')}`);
   }
-  const { NODE_ENV, COOKIE_SECURE, ...env } = r.data;
-  return {
-    ...env,
-    COOKIE_SECURE: COOKIE_SECURE === undefined ? NODE_ENV === 'production' : COOKIE_SECURE === 'true' || COOKIE_SECURE === '1',
-  };
+  const { NODE_ENV, COOKIE_SECURE, ALLOW_INSECURE_COOKIE, ...env } = r.data;
+  const production = NODE_ENV === 'production';
+  const secure = COOKIE_SECURE === undefined ? production : isTrue(COOKIE_SECURE);
+  // Fail closed: a plain-http session cookie in production needs a second, explicit opt-in (e.g. `next start` on localhost).
+  if (production && !secure && !isTrue(ALLOW_INSECURE_COOKIE)) {
+    throw new Error('Invalid web environment: COOKIE_SECURE (false in production; set ALLOW_INSECURE_COOKIE=true only for http on localhost)');
+  }
+  return { ...env, COOKIE_SECURE: secure };
 }
 
 let cached: WebEnv | undefined;
