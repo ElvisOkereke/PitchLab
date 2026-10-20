@@ -34,11 +34,18 @@ const HIDDEN_ELEMENTS = 'script, style, noscript, template, svg, iframe, object,
 
 type PageDom = ReturnType<typeof parseHTML>['document'];
 
+/** Most characters of a page that are parsed; above this the first PARSE_HEAD and the rest from the end are kept. */
+export const PARSE_MAX = 200_000;
+const PARSE_HEAD = 120_000;
+
 /**
  * Parse once with linkedom (linear, no regex over raw HTML) and drop non-rendered elements, so text, mailto links and
  * page links all come from the same cleaned DOM. Comments are not elements, so links inside them never count.
  */
-function cleanDom(html: string): PageDom {
+function cleanDom(raw: string): PageDom {
+  // Parsing cost grows with nesting (60k nested divs at 500 KB take seconds), so at most PARSE_MAX chars are parsed: the
+  // start of the page and its end, where contact details usually sit in the footer.
+  const html = raw.length > PARSE_MAX ? `${raw.slice(0, PARSE_HEAD)}\n${raw.slice(raw.length - (PARSE_MAX - PARSE_HEAD))}` : raw;
   const { document } = parseHTML(/<html[\s>]/i.test(html) ? html : `<html><body>${html}</body></html>`);
   for (const el of [...document.querySelectorAll(HIDDEN_ELEMENTS)]) el.remove();
   return document;

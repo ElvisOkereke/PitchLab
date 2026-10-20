@@ -73,6 +73,12 @@ describe('extractEmails', () => {
     expect(emails('<p>ann@acme-freight.com</p><p>bob@acme-freight.com</p>')).toEqual(['ann@acme-freight.com', 'bob@acme-freight.com']);
   });
 
+  it('parses at most 200 KB of a large page: its start and its footer', () => {
+    const filler = '<p>' + 'lorem ipsum '.repeat(25_000) + '</p>'; // ~300 KB
+    const html = `<header>head@acme-freight.com</header>${filler}<p>middle@acme-freight.com</p>${filler}<footer>footer@acme-freight.com</footer>`;
+    expect(emails(html)).toEqual(['head@acme-freight.com', 'footer@acme-freight.com']);
+  });
+
   describe('hostile 500 KB inputs finish quickly', () => {
     const CEILING_MS = 5000;
     const cases: [string, () => string][] = [
