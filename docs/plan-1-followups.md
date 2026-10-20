@@ -159,3 +159,5 @@ Open after tuning-4:
   itself is still not sized to the prospect sources.
 - Same "CA, US" code rendering exists in harvest/ideate/deep-case prompts (`market.countries.join`); check whether it
   skews research there too.
+
+- Timing-ceiling tests (hostile 500KB/1MB inputs, e.g. nested-div parse, scrub linear-time) can flake under parallel suite load; a one-off core suite failure was seen once during dashboard chunk B. Consider a looser ceiling or running timing tests in a separate project.
