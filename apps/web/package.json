@@ -9,7 +9,7 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "hash-password": "tsx scripts/hash-password.ts",
+    "hash-password": "tsx --conditions=react-server scripts/hash-password.ts",
     "acceptance": "tsx scripts/acceptance.ts",
     "check-bundle": "tsx scripts/check-bundle.ts"
   },
