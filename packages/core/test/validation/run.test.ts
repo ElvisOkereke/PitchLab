@@ -351,6 +351,17 @@ describe('runValidation', () => {
     expect(existsSync(join(outDir, 'freight', 'landing', 'index.html'))).toBe(false);
   });
 
+  it('a failed step reports its error with credentials scrubbed (D2-R2)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const { deps, router } = setup(db, {});
+    const failing = { ...router, structured: async () => { throw new Error('upstream 401: token=SECRETVALUE https://u:pw@api.test/x?k=1'); } };
+    const r = await runValidation({ ...deps, router: failing as never }, kase.id, {});
+    const pack = r.steps.find((s) => s.step === 'pack')!;
+    expect(pack.status).toBe('failed');
+    expect(pack.detail).toBe('upstream 401: token=[redacted] https://api.test/x');
+  });
+
   it('a pack failure stops the run with a non-zero exit code', async () => {
     const db = await testDb();
     const kase = await aCase(db);

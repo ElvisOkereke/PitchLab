@@ -2,6 +2,7 @@ import { and, eq, isNull, ne } from 'drizzle-orm';
 import { cases, landingPages, prospects, validationPacks } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
+import { errorMessage } from '../tools/scrub';
 import { discoverEmails } from './emails';
 import { exportValidation, type ValidationExport } from './export';
 import { generateLanding } from './landing';
@@ -38,7 +39,8 @@ export type StepResult = { step: ValidationStep; status: 'ok' | 'warning' | 'ski
 export type ValidationResult = { ok: boolean; exitCode: 0 | 1; steps: StepResult[]; export?: ValidationExport };
 
 const DEFAULT_PROSPECTS = 25;
-const errText = (err: unknown) => capField(err instanceof Error ? err.message : String(err), 500);
+/** A failed step's text (D2-R2: scrubbed, then capped). */
+const errText = (err: unknown) => capField(errorMessage(err), 500);
 
 /**
  * The validation pipeline for one case, each step idempotent on its own (R20): pack docs → prospects → emails → drafts

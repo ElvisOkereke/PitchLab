@@ -17,6 +17,7 @@ import {
   type ModelRouter,
   type ProviderAdapter,
 } from './types';
+import { errorMessage } from '../tools/scrub';
 
 export { StructuredOutputError } from './types';
 
@@ -76,7 +77,8 @@ export function createRouter(opts: {
         await log({ stage, provider, model, usage, latencyMs: elapsed(), ctx });
         return result;
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err);
+        // D2-R2: llm_calls.error is persisted, so it is scrubbed; the original error is rethrown unchanged.
+        const error = errorMessage(err);
         await log({ stage, provider, model, usage: { inputTokens: 0, outputTokens: 0, searchRequests: 0 }, latencyMs: elapsed(), ctx, error });
         throw err;
       }

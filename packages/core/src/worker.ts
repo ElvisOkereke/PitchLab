@@ -5,7 +5,7 @@ import type { Db } from './db/client';
 import { runs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
-import { scrubSecrets } from './tools/scrub';
+import { errorMessage, scrubSecrets } from './tools/scrub';
 
 // A minimal executor for runs queued from the dashboard. No leases: a worker killed mid-run leaves the run `running`
 // until `gen resume <id>` (leases come in Plan 4).
@@ -119,8 +119,8 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
         o.log(`run ${id} ${status}`);
       } catch (err) {
         // executeRun records stage failures itself; this catches setup errors (e.g. model config) so no run stays running.
-        await failRun(o.db, id, messageOf(err));
-        o.log(`run ${id} failed: ${scrubSecrets(messageOf(err))}`);
+        await failRun(o.db, id, errorMessage(err));
+        o.log(`run ${id} failed: ${errorMessage(err)}`);
       } finally {
         clearInterval(timer);
       }

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { runs, runStages } from '../db/schema';
-import { scrubSecrets } from '../tools/scrub';
+import { errorMessage } from '../tools/scrub';
 import { dedupe } from './dedupe';
 import { deepCase } from './deep-case';
 import { gate } from './gate';
@@ -44,8 +44,6 @@ function isEmptyOutput(stage: Stage, output: unknown, config: RunConfig): boolea
   const list = (output as Record<string, unknown> | null | undefined)?.[key];
   return Array.isArray(list) && list.length === 0;
 }
-
-const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
  * Inserts a run row. `gen run` creates its run as `running` (it executes it at once), so a `gen worker` sharing the
@@ -114,7 +112,7 @@ export async function executeRun(
         output = await impls[stage]({ ...deps, log }, run, previous);
       } catch (err) {
         // D2-R1: the stored error (shown in the CLI and the dashboard) never carries credentials.
-        const error = scrubSecrets(messageOf(err));
+        const error = errorMessage(err);
         const now = new Date();
         await saveStage(stage, { status: 'failed', finishedAt: now });
         await db.update(runs).set({ status: 'failed', error, finishedAt: now }).where(eq(runs.id, runId));

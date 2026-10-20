@@ -126,6 +126,16 @@ describe('createRouter', () => {
     expect(Number(after.costUsd)).toBeCloseTo(0.006);
   });
 
+  it('stores a failed call error with credentials scrubbed and rethrows the original (D2-R2)', async () => {
+    const db = await testDb();
+    const raw = 'auth failed at https://proxy:pw@api.test/v1?key=k with Bearer sk-ant-api03-LEAKleak1234';
+    const a = scriptedAdapter([Object.assign(new Error(raw), { status: 401 })]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    await expect(r.text('extract', { prompt: 'p' }, { runId: null, promptVersion: 'extract.v1' })).rejects.toThrow(raw);
+    const [call] = await db.select().from(llmCalls);
+    expect(call!.error).toBe('auth failed at https://api.test/v1 with Bearer [redacted]');
+  });
+
   it('embeds through the openai adapter and logs the call', async () => {
     const db = await testDb();
     const anthropic = scriptedAdapter([]);

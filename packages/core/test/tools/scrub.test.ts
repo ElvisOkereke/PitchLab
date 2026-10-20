@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { scrubSecrets } from '../../src/tools/scrub';
+import { errorMessage, scrubSecrets } from '../../src/tools/scrub';
 
 const R = '[redacted]';
 
@@ -55,12 +55,48 @@ describe('scrubSecrets', () => {
     expect(scrubSecrets('token limit exceeded')).toBe('token limit exceeded');
   });
 
+  it('strips userinfo from any scheme, up to the last @ before the path (D2-R2)', () => {
+    expect(scrubSecrets('redis://:pw@cache:6379/0 down')).toBe('redis://cache:6379/0 down');
+    expect(scrubSecrets('amqp://u:p@mq.test/vh?heartbeat=5')).toBe('amqp://mq.test/vh');
+    expect(scrubSecrets('custom+x://a@b:c@host.test/p?q=1#f')).toBe('custom+x://host.test/p');
+    expect(scrubSecrets('https://us@er:p@ss@host.test/x')).toBe('https://host.test/x');
+    expect(scrubSecrets('ok https://host.test then')).toBe('ok https://host.test then');
+    expect(scrubSecrets('weird://%zz@[bad/host')).toBe('weird://[bad/host'); // regex fallback when URL() rejects it
+  });
+
+  it('redacts the extended assignment keywords (D2-R2)', () => {
+    for (const [input, out] of [
+      ['cookie=abc123', `cookie=${R}`], ['Set-Cookie: sid=xyz; Path=/', `Set-Cookie: ${R}; Path=/`], ['session: s3ss', `session: ${R}`],
+      ['auth=u:p', `auth=${R}`], ['credentials: "c"', `credentials: ${R}`], ['pwd=hunter2', `pwd=${R}`],
+      ['private_key=-----BEGIN', `private_key=${R}`], ['signature=abc', `signature=${R}`], ['refresh-token: r1', `refresh-token: ${R}`],
+      ['access_key=AK1', `access_key=${R}`], ['client_secret=cs', `client_secret=${R}`],
+    ]) expect(scrubSecrets(input!), input).toBe(out);
+  });
+
+  it('redacts an unterminated quoted value to the end of the line (D2-R2)', () => {
+    expect(scrubSecrets('password: "abc def\nnext line')).toBe(`password: ${R}\nnext line`);
+    expect(scrubSecrets(`token='${'x'.repeat(600)}'`)).toBe(`token=${R}`); // closing quote beyond the cap
+  });
+
+  it('redacts JWTs (D2-R2)', () => {
+    expect(scrubSecrets('jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJvd25lciJ9.sig_x-1 rejected')).toBe(`jwt ${R} rejected`);
+    expect(scrubSecrets('eyJhbGciOiJub25lIn0.eyJzdWIiOiJvIn0.')).toBe(R);
+  });
+
+  it('errorMessage scrubs the message of anything thrown', () => {
+    expect(errorMessage(new Error('bad api_key=zzz'))).toBe(`bad api_key=${R}`);
+    expect(errorMessage('Bearer abc')).toBe(`Bearer ${R}`);
+    expect(errorMessage(new Error('503 Service Unavailable at harvest'))).toBe('503 Service Unavailable at harvest');
+  });
+
   it('is linear: 1MB hostile inputs finish well under a second', () => {
     const MB = 1_000_000;
     const inputs = [
       'a'.repeat(MB), 'a1'.repeat(MB / 2), 'http://'.repeat(MB / 7), 'https://x@'.repeat(MB / 10), 'token='.repeat(MB / 6),
       'token:"'.repeat(MB / 7), 'Bearer '.repeat(MB / 7), 'Authorization: '.repeat(MB / 15), 'sk-'.repeat(MB / 3),
       'a1-'.repeat(MB / 3), `${'a'.repeat(23)} `.repeat(MB / 24), 'postgres://u:'.repeat(MB / 13), '?'.repeat(MB),
+      'a:'.repeat(MB / 2), 'ab+'.repeat(MB / 3), 'x://@'.repeat(MB / 5), 'password="'.repeat(MB / 10), `token='${'z'.repeat(MB)}`,
+      'eyJ'.repeat(MB / 3), 'eyJa.'.repeat(MB / 5), 'eyJa '.repeat(MB / 5), 'cookie='.repeat(MB / 7), 'session: "'.repeat(MB / 10),
     ];
     for (const s of inputs) {
       const t = performance.now();
