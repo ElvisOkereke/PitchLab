@@ -131,3 +131,9 @@ Open after tuning-4:
 - Spot-check found wrong incumbent facts (NCS, Paidnice): the gate relies on the competitor research, so treat idea-stage incumbent lists as hints only.
 
 - Pilot-plan permission tripwire (validation/schema.ts) is a best-effort keyword check on advisory text; known edge cases (dash/clause scoping, unusual phrasing) are accepted limitations. The pack-docs fallback adds permission reminders and an audit note.
+
+## Plan 3 limitations (recorded at chunk B review)
+- The draft link guard allows non-ASCII hostnames (e.g. Cyrillic domains); only punycode and ASCII labels are matched.
+- The stored landing_pages.html keeps the settings at generation time; a future live publish must re-render from the stored copy fields, not publish the stored html.
+- Bare URLs inside pack.md model text can autolink in GitHub-flavoured Markdown viewers (drafts are guarded, pack text is not).
+- Email verification service is not integrated; Places needs GOOGLE_PLACES_API_KEY; live landing publish and the form endpoint need the hosted app.
