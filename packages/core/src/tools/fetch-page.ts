@@ -4,6 +4,7 @@ import { promises as dns } from 'node:dns';
 import { isIP } from 'node:net';
 import ipaddr from 'ipaddr.js';
 import { Agent, fetch as undiciFetch } from 'undici';
+import { NEVER_FETCH_HOSTS, isNeverFetchHost } from './banned-sources';
 
 export type PageFailure = 'http_error' | 'timeout' | 'too_large' | 'not_html' | 'network' | 'blocked_scheme' | 'blocked_host';
 export interface PageResult {
@@ -47,14 +48,8 @@ const isHttp = (u: URL) => u.protocol === 'http:' || u.protocol === 'https:';
 
 export class TooLarge extends Error {}
 
-/** Hosts (and their subdomains) never fetched, on any hop (Global Constraint: the owner's pilot site). */
-export const NEVER_FETCH_HOSTS = ['gamersgetaway.ca'] as const;
-
-/** True for a never-fetch host or one of its subdomains (case and trailing dot ignored). */
-export function isNeverFetchHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/\.$/, '');
-  return NEVER_FETCH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
-}
+// Never-fetch hosts live in banned-sources (one source of truth); re-exported here and checked on every hop below.
+export { NEVER_FETCH_HOSTS, isNeverFetchHost };
 
 const defaultLookup: (host: string) => Promise<{ address: string; family: number }[]> = (host) => dns.lookup(host, { all: true });
 

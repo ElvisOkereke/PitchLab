@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { isBannedSource } from '../../src/tools/banned-sources';
+import { NEVER_FETCH_HOSTS, isBannedSource, isNeverFetchHost } from '../../src/tools/banned-sources';
+import { NEVER_FETCH_HOSTS as FetchPageHosts, isNeverFetchHost as fetchPageIsNeverFetchHost } from '../../src/tools/fetch-page';
+
+describe('never-fetch hosts (P3-R8)', () => {
+  it('isBannedSource also refuses the pilot site and its subdomains; look-alikes pass', () => {
+    expect(NEVER_FETCH_HOSTS).toContain('gamersgetaway.ca');
+    for (const url of ['https://www.gamersgetaway.ca/x', 'http://gamersgetaway.ca', 'https://SHOP.GamersGetaway.CA./cart']) {
+      expect(isBannedSource(url), url).toBe(true);
+      expect(isNeverFetchHost(new URL(url).hostname), url).toBe(true);
+    }
+    expect(isBannedSource('https://notgamersgetaway.ca/')).toBe(false);
+    expect(isNeverFetchHost('gamersgetaway.ca.evil.com')).toBe(false);
+  });
+
+  it('fetch-page re-exports the same list and check', () => {
+    expect(FetchPageHosts).toBe(NEVER_FETCH_HOSTS);
+    expect(fetchPageIsNeverFetchHost).toBe(isNeverFetchHost);
+  });
+});
 
 describe('isBannedSource', () => {
   it('bans every listed domain, including subdomains', () => {

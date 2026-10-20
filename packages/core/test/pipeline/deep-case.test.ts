@@ -226,6 +226,22 @@ describe('deepCase', () => {
     expect(rows.some((c) => c.text.startsWith('reachableBuyers'))).toBe(false);
   });
 
+  it('drops a competitor and a claim on the never-fetch pilot site like any banned source (P3-R8)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.evidence.claims[0].sourceUrl = 'https://gamersgetaway.ca/about';
+    d.competitors.list[0].url = 'https://www.gamersgetaway.ca/';
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.competitors.list.map((c) => c.name)).toEqual([d.competitors.list[1].name]);
+    expect(row.sections.evidence.claims.some((c) => c.sourceUrl.includes('gamersgetaway'))).toBe(false);
+    const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
+    expect(rows.some((c) => c.sourceUrl.includes('gamersgetaway'))).toBe(false);
+  });
+
   it('flags an advisory idea with its failed gate checks', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea' }));

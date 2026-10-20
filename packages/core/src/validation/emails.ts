@@ -4,8 +4,7 @@ import { parse } from 'tldts';
 import { prospects, suppressions } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
-import { isBannedSource } from '../tools/banned-sources';
-import { isNeverFetchHost } from '../tools/fetch-page';
+import { isBannedSource, isNeverFetchHost } from '../tools/banned-sources';
 import { prospectDomain } from './prospects';
 
 export type FoundEmail = { email: string; foundOn: string };

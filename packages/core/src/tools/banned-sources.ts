@@ -8,8 +8,20 @@ export const BANNED_DOMAINS = [
 const BANNED = new Set<string>(BANNED_DOMAINS);
 
 /**
- * True when the url must not be used as a source: its registrable domain is banned. Fails closed — an
- * unparseable url, a non-http(s) protocol or an IP-literal host also counts as banned.
+ * Hosts (and their subdomains) never fetched or used, anywhere (Global Constraint: the owner's pilot site). The single
+ * source of truth: isBannedSource refuses them, and fetchPage checks them on every hop.
+ */
+export const NEVER_FETCH_HOSTS = ['gamersgetaway.ca'] as const;
+
+/** True for a never-fetch host or one of its subdomains (case and trailing dot ignored). */
+export function isNeverFetchHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  return NEVER_FETCH_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+}
+
+/**
+ * True when the url must not be used as a source: its registrable domain is banned, or its host is a never-fetch host.
+ * Fails closed — an unparseable url, a non-http(s) protocol or an IP-literal host also counts as banned.
  */
 export function isBannedSource(url: string): boolean {
   let u: URL;
@@ -19,6 +31,7 @@ export function isBannedSource(url: string): boolean {
     return true;
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+  if (isNeverFetchHost(u.hostname)) return true;
   const r = parse(u.hostname.toLowerCase());
   if (r.isIp) return true;
   return r.domain !== null && BANNED.has(r.domain);
