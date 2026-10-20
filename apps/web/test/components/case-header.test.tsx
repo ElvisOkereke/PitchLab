@@ -41,10 +41,11 @@ describe('CaseHeader', () => {
 
   it('a killed case shows its kill reason and an Overturn kill button that returns here', () => {
     const view = caseViewFixture({ stage: 'killed', killReason: 'too crowded' });
-    view.case.sections.summary.gateFlags = ['evidence', 'control'];
+    view.case.sections.summary.gateFlags = ['evidence', 'generic', 'something-new'];
     const { container } = render(<CaseHeader view={view} tab="summary" notice="overturn_refused" />);
     expect(container.textContent).toContain('Kill reason: too crowded');
-    expect(container.textContent).toContain('⚠️ Gate flags: evidence, control');
+    // Readable check labels; an unknown flag shows as stored.
+    expect(container.textContent).toContain('⚠️ Gate flags: Evidence, Not generic, something-new');
     const overturn = container.querySelector('[data-testid="overturn-kill"]')!;
     expect(overturn.querySelector('input[name="returnTo"]')?.getAttribute('value')).toBe('/cases/lead-flow-verification');
     expect(container.querySelector('[role="status"]')?.textContent).toBe('That case is no longer killed, so there was nothing to overturn.');

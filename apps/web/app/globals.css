@@ -113,6 +113,12 @@ a {
   color: var(--muted);
 }
 
+code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.95em;
+  overflow-wrap: anywhere;
+}
+
 .error {
   color: var(--bad);
 }

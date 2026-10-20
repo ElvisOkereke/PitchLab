@@ -1,6 +1,7 @@
 import type { CaseView } from '@bcg/core/dashboard/case-view';
 import Link from 'next/link';
 import { CASE_NOTICES, CASE_TABS, CASE_TAB_LABEL, caseHref, type CaseNotice, type CaseTab } from '@/lib/case-query';
+import { checkLabel } from '@/lib/gate';
 import { STAGE_LABEL } from '@/lib/stages';
 import { StageMoveForm } from './stage-move-form';
 
@@ -36,7 +37,7 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
       ) : null}
       {gateFlags.length > 0 ? (
         <p className="banner banner-warn" role="note">
-          ⚠️ Gate flags: {gateFlags.join(', ')}
+          ⚠️ Gate flags: {gateFlags.map(checkLabel).join(', ')}
         </p>
       ) : null}
       <section className="case-move card" aria-label="Move stage">

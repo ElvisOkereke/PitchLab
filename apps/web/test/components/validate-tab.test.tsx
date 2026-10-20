@@ -2,7 +2,7 @@ import type { OutreachDraftRow, OutreachEventRow } from '@bcg/core/dashboard/val
 import { cleanup, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HOSTILE, caseViewFixture } from '../helpers/case-fixture';
-import { landingCopyFixture, prospectRow, validateViewFixture } from '../helpers/validate-fixture';
+import { landingCopyFixture, packFixture, prospectRow, validateViewFixture } from '../helpers/validate-fixture';
 
 vi.mock('@/actions/outreach', () => ({ markOutreachAction: vi.fn(async () => ({})) }));
 
@@ -97,6 +97,32 @@ describe('ValidateTab', () => {
     expect(ev.textContent).toContain('Acme Web');
     expect(ev.textContent).toContain(HOSTILE);
     expect(ev.querySelector('img, script')).toBeNull();
+  });
+
+  it('renders hostile pack documents, checklist, draft subjects and bodies inertly', () => {
+    const hostilize = <T,>(v: T): T => {
+      if (typeof v === 'string') return `${HOSTILE}${v}` as T;
+      if (Array.isArray(v)) return v.map(hostilize) as T;
+      if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'metricKey' ? x : hostilize(x)])) as T;
+      return v;
+    };
+    const sections = { ...hostilize(packFixture()), reviewNotes: [HOSTILE] };
+    const p = prospectRow({ name: HOSTILE, location: HOSTILE, email: HOSTILE, fitReason: HOSTILE });
+    const drafts = new Map([[p.id, [draft(p.id, 'cold', HOSTILE, HOSTILE), draft(p.id, 'followup2', `${HOSTILE}2`, `${HOSTILE}\n${HOSTILE}`)]]]);
+    const validate = validateViewFixture({ prospects: { rows: [p], total: 1 }, drafts });
+    validate.pack!.sections = sections;
+    validate.pack!.model = HOSTILE;
+    validate.checklist = [{ id: 'x', description: HOSTILE, metricKey: 'emails_sent', value: 0, threshold: 1, state: 'pending' }];
+    const { container, getByTestId } = render(<ValidateTab view={caseViewFixture()} validate={validate} page={1} />);
+
+    expect(container.textContent).not.toContain('The pack documents could not be read.');
+    expect(container.textContent).toContain(`${HOSTILE}A lead-flow checker for agencies`);
+    expect(container.textContent).toContain(`${HOSTILE}Question 8?`);
+    expect(getByTestId('prospect-drafts').querySelector('h4')!.textContent).toBe(`Cold email: ${HOSTILE}`);
+    expect(container.querySelector('img, script, iframe, style, object, embed')).toBeNull();
+    for (const el of container.querySelectorAll('*')) {
+      for (const attr of el.getAttributeNames()) expect(attr.startsWith('on'), `${el.tagName} has ${attr}`).toBe(false);
+    }
   });
 
   it('paginates prospects 100 per page with links that keep the tab', () => {

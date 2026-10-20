@@ -34,7 +34,9 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
       <section aria-labelledby="queue-title" className="card">
         <h2 id="queue-title">Queue a run</h2>
         <QueueRunForm sectors={market?.sectors ?? []} lenses={lenses} />
-        <p className="muted small">Runs execute when `npm run worker` is running.</p>
+        <p className="muted small">
+          Runs execute when <code>npm run worker</code> is running.
+        </p>
       </section>
       <p>
         {counts.queued} queued · {counts.running} running

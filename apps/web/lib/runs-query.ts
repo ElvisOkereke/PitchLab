@@ -3,7 +3,7 @@ import { pageParam } from './case-query';
 
 /** Outcomes of "Resume" on a failed run (allow-listed; the query value is only a key). Every requeueRun reason has one. */
 export const RUNS_NOTICES = {
-  requeued: 'Run queued again. It resumes from the failed stage when `npm run worker` is running.',
+  requeued: 'Run queued again. It resumes from the failed stage when npm run worker is running.',
   requeue_not_found: 'That run no longer exists.',
   requeue_not_failed: 'Only failed runs can be resumed, and that run is no longer failed. Refresh.',
   requeue_busy: '3 runs are already queued. Wait for the worker, then try again.',
