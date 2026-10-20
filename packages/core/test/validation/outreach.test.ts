@@ -57,6 +57,9 @@ async function setSender(db: Db) {
   await setSetting(db, 'sender.contact', '+1 416 555 0100');
 }
 
+const EXAMPLE_LABEL =
+  '(Example for a freight detention case only — write yours from the case above, never reuse this wording for another case.)';
+
 const deps = (db: Db, router: ReturnType<typeof fakeRouter>, logs: string[] = []) => ({ db, router, log: (m: string) => logs.push(m) });
 
 describe('DraftEmailsSchema', () => {
@@ -302,10 +305,11 @@ describe('generateDrafts', () => {
     const prompt = router.calls[0]!.prompt;
     expect(new Set((await db.select().from(outreachDrafts)).map((d) => d.promptVersion))).toEqual(new Set(['outreach.v2']));
     const rules = prompt.slice(prompt.indexOf('Rules:'));
-    expect(rules).toContain(`"I'm building ..."`);
+    // Both are templates filled from the case; the freight sentences sit only after the labelled example (P3-R25).
+    expect(rules).toContain(`"I'm building a small tool for [the case's buyer] and trying to learn how [the case's problem] really goes for them."`);
     expect(rules).toMatch(/Never invent credentials, customers, employers/);
-    expect(rules).toMatch(/ONE specific, easy yes\/no question/);
-    expect(rules).toContain('Does your team ever eat a detention charge a shipper refuses to pay because proof was missing?');
+    expect(rules).toMatch(/ONE specific, easy yes\/no question about whether \[this buyer\] has run into \[this case's problem\] recently, in their own words/);
+    expect(rules).toContain(`${EXAMPLE_LABEL} "Does your team ever eat a detention charge a shipper refuses to pay because proof was missing?"`);
     expect(rules).toMatch(/Never ask a stranger to send data/);
     expect(rules).toMatch(/cold email and followup1 contain NO price, NO numbers, NO amounts and NO percentages/);
     expect(rules).toMatch(/Followup2 may mention the price, and only as the case's allowed offer term/);
@@ -318,6 +322,30 @@ describe('generateDrafts', () => {
     expect(rules).toMatch(/Do not add a signature/);
     expect(rules).toContain('Allowed offer terms');
     expect(rules).toContain('$99 per month');
+  });
+
+  it('for a non-freight case, freight wording appears only inside the labelled examples (P3-R25)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id);
+    const kase = await insertCase(db, idea.id, {
+      slug: 'dental', title: 'Dental no-show recovery',
+      sections: {
+        summary: { oneLiner: 'Fill cancelled dental slots', buyer: 'dental clinic office managers', problem: 'last-minute cancellations leave empty chairs', solution: 's', price: { amount: 49, per: 'month' } },
+        pitch: { emails: [{ subject: 'Empty chairs', body: 'Hi' }] },
+      } as unknown as CaseSections,
+    });
+    await aProspect(db, kase.id, { name: 'Smile Dental', fitReason: 'a busy two-chair clinic', location: 'Ottawa, ON' });
+    const router = fakeRouter({ structured: { outreach: [drafts()] } });
+    await generateDrafts(deps(db, router), kase.id);
+    const prompt = router.calls[0]!.prompt;
+    expect(prompt.split(EXAMPLE_LABEL)).toHaveLength(3); // two labelled examples
+    const FREIGHT = /freight|detention|shipper|broker|carrier|trucking/i;
+    for (const line of prompt.split('\n').filter((l) => FREIGHT.test(l))) {
+      const at = line.indexOf(EXAMPLE_LABEL);
+      expect(at, line).toBeGreaterThanOrEqual(0);
+      expect(line.slice(0, at), line).not.toMatch(FREIGHT);
+    }
   });
 
   it('regenerate: true redrafts only new/drafted prospects; contacted ones keep their draft rows untouched (P3-R24)', async () => {
