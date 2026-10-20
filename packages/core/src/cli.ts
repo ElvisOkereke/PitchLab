@@ -3,23 +3,25 @@ import { join, resolve } from 'node:path';
 import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizzle-orm';
 import { caseToMarkdown } from './case/export-markdown';
 import {
-  CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, type MarkType, type RunOpts, type ValidateCliOpts,
+  CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
-import { loadEnv } from './config/env';
+import { loadEnv, type Env } from './config/env';
+import { WORKER_STATUS_KEY } from './dashboard/settings';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
-import { cases, claims, dataCalls, ideas, lenses, llmCalls, markets, runs, scores, settings } from './db/schema';
+import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settings } from './db/schema';
 import { seedDefaults } from './db/seed';
 import { buildRouter } from './llm/router';
+import { buildStageDeps } from './pipeline/deps';
 import { createRun, executeRun } from './pipeline/run';
-import { defaultRunConfig, type RunConfig, type StageDeps } from './pipeline/types';
+import { defaultRunConfig, type RunConfig } from './pipeline/types';
 import { fetchPage } from './tools/fetch-page';
-import { buildSources } from './tools/sources';
 import { computeChecklistStatus } from './validation/checklist';
 import { markOutreach, outreachCounts } from './validation/outreach';
 import { parseProspectCsv, upsertProspects } from './validation/prospects';
 import { runValidation } from './validation/run';
 import { getSetting, setSetting } from './validation/settings';
+import { resolveModels, runWorker, workerStatus } from './worker';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -80,7 +82,31 @@ async function exportCase(db: Db, slug: string): Promise<string> {
   return path;
 }
 
-/** Executes (or resumes) a run with the real stages, then prints slugs, cost and export paths. */
+/** Executes (or resumes) one run with the real stages, then prints slugs, cost and export paths (gen run and gen worker). */
+async function executeAndReport(db: Db, env: Env, id: string): Promise<number> {
+  const [row] = await db.select().from(runs).where(eq(runs.id, id));
+  if (!row) throw new CliError(`Run not found: ${id}`, 1);
+  const status = await executeRun(await buildStageDeps(env, db, row.config, out), id);
+  const [final] = await db.select().from(runs).where(eq(runs.id, id));
+  const cost = `$${Number(final!.costUsd).toFixed(4)}`;
+
+  if (status === 'failed') {
+    console.error(clean(`Run ${id} failed at ${final!.currentStage ?? 'unknown stage'}: ${final!.error ?? 'unknown error'}`));
+    console.error(`Total cost: ${cost}`);
+    console.error(`Resume with: npm run gen -- resume ${id}`);
+    return 1;
+  }
+
+  const caseRows = await db.select({ slug: cases.slug }).from(cases)
+    .innerJoin(ideas, eq(cases.ideaId, ideas.id)).where(eq(ideas.runId, id)).orderBy(cases.createdAt);
+  out(`Run ${id} succeeded`);
+  out(caseRows.length ? `Cases: ${caseRows.map((c) => c.slug).join(', ')}` : 'Cases: none');
+  out(`Total cost: ${cost}`);
+  for (const c of caseRows) out(`Exported ${await exportCase(db, c.slug)}`);
+  return 0;
+}
+
+/** `gen run` (config) or `gen resume` (runId). */
 async function execute(runId: string | null, config: RunConfig | null): Promise<number> {
   loadDotEnv();
   const env = loadEnv();
@@ -93,39 +119,56 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
         const missing = config.lensIds.filter((l) => !found.some((f) => f.id === l));
         if (missing.length) throw new CliError(`Unknown lens id(s): ${missing.join(', ')}`, 2);
       }
-      id = (await createRun(db, config!)).id;
+      // Created as running (not queued) so a `gen worker` on the same database never claims it.
+      id = (await createRun(db, config!, { status: 'running' })).id;
       out(`Run ${id} created`);
     }
-    const [row] = await db.select().from(runs).where(eq(runs.id, id));
-    if (!row) throw new CliError(`Run not found: ${id}`, 1);
-    const [market] = await db.select().from(markets).where(eq(markets.id, row.config.marketId));
+    return await executeAndReport(db, env, id);
+  } finally {
+    await closeDb(db);
+  }
+}
 
-    const deps: StageDeps = {
-      db,
-      router: buildRouter(env, db),
-      sources: buildSources(env, market ? { countries: market.countries } : undefined),
-      fetchPage,
-      log: out,
-    };
-    const status = await executeRun(deps, id);
-    const [final] = await db.select().from(runs).where(eq(runs.id, id));
-    const cost = `$${Number(final!.costUsd).toFixed(4)}`;
-
-    if (status === 'failed') {
-      console.error(clean(`Run ${id} failed at ${final!.currentStage ?? 'unknown stage'}: ${final!.error ?? 'unknown error'}`));
-      console.error(`Total cost: ${cost}`);
-      console.error(`Resume with: npm run gen -- resume ${id}`);
-      return 1;
+/** `gen worker`: executes runs queued from the dashboard until stopped (or one pass with --once). */
+async function workerCommand(opts: WorkerCliOpts): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  const models = resolveModels(env);
+  const stop = new AbortController();
+  let busy = false;
+  let interrupts = 0;
+  const onSigint = () => {
+    interrupts += 1;
+    if (interrupts > 1) {
+      console.error('Exiting now. A run that was executing stays "running": recover it with npm run gen -- resume <id>');
+      process.exit(130);
     }
-
-    const caseRows = await db.select({ slug: cases.slug }).from(cases)
-      .innerJoin(ideas, eq(cases.ideaId, ideas.id)).where(eq(ideas.runId, id)).orderBy(cases.createdAt);
-    out(`Run ${id} succeeded`);
-    out(caseRows.length ? `Cases: ${caseRows.map((c) => c.slug).join(', ')}` : 'Cases: none');
-    out(`Total cost: ${cost}`);
-    for (const c of caseRows) out(`Exported ${await exportCase(db, c.slug)}`);
+    console.error(busy ? 'Stopping after the current run (press Ctrl+C again to exit now).' : 'Stopping.');
+    stop.abort();
+  };
+  process.on('SIGINT', onSigint);
+  try {
+    if (!opts.once) out(`Worker started: checking the queue every ${opts.interval}s. Ctrl+C to stop.`);
+    await runWorker({
+      db,
+      intervalMs: opts.interval * 1000,
+      signal: stop.signal,
+      once: opts.once,
+      log: out,
+      heartbeat: () => setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models)),
+      execute: async (id) => {
+        busy = true;
+        try {
+          return (await executeAndReport(db, env, id)) === 0 ? 'succeeded' : 'failed';
+        } finally {
+          busy = false;
+        }
+      },
+    });
     return 0;
   } finally {
+    process.off('SIGINT', onSigint);
     await closeDb(db);
   }
 }
@@ -352,6 +395,7 @@ const program = buildProgram({
   outreachStatus: outreachStatusCommand,
   configSet: configSetCommand,
   configGet: configGetCommand,
+  worker: workerCommand,
 });
 
 try {

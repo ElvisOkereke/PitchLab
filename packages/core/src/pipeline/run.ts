@@ -46,8 +46,16 @@ function isEmptyOutput(stage: Stage, output: unknown, config: RunConfig): boolea
 
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
-export async function createRun(db: Db, config: RunConfig): Promise<{ id: string }> {
-  const [row] = await db.insert(runs).values({ config, status: 'queued' }).returning({ id: runs.id });
+/**
+ * Inserts a run row. `gen run` creates its run as `running` (it executes it at once), so a `gen worker` sharing the
+ * database never claims it; runs queued for the worker are `queued` (the default).
+ */
+export async function createRun(
+  db: Db,
+  config: RunConfig,
+  o: { status?: 'queued' | 'running' } = {},
+): Promise<{ id: string }> {
+  const [row] = await db.insert(runs).values({ config, status: o.status ?? 'queued' }).returning({ id: runs.id });
   return { id: row!.id };
 }
 

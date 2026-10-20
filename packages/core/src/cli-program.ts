@@ -64,7 +64,18 @@ export type CliHandlers = {
   outreachStatus(slug: string): Promise<number>;
   configSet(key: string, value: string): Promise<number>;
   configGet(key: string | undefined): Promise<number>;
+  worker(opts: WorkerCliOpts): Promise<number>;
 };
+
+export type WorkerCliOpts = { interval: number; once?: boolean };
+
+/** Seconds between queue checks while idle: a whole number, at least 2. */
+export const WORKER_INTERVAL_DEFAULT_S = 10;
+function intervalSeconds(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 2) throw new CliError(`--interval must be a whole number of seconds, at least 2, got: ${v}`, 2);
+  return n;
+}
 
 /** Settings keys the CLI may read or write: `sender.*` and `landing.*` only. */
 const CONFIG_KEY = /^(?:sender|landing)\.[A-Za-z][A-Za-z0-9_]*$/;
@@ -115,6 +126,14 @@ export function buildProgram(h: CliHandlers): Command {
     .argument('<runId>')
     .action(async (runId: string) => {
       process.exitCode = await h.resume(runId);
+    });
+
+  program.command('worker')
+    .description('Execute runs queued from the dashboard, oldest first (Ctrl+C: stop after the current run; twice: exit now)')
+    .option('--interval <seconds>', `seconds between queue checks while idle (default ${WORKER_INTERVAL_DEFAULT_S}, minimum 2)`, intervalSeconds, WORKER_INTERVAL_DEFAULT_S)
+    .option('--once', 'check the queue once (execute at most one queued run), then exit')
+    .action(async (opts: WorkerCliOpts) => {
+      process.exitCode = await h.worker(opts);
     });
 
   program.command('export')

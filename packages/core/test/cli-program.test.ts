@@ -6,7 +6,7 @@ function handlers() {
   return {
     run: vi.fn(ok), resume: vi.fn(ok), export: vi.fn(ok), runs: vi.fn(ok),
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
-    configSet: vi.fn(ok), configGet: vi.fn(ok),
+    configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -99,6 +99,14 @@ describe('gen prospects import / outreach / config', () => {
     expect(() => checkConfigValue('landing.formEndpoint', 'javascript:alert(1)')).toThrow(/http/);
     expect(() => checkConfigValue('landing.formEndpoint', 'https://forms.owner.ca/x')).not.toThrow();
     expect(() => checkConfigValue('sender.name', 'x'.repeat(600))).toThrow(/too long/);
+  });
+
+  it('worker takes an --interval in seconds (default 10, minimum 2) and --once', async () => {
+    expect((await parse(['worker'])).worker).toHaveBeenCalledWith({ interval: 10 });
+    expect((await parse(['worker', '--interval', '2', '--once'])).worker).toHaveBeenCalledWith({ interval: 2, once: true });
+    for (const bad of ['1', '0', 'ten', '2.5']) {
+      await expect(parse(['worker', '--interval', bad]), bad).rejects.toThrow(/--interval/);
+    }
   });
 
   it('existing commands keep their options', async () => {
