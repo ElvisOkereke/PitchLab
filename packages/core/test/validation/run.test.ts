@@ -191,6 +191,20 @@ describe('runValidation', () => {
     expect(existsSync(join(outDir, 'freight', 'landing', 'index.html'))).toBe(true);
   });
 
+  it('never lists the --pilot-site domain as a prospect (logged)', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const { deps, logs, fetchPage } = setup(db, {
+      structured: { pack: [pack()], extract: [extract()], outreach: [drafts()], landing: [landing()] },
+      research: { prospect: [research()] },
+    });
+    const r = await runValidation(deps, kase.id, { pilotSite: 'https://shop.Acme-Freight.com/quote' });
+    expect(r.exitCode).toBe(0);
+    expect((await db.select().from(prospects)).map((p) => p.domain)).toEqual(['northline-logistics.ca']);
+    expect(logs.join('\n')).toMatch(/pilot site.*acme-freight\.com/i);
+    expect(fetchPage.mock.calls.map((c) => String(c[0]))).not.toContainEqual(expect.stringContaining('acme-freight'));
+  });
+
   it('a landing failure still runs the export, with a non-zero exit code', async () => {
     const db = await testDb();
     const kase = await aCase(db);

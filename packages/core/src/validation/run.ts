@@ -7,7 +7,7 @@ import { exportValidation, type ValidationExport } from './export';
 import { generateLanding } from './landing';
 import { generateDrafts } from './outreach';
 import { generatePackDocs } from './pack-docs';
-import { placesSource, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
+import { placesSource, prospectDomain, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
 
 export type ValidationDeps = Pick<StageDeps, 'db' | 'router' | 'fetchPage' | 'log'> & {
   /** Root of the validation export; files go to `<outDir>/<slug>/`. */
@@ -77,6 +77,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   // 2–4. Outreach chain.
   let chainBroken = false;
+  const pilotDomain = opts.pilotSite ? prospectDomain(opts.pilotSite) : null;
   if (opts.skipProspects) {
     record('prospects', 'skipped', '--skip-prospects');
   } else {
@@ -84,7 +85,10 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
       const source: ProspectSource = opts.source === 'places'
         ? placesSource({ apiKey: deps.placesApiKey, ...(deps.placesFetch ? { fetchImpl: deps.placesFetch } : {}) })
         : webResearchSource;
-      const found = await source.find({ db, router: deps.router, log, caseId, limit: opts.prospects ?? DEFAULT_PROSPECTS });
+      const all = await source.find({ db, router: deps.router, log, caseId, limit: opts.prospects ?? DEFAULT_PROSPECTS });
+      // The pilot site is the owner's pilot, never a prospect (never-fetch hosts are already refused by isBannedSource).
+      const found = pilotDomain ? all.filter((c) => prospectDomain(c.website) !== pilotDomain) : all;
+      if (found.length < all.length) log(`validate: dropped ${all.length - found.length} prospect(s) on the pilot site domain ${pilotDomain}`);
       const r = await upsertProspects(db, caseId, found, source.id);
       if (found.length === 0) {
         log(`validate: 0 prospects found by ${source.id}; continuing with existing prospects`);
@@ -102,9 +106,11 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
     record('emails', 'skipped', 'prospects step failed');
   } else {
     try {
-      const todo = await db.select().from(prospects)
+      const pending = await db.select().from(prospects)
         .where(and(eq(prospects.caseId, caseId), isNull(prospects.email), ne(prospects.status, 'unsubscribed')))
         .orderBy(prospects.createdAt, prospects.id);
+      const todo = pending.filter((p) => p.domain !== pilotDomain);
+      if (todo.length < pending.length) log(`validate: not fetching the pilot site domain ${pilotDomain} for emails`);
       const tally = { found: 0, none: 0, blocked: 0, kept: 0, errors: 0 };
       for (const p of todo) {
         try {
