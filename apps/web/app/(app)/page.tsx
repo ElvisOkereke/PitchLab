@@ -1,10 +1,18 @@
-import { caseStage } from '@bcg/core/db/schema';
+import { listBoard, listGateKills } from '@bcg/core/dashboard/board';
+import { BoardView } from '@/components/board-view';
+import { requireOwner } from '@/lib/auth/require-owner';
+import { parseBoardQuery } from '@/lib/board-query';
+import { getDb } from '@/lib/db';
+import { listActiveLenses } from '@/lib/lenses';
 
-export default function BoardPage() {
-  return (
-    <main>
-      <h1>Board</h1>
-      <p className="muted">The pipeline board is coming: {caseStage.enumValues.join(' · ')}.</p>
-    </main>
-  );
+export default async function BoardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  await requireOwner();
+  const query = parseBoardQuery(await searchParams);
+  const db = getDb();
+  const [board, gateKills, lenses] = await Promise.all([
+    listBoard(db, { lensId: query.lens, minAi: query.minAi }),
+    listGateKills(db),
+    listActiveLenses(db),
+  ]);
+  return <BoardView board={board} gateKills={gateKills} lenses={lenses} query={query} />;
 }
