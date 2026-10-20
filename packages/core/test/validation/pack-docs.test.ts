@@ -170,6 +170,29 @@ describe('validation schemas', () => {
       expect(stepFails('Submit test leads only after written permission; never without permission')).toBe(false);
     });
 
+    it('scrape, stress test, exploit, phish, scanners and probers are actions too (fix round 1, D)', () => {
+      for (const s of [
+        'Scrape their listings', 'Use a scraper on the site', 'Scraping their load board', 'Stress test their quote API', 'Stress-testing the portal',
+        'Exploit the form bug', 'Phishing simulation for their staff', 'Run vulnerability scanners on the site', 'Point a prober at their API',
+      ]) {
+        expect(stepFails(s), s).toBe(true);
+        expect(stepFails(s + WITH), s).toBe(false);
+      }
+      expect(stepFails('Scandal-free brokers only')).toBe(false);
+    });
+
+    it('a prohibition ("never/do not/no … without … permission") satisfies the rule; "no permission is needed" does not', () => {
+      for (const s of [
+        'Never submit test leads without written permission', "Do not crawl the site without the owner's consent",
+        "Don't log in without permission", 'No form is submitted without written permission from the owner',
+      ]) {
+        expect(stepFails(s), s).toBe(false);
+      }
+      for (const s of ['No permission is needed to scan their site', 'Submit test leads without permission', 'Crawl the site without consent']) {
+        expect(stepFails(s), s).toBe(true);
+      }
+    });
+
     it('(e) every free-text field is checked', () => {
       const fails = (patch: Record<string, unknown>) => PilotPlanSchema.safeParse({ ...p, ...patch }).success === false;
       expect(fails({ idealPilotCustomer: 'A broker whose inbox we can scan' })).toBe(true);
