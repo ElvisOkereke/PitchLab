@@ -157,8 +157,10 @@ describe('runValidation', () => {
     });
     await runValidation(deps, kase.id, {});
     const [acme, north] = await db.select().from(prospects).orderBy(prospects.name);
-    await markOutreach(db, acme!.id, 'sent');
-    await markOutreach(db, north!.email!, 'unsubscribe');
+    await markOutreach(db, acme!.id, 'note', 'left a voicemail'); // a note keeps acme at drafted
+    await markOutreach(db, north!.id, 'sent');
+    await markOutreach(db, 'someone@elsewhere.com', 'unsubscribe');
+    const northRows = await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, north!.id));
     const statusOf = async () => (await db.select().from(prospects).orderBy(prospects.name)).map((p) => p.status);
     const before = { status: await statusOf(), events: await db.select().from(outreachEvents), supp: await db.select().from(suppressions) };
     const coldOf = async (id: string) =>
@@ -172,10 +174,12 @@ describe('runValidation', () => {
 
     const r = await runValidation(deps, kase.id, { skipProspects: true, redraft: true });
     expect(r.exitCode).toBe(0);
-    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(3); // the unsubscribed prospect is not redrafted
+    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(3); // the sent prospect is not redrafted (P3-R24)
     expect(await coldOf(acme!.id)).toBe('Quick question');
-    expect(await coldOf(north!.id)).toBe('Detention claims');
+    expect(await db.select().from(outreachDrafts).where(eq(outreachDrafts.prospectId, north!.id))).toEqual(northRows);
+    expect(logs).toContain('redraft: skipped 1 prospects already contacted');
     expect(await db.select().from(outreachDrafts)).toHaveLength(6);
+    expect(await statusOf()).toEqual(['drafted', 'sent']);
     expect(await statusOf()).toEqual(before.status);
     expect(await db.select().from(outreachEvents)).toEqual(before.events);
     expect(await db.select().from(suppressions)).toEqual(before.supp);

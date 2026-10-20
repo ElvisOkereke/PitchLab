@@ -200,7 +200,7 @@ export const PackSectionsSchema = z.object({
 });
 export type PackDocs = z.infer<typeof PackSectionsSchema>;
 
-// ---- Outreach drafts (outreach.v1) ---------------------------------------------------------------
+// ---- Outreach drafts (outreach prompt, all versions) ----------------------------------------------
 
 // Link guard patterns (rulings P3-R14, R15, R17). Every pattern is linear on hostile input: a match can only start where
 // the lookbehind allows (the start of a token), so no start position re-scans the same run of characters. Run them on

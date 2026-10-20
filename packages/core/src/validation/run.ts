@@ -65,7 +65,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`runValidation: unknown case ${caseId}`);
   if (opts.redraft) {
-    log('validate: WARNING: --redraft replaces existing outreach drafts; drafts you edited in the database are replaced (status, events and suppressions are kept)');
+    log('validate: WARNING: --redraft replaces the outreach drafts of prospects not yet contacted (new or drafted); drafts you edited in the database are replaced (status, events and suppressions are kept)');
   }
 
   // 1. Pack documents (kept when present unless --refresh: the model call is the expensive part).

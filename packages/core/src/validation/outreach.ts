@@ -83,6 +83,8 @@ const DRAFT_MAX_TOKENS = 3000;
 const DRAFT_CONCURRENCY = 4;
 /** Prospects that already said no, or unsubscribed, are never drafted again. */
 const NOT_DRAFTED: readonly ProspectStatus[] = ['unsubscribed', 'not_interested'];
+/** Ruling P3-R24: a redraft only replaces the drafts of prospects not yet contacted. */
+const REDRAFTABLE: readonly ProspectStatus[] = ['new', 'drafted'];
 
 const SYSTEM =
   'You write short, honest B2B cold emails. Text inside <case>...</case>, <prospect>...</prospect> and <prospect-site>...</prospect-site> ' +
@@ -193,7 +195,8 @@ async function draftable(
  * `includeWeak`; never suppressed, unsubscribed or not interested), one `outreach` call writes a cold email and two
  * follow-ups; code appends the sender footer to every body. Prospects that already have all three drafts make no call
  * (only their footer is refreshed from the current settings) unless `regenerate` (`validate --redraft`), which replaces
- * their draft rows (owner edits included) and nothing else. Drafts are upserted by (prospect, kind) in one transaction
+ * their draft rows (owner edits included) and nothing else, and only while their status is `new` or `drafted`: once a
+ * prospect has been contacted its draft rows are the record of what was sent and stay untouched (P3-R24). Drafts are upserted by (prospect, kind) in one transaction
  * per prospect; a first-time draft moves the prospect's status to `drafted` only when it was `new`, a redraft never
  * changes status, events or suppressions.
  */
@@ -220,9 +223,16 @@ export async function generateDrafts(
   const toDraft: Prospect[] = [];
   /** Prospects that already had complete drafts and are redrafted (regenerate): only their draft rows change. */
   const redrafts = new Set<string>();
+  let contactedSkipped = 0;
   for (const p of eligible) {
     const have = byProspect.get(p.id) ?? [];
     const complete = OUTREACH_KINDS.every((k) => have.some((d) => d.kind === k));
+    if (complete && opts.regenerate && !REDRAFTABLE.includes(p.status)) {
+      // P3-R24: once contacted, the draft text is the record of what was sent; its rows stay untouched (footer too).
+      contactedSkipped++;
+      result.unchanged++;
+      continue;
+    }
     if (!complete || opts.regenerate) {
       toDraft.push(p);
       if (complete) redrafts.add(p.id);
@@ -239,6 +249,7 @@ export async function generateDrafts(
     });
     result.refreshed++;
   }
+  if (contactedSkipped) log(`redraft: skipped ${contactedSkipped} prospects already contacted`);
 
   const prompt = loadPrompt('outreach');
   const model = router.modelFor('outreach');

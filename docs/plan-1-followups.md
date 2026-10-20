@@ -152,8 +152,8 @@ Open after tuning-4:
 - Prospect yield is below `--prospects` (7–15 per call for 25 asked); size fit is loose (500-staff 3PLs, asset carriers).
   Ask research for broker authority/size evidence or run several narrower searches.
 - Done: `validate --redraft` regenerates drafts of prospects that already have them (draft rows only; status, events
-  and suppressions untouched). It redrafts every eligible prospect, including ones already `sent`; a status filter
-  (only `drafted`) may still be wanted.
+  and suppressions untouched), only for prospects still `new` or `drafted` (P3-R24); contacted prospects keep their
+  draft rows as the record of what was sent.
 - Checklist thresholds are set by the pack call before any prospect exists ("50 emails" is about 4× what web research
   yielded). pack.md now shows "you currently have N usable addresses" next to the emails_sent gate, but the threshold
   itself is still not sized to the prospect sources.

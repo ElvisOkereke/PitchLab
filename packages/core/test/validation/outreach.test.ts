@@ -320,29 +320,45 @@ describe('generateDrafts', () => {
     expect(rules).toContain('$99 per month');
   });
 
-  it('regenerate: true replaces drafts but never touches status, events or suppressions', async () => {
+  it('regenerate: true redrafts only new/drafted prospects; contacted ones keep their draft rows untouched (P3-R24)', async () => {
     const db = await testDb();
     const kase = await aCase(db);
     const fresh = await aProspect(db, kase.id); // has drafts but status left at new (e.g. reset by hand)
+    const drafted = await aProspect(db, kase.id);
     const sent = await aProspect(db, kase.id);
+    const replied = await aProspect(db, kase.id);
     const unsub = await aProspect(db, kase.id);
-    const router = fakeRouter({ structured: { outreach: [drafts(' A'), drafts(' A'), drafts(' A'), drafts(' B'), drafts(' B')] } });
+    const router = fakeRouter({ structured: { outreach: [...Array(5).fill(0).map(() => drafts(' A')), drafts(' B'), drafts(' B')] } });
     await generateDrafts(deps(db, router), kase.id);
     await db.update(prospects).set({ status: 'new' }).where(eq(prospects.id, fresh.id));
     await markOutreach(db, sent.id, 'sent');
+    await markOutreach(db, replied.id, 'sent');
+    await markOutreach(db, replied.id, 'replied');
     await markOutreach(db, unsub.email!, 'unsubscribe');
     const events = await db.select().from(outreachEvents);
     const supp = await db.select().from(suppressions);
+    const rowsOf = async (ids: string[]) =>
+      (await db.select().from(outreachDrafts)).filter((d) => ids.includes(d.prospectId)).sort((a, b) => a.id.localeCompare(b.id));
+    const contactedBefore = await rowsOf([sent.id, replied.id, unsub.id]);
+    await setSender(db); // a footer refresh would change contacted rows if they were touched at all
 
-    const r = await generateDrafts(deps(db, router), kase.id, { regenerate: true });
+    const logs: string[] = [];
+    const r = await generateDrafts(deps(db, router, logs), kase.id, { regenerate: true });
     expect(r).toMatchObject({ generated: 2, failed: 0 });
-    const rows = await db.select().from(outreachDrafts);
-    expect(rows).toHaveLength(9);
-    for (const d of rows) expect(d.subject.endsWith(d.prospectId === unsub.id ? ' A' : ' B'), d.subject).toBe(true);
+    expect(router.calls.filter((c) => c.stage === 'outreach')).toHaveLength(7);
+    expect(await rowsOf([sent.id, replied.id, unsub.id])).toEqual(contactedBefore); // the record of what was sent
+    for (const d of await rowsOf([fresh.id, drafted.id])) {
+      expect(d.subject.endsWith(' B'), d.subject).toBe(true);
+      expect(d.body).toContain('Ann Owner');
+    }
+    expect(await db.select().from(outreachDrafts)).toHaveLength(15);
     const status = Object.fromEntries((await db.select().from(prospects)).map((p) => [p.id, p.status]));
-    expect(status).toEqual({ [fresh.id]: 'new', [sent.id]: 'sent', [unsub.id]: 'unsubscribed' });
+    expect(status).toEqual({
+      [fresh.id]: 'new', [drafted.id]: 'drafted', [sent.id]: 'sent', [replied.id]: 'replied', [unsub.id]: 'unsubscribed',
+    });
     expect(await db.select().from(outreachEvents)).toEqual(events);
     expect(await db.select().from(suppressions)).toEqual(supp);
+    expect(logs).toContain('redraft: skipped 2 prospects already contacted');
   });
 
   it('regenerate: true replaces the same three rows', async () => {
