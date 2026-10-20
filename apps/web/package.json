@@ -10,8 +10,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "hash-password": "tsx --conditions=react-server scripts/hash-password.ts",
-    "acceptance": "tsx scripts/acceptance.ts",
-    "check-bundle": "tsx scripts/check-bundle.ts"
+    "acceptance": "node scripts/acceptance.mjs",
+    "check-bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@bcg/core": "*",
@@ -35,6 +35,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^29.0.0",
+    "linkedom": "^0.18.13",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "vite-tsconfig-paths": "^6.1.1",
