@@ -1,10 +1,10 @@
 import { and, eq, inArray, isNull } from 'drizzle-orm';
+import { parseHTML } from 'linkedom';
 import { parse } from 'tldts';
 import { prospects, suppressions } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import type { StageDeps } from '../pipeline/types';
 import { isBannedSource } from '../tools/banned-sources';
-import { decodeEntities } from '../tools/entities';
 import { prospectDomain } from './prospects';
 
 export type FoundEmail = { email: string; foundOn: string };
@@ -29,28 +29,63 @@ const ROLE_INBOXES = new Set([
 const EMAIL_RE = /[a-z0-9](?:[a-z0-9._%+-]{0,62}[a-z0-9])?@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}/gi;
 const EMAIL_EXACT = new RegExp(`^${EMAIL_RE.source}$`, 'i');
 
-/** Text a visitor can read: comments, scripts, styles and other non-rendered blocks removed, tags dropped, entities decoded. */
-function visibleText(html: string): string {
-  const stripped = html
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, ' ')
-    .replace(/<(script|style|noscript|template|svg|head|iframe|object)\b[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<(?:script|style)\b[\s\S]*$/i, ' ') // an unclosed script/style hides the rest of the page
-    .replace(/<[^>]*>/g, ' ');
-  return decodeEntities(stripped);
+/** Elements whose content a visitor never reads as page text. */
+const HIDDEN_ELEMENTS = 'script, style, noscript, template, svg, iframe, object, head';
+
+type PageDom = ReturnType<typeof parseHTML>['document'];
+
+/**
+ * Parse once with linkedom (linear, no regex over raw HTML) and drop non-rendered elements, so text, mailto links and
+ * page links all come from the same cleaned DOM. Comments are not elements, so links inside them never count.
+ */
+function cleanDom(html: string): PageDom {
+  const { document } = parseHTML(/<html[\s>]/i.test(html) ? html : `<html><body>${html}</body></html>`);
+  for (const el of [...document.querySelectorAll(HIDDEN_ELEMENTS)]) el.remove();
+  return document;
 }
 
-/** `name [at] domain [dot] com`, `name(at)domain(dot)com` → `name@domain.com`. */
+type DomNode = { nodeType: number; nodeValue: string | null; childNodes: ArrayLike<DomNode> };
+
+/**
+ * The page's text nodes in order. Adjacent text nodes join directly (the parser may split "ops&#64;x.com" into several),
+ * and every element boundary adds a space so adjacent elements never glue words together. Iterative: deep trees are fine.
+ */
+function visibleText(document: PageDom): string {
+  const root = (document.body ?? document.documentElement) as unknown as DomNode | null;
+  if (!root) return '';
+  const parts: string[] = [];
+  const stack: (DomNode | null)[] = [root]; // null = element boundary
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (node === null) parts.push(' ');
+    else if (node.nodeType === 3) parts.push(node.nodeValue ?? '');
+    else if (node.nodeType === 1) {
+      parts.push(' ');
+      stack.push(null);
+      const kids = node.childNodes;
+      for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!);
+    }
+  }
+  return parts.join('');
+}
+
+/** `name [at] domain [dot] com`, `name(at)domain(dot)com` → `name@domain.com`. Whitespace is collapsed first, so each pattern is linear. */
 function deobfuscate(text: string): string {
   return text
-    .replace(/\s*[[({]\s*at\s*[\])}]\s*/gi, '@')
-    .replace(/\s*[[({]\s*dot\s*[\])}]\s*/gi, '.');
+    .replace(/\s+/g, ' ')
+    .replace(/ ?[[({] ?at ?[\])}] ?/gi, '@')
+    .replace(/ ?[[({] ?dot ?[\])}] ?/gi, '.');
+}
+
+/** `href` values of the page's links (already entity-decoded by the parser). */
+function hrefs(document: PageDom): string[] {
+  return [...document.querySelectorAll('a[href]')].map((a) => (a.getAttribute('href') ?? '').trim());
 }
 
 /** Addresses from `mailto:` hrefs (each must be a whole, plain address). */
-function mailtoAddresses(html: string): string[] {
+function mailtoAddresses(document: PageDom): string[] {
   const out: string[] = [];
-  for (const m of html.matchAll(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
-    const value = decodeEntities(m[1] ?? m[2] ?? m[3] ?? '').trim();
+  for (const value of hrefs(document)) {
     if (!/^mailto:/i.test(value)) continue;
     let target = value.slice('mailto:'.length).split('?')[0]!;
     try {
@@ -89,9 +124,13 @@ const isRole = (email: string) => ROLE_INBOXES.has(email.slice(0, email.indexOf(
  * asset names, placeholder domains and no-reply inboxes are dropped. Named people come before role inboxes.
  */
 export function extractEmails(html: string, siteUrl: string): FoundEmail[] {
+  return extractFromDom(cleanDom(html), siteUrl);
+}
+
+function extractFromDom(document: PageDom, siteUrl: string): FoundEmail[] {
   const siteDomain = prospectDomain(siteUrl);
   if (!siteDomain) return [];
-  const candidates = [...mailtoAddresses(html), ...(deobfuscate(visibleText(html)).match(EMAIL_RE) ?? [])];
+  const candidates = [...mailtoAddresses(document), ...(deobfuscate(visibleText(document)).match(EMAIL_RE) ?? [])];
   const seen = new Set<string>();
   const kept: string[] = [];
   for (const c of candidates) {
@@ -124,12 +163,12 @@ const MAX_FETCHES = 3;
 const MAX_LINKED = 2;
 
 /** Same-site contact/about pages the homepage links to (contact first), then the usual paths. */
-function followUpUrls(homeHtml: string, base: string, domain: string): string[] {
+function followUpUrls(home: PageDom | null, base: string, domain: string): string[] {
   const linked: string[] = [];
-  for (const m of homeHtml.matchAll(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) {
+  for (const href of home ? hrefs(home) : []) {
     let u: URL;
     try {
-      u = new URL(decodeEntities(m[1] ?? m[2] ?? m[3] ?? '').trim(), base);
+      u = new URL(href, base);
     } catch {
       continue;
     }
@@ -167,14 +206,15 @@ export async function discoverEmails({ db, fetchPage, log }: EmailDeps, prospect
     const page = await fetchPage(url);
     fetches++;
     const onSite = page.ok && prospectDomain(page.finalUrl) === domain;
-    if (fetches === 1) queue.push(...followUpUrls(onSite ? (page.html ?? '') : '', onSite ? page.finalUrl : prospect.website, domain));
+    const dom = onSite && page.html !== undefined ? cleanDom(page.html) : null;
+    if (fetches === 1) queue.push(...followUpUrls(dom, onSite ? page.finalUrl : prospect.website, domain));
     if (!page.ok || page.html === undefined) continue;
     if (!onSite) {
       log(`emails: ${capField(url, 200)} redirected off ${domain} to ${capField(page.finalUrl, 200)}; ignored`);
       continue;
     }
 
-    const found = extractEmails(page.html, page.finalUrl);
+    const found = extractFromDom(dom!, page.finalUrl);
     if (found.length === 0) continue;
     const blocked = new Set(
       (await db.select({ email: suppressions.email }).from(suppressions).where(inArray(suppressions.email, found.map((f) => f.email))))

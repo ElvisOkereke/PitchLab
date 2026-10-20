@@ -59,6 +59,42 @@ describe('extractEmails', () => {
     expect(out).toEqual([{ email: 'boss@acme-freight.com', foundOn: SITE }]);
   });
 
+  it('ignores mailto links inside comments, scripts and templates', () => {
+    const html = `
+      <!-- <a href="mailto:commented@acme-freight.com">old</a> -->
+      <script>document.write('<a href="mailto:scripted@acme-freight.com">x</a>')</script>
+      <template><a href="MAILTO:templated@acme-freight.com">t</a></template>
+      <noscript><a href="mailto:noscript@acme-freight.com">n</a></noscript>
+      <a href="MailTo:real@acme-freight.com">Real</a>`;
+    expect(emails(html)).toEqual(['real@acme-freight.com']);
+  });
+
+  it('does not glue addresses in adjacent elements together', () => {
+    expect(emails('<p>ann@acme-freight.com</p><p>bob@acme-freight.com</p>')).toEqual(['ann@acme-freight.com', 'bob@acme-freight.com']);
+  });
+
+  describe('hostile 500 KB inputs finish quickly', () => {
+    const CEILING_MS = 5000;
+    const cases: [string, () => string][] = [
+      ['500k "<"', () => '<'.repeat(500_000)],
+      ['62.5k "<script "', () => '<script '.repeat(62_500)],
+      ['500k spaces', () => ' '.repeat(500_000)],
+      ['60k nested divs', () => '<div>'.repeat(60_000) + 'deep@acme-freight.com' + '</div>'.repeat(60_000)],
+      ['whitespace-separated tags', () => '<a \n href= "x" >  </a>\n'.repeat(20_000)],
+      ['unclosed hrefs', () => '<a href="'.repeat(55_000)],
+      ['long domain chain', () => 'x@' + 'a.'.repeat(250_000) + '1'],
+      ['obfuscation runs', () => ' [ at ] '.repeat(60_000)],
+    ];
+    for (const [name, make] of cases) {
+      it(name, () => {
+        const html = make();
+        const t0 = performance.now();
+        extractEmails(html, SITE);
+        expect(performance.now() - t0).toBeLessThan(CEILING_MS);
+      }, 60_000);
+    }
+  });
+
   it('returns nothing for a site url without a registrable domain', () => {
     expect(emails('<p>info@acme-freight.com</p>', 'http://93.184.216.34/')).toEqual([]);
   });
