@@ -41,9 +41,10 @@ const errText = (err: unknown) => capField(err instanceof Error ? err.message : 
  * The validation pipeline for one case, each step idempotent on its own (R20): pack docs → prospects → emails → drafts
  * → landing → export. Results of finished steps stay saved whatever happens later.
  *
- * Failures: a pack or landing failure stops the run. The outreach chain (prospects → emails → drafts) is independent of
- * the landing page, so a failure inside it skips the rest of that chain but still makes the landing page and the export
- * (plan Review Focus 5: report what we got). Any failure gives exit code 1. Finding 0 prospects is a warning, not a failure.
+ * Failures: a pack failure stops the run (nothing to export). The outreach chain (prospects → emails → drafts) is
+ * independent of the landing page, so a failure inside it skips the rest of that chain but still makes the landing page
+ * and the export (plan Review Focus 5: report what we got); a landing failure still runs the export. Any failure gives
+ * exit code 1. Finding 0 prospects is a warning, not a failure.
  */
 export async function runValidation(deps: ValidationDeps, caseId: string, opts: ValidationOpts = {}): Promise<ValidationResult> {
   const { db, log } = deps;
@@ -148,8 +149,8 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
       record('landing', 'ok', existing ? 'regenerated' : 'generated');
     }
   } catch (err) {
+    // The export does not need the landing page: it still runs so the owner gets what was made (exit code stays 1).
     record('landing', 'failed', errText(err));
-    return done();
   }
 
   // 6. Export.

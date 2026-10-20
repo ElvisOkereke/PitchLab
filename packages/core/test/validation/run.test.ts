@@ -191,6 +191,19 @@ describe('runValidation', () => {
     expect(existsSync(join(outDir, 'freight', 'landing', 'index.html'))).toBe(true);
   });
 
+  it('a landing failure still runs the export, with a non-zero exit code', async () => {
+    const db = await testDb();
+    const kase = await aCase(db);
+    const { deps, outDir } = setup(db, { structured: { pack: [pack()], landing: [{ nonsense: true }] } });
+    const r = await runValidation(deps, kase.id, { skipProspects: true });
+    expect(r.exitCode).toBe(1);
+    expect(r.steps.map((s) => [s.step, s.status])).toEqual([
+      ['pack', 'ok'], ['prospects', 'skipped'], ['emails', 'ok'], ['drafts', 'ok'], ['landing', 'failed'], ['export', 'ok'],
+    ]);
+    expect(existsSync(join(outDir, 'freight', 'pack.md'))).toBe(true);
+    expect(existsSync(join(outDir, 'freight', 'landing', 'index.html'))).toBe(false);
+  });
+
   it('a pack failure stops the run with a non-zero exit code', async () => {
     const db = await testDb();
     const kase = await aCase(db);
