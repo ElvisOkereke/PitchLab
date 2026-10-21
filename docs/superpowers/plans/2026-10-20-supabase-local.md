@@ -31,9 +31,8 @@
 - **`DATABASE_SSL`** (`opts.ssl`):
   - `auto` (default): plain TCP for local hosts (`localhost`, `127.0.0.1`, `::1`, `*.railway.internal`); verified TLS for everything else.
   - `verify`: TLS with `rejectUnauthorized: true`.
-  - `require`: TLS without certificate verification (`rejectUnauthorized: false`; encrypted but not authenticated). Allowed only when explicitly chosen.
   - `disable`: plain TCP.
-  - Anything else: throw `DATABASE_SSL must be one of auto, verify, require, disable`.
+  - Anything else (including `require`): throw `DATABASE_SSL must be one of auto, verify, disable`. There is deliberately NO mode that encrypts without verifying the server certificate (`rejectUnauthorized: false` must never appear); a remote DB whose certificate isn't publicly trusted is verified with `DATABASE_SSL_CA`.
 - **`DATABASE_SSL_CA`** (`opts.sslCa`):
   - An absolute path to a PEM file. When TLS is on, it is used as `ssl.ca`.
   - A relative path: throw `DATABASE_SSL_CA must be an absolute path`.
@@ -45,7 +44,7 @@
   - TLS parameters stripped while other parameters are kept.
   - auto → no `ssl` for each local host form; auto → `{ rejectUnauthorized: true }` for `aws-0-ca-central-1.pooler.supabase.com`.
   - `verify` adds the CA when given.
-  - `require` → `rejectUnauthorized: false`.
+  - `require` throws, and a grep-style test asserts `rejectUnauthorized: false` appears nowhere in packages/core/src or apps/web.
   - `disable` → none.
   - Invalid values, a relative CA path and an unreadable CA each throw a message without the value or path (assert that the password and the path are absent from the message).
   - Pool max default, override and invalid.
@@ -66,8 +65,8 @@
 - `docs/dashboard.md`: a new section near the top, **"Free setup: Supabase database, app on your PC (no Docker)"**:
   1. Create a free Supabase project; save the database password, and prefer letters and digits only so it needs no URL encoding.
   2. Copy the **Session pooler** connection string (not the direct connection or transaction pooler: the worker holds connections and uses transactions and locks).
-  3. Download Supabase's SSL certificate (Project settings → Database → SSL configuration) to a folder OUTSIDE the repo. Set `DATABASE_SSL_CA` to its absolute path. Fallback: `DATABASE_SSL=require` (encrypted, unverified).
-  4. Put `DATABASE_URL`, `DATABASE_SSL_CA` (or `DATABASE_SSL=require`) and optionally `DATABASE_POOL_MAX` in the repo-root `.env`.
+  3. Download Supabase's SSL certificate (Project settings → Database → SSL configuration) to a folder OUTSIDE the repo. Set `DATABASE_SSL_CA` to its absolute path. Troubleshooting: if the connection reports a certificate error, the CA file is missing or wrong — re-download it; never disable verification.
+  4. Put `DATABASE_URL`, `DATABASE_SSL_CA` and optionally `DATABASE_POOL_MAX` in the repo-root `.env`.
   5. Back up `.data/pglite` (copy the folder).
   6. Bring the local DB up to date: `DATABASE_URL=pglite://.data/pglite npm run db:migrate`, with PowerShell syntax too.
   7. `npm run db:migrate` (applies migrations to Supabase; the vector extension is created by the migration).
