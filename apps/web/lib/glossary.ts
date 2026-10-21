@@ -61,7 +61,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   worker: {
     label: 'Worker',
-    text: 'The background program that does the work in your queued runs. Run it with npm run worker. It checks in regularly, and it shows as not seen after 60 seconds of silence.',
+    text: 'The background program that does the work in your queued runs and validation packs. Run it with npm run worker. It checks in regularly, and it shows as not seen after 60 seconds of silence.',
   },
   notionalSpend: {
     label: 'Notional spend',

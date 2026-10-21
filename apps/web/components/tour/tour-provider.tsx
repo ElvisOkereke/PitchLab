@@ -79,6 +79,7 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
   const initialRef = useRef(initial);
   const pendingSave = useRef<TourState | null>(null);
   const stepStart = useRef<{ key: string; location: string } | null>(null);
+  const pausedByPicker = useRef(false);
 
   const commit = useCallback((s: TourState, m: Mode | null) => {
     const saved = { ...s, version: TOUR_VERSION };
@@ -174,6 +175,11 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
     const targetSel = step.target ? selector(step.target) : undefined;
     const targetEl = targetSel ? document.querySelector(targetSel) : null;
     const how = resolve(step, { caseSlug }, location, targetEl !== null);
+    // A target inside a closed <details> has a zero-size box: open it so the highlight has something to show.
+    if (how.show === 'highlight' && targetEl) {
+      const details = targetEl.closest('details');
+      if (details && !details.open) details.open = true;
+    }
     const done = next(pos, chapters);
     const last = 'done' in done && (mode === 'chapter' || chapterAfter(pos.chapter) === null);
 
@@ -275,11 +281,22 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
       closeDriver();
       modeRef.current = null;
       setMode(null);
+      pausedByPicker.current = true;
     }
     setPickerOpen(true);
   }, [closeDriver]);
 
+  /** Closing the picker without choosing: a paused tour stays closed (position kept) instead of resuming on reload. */
+  const closePicker = useCallback(() => {
+    setPickerOpen(false);
+    if (!pausedByPicker.current) return;
+    pausedByPicker.current = false;
+    const t = tourRef.current;
+    if (t) commit({ ...t, dismissed: true }, null);
+  }, [commit]);
+
   const start = useCallback((chapter: TourChapterId, m: Mode) => {
+    pausedByPicker.current = false;
     setPickerOpen(false);
     stepStart.current = null;
     const t = tourRef.current;
@@ -287,6 +304,7 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
   }, [commit]);
 
   const continueTour = useCallback(() => {
+    pausedByPicker.current = false;
     setPickerOpen(false);
     stepStart.current = null;
     const t = tourRef.current;
@@ -310,7 +328,7 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
           onStartChapter={(id) => start(id, 'chapter')}
           onStartAll={() => start(TOUR_CHAPTERS[0], 'all')}
           onContinue={continueTour}
-          onClose={() => setPickerOpen(false)}
+          onClose={closePicker}
         />
       ) : null}
     </TourContext.Provider>

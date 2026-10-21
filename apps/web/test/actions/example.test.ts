@@ -33,7 +33,7 @@ describe('example actions', () => {
     expect(await redirectOf(hideExampleAction(new FormData()))).toBe('/settings?notice=example_hidden');
     expect(await exampleRows(state.db)).toHaveLength(0);
     expect((await exampleState(state.db)).hidden).toBe(true);
-    expect(request.revalidated).toEqual(expect.arrayContaining(['/', '/leaderboard', '/settings']));
+    expect(request.revalidated).toEqual(expect.arrayContaining(['/', '/leaderboard', '/settings', '/cases/example-booking-form-watchdog']));
   });
 
   it('resetExampleAction restores one example and shows it again', async () => {

@@ -73,7 +73,7 @@ describe('validation job panel', () => {
     cleanup();
 
     const stale = render(<ValidationJobStatus job={job({ status: 'running', startedAt: new Date(NOW.getTime() - 3 * 3_600_000) })} now={NOW} />);
-    expect(stale.container.textContent).toContain('If the worker stopped, start it again and press Run validation again');
+    expect(stale.container.textContent).toContain('If the worker stopped, start it again and press the validation button above again');
     cleanup();
 
     const ok = render(

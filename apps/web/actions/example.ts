@@ -1,6 +1,6 @@
 'use server';
 
-import { hideExample, resetExample } from '@bcg/core/example/example';
+import { EXAMPLE_SLUG, hideExample, resetExample } from '@bcg/core/example/example';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
@@ -11,6 +11,7 @@ function refresh() {
   revalidatePath('/');
   revalidatePath('/leaderboard');
   revalidatePath('/settings');
+  revalidatePath(`/cases/${EXAMPLE_SLUG}`);
 }
 
 /** Hides the built-in example (and keeps it hidden), then back to Settings. */

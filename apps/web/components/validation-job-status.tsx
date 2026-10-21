@@ -10,7 +10,7 @@ export function ValidationJobStatus({ job, now = new Date() }: { job: Validation
       {job.status === 'running' ? (
         <>
           <p>Running since {job.startedAt ? formatDateTime(job.startedAt) : 'just now'}</p>
-          {stale ? <p className="muted small">If the worker stopped, start it again and press Run validation again.</p> : null}
+          {stale ? <p className="muted small">If the worker stopped, start it again and press the validation button above again.</p> : null}
         </>
       ) : null}
       {job.status === 'succeeded' ? (

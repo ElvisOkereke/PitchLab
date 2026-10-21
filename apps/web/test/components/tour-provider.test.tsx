@@ -309,6 +309,28 @@ describe('TourButton and ChapterPicker', () => {
     await waitFor(() => expect(lastSaved()).toMatchObject({ completed: ['score'], current: null }), { timeout: 2000 });
   });
 
+  it('closing the picker while a tour was paused saves dismissed: true and keeps the position (F2)', async () => {
+    const view = mount();
+    await waitFor(() => expect(drv.instance.highlight).toHaveBeenCalled());
+    fireEvent.click(view.getByRole('button', { name: /Take the tour/ }));
+    fireEvent.click(within(view.getByRole('dialog')).getByRole('button', { name: 'Close' }));
+    expect(view.queryByRole('dialog')).toBeNull();
+    await waitFor(() => expect(lastSaved()).toMatchObject({ dismissed: true, current: { chapter: 'setup', step: 0 } }), { timeout: 2000 });
+  });
+
+  it('opens a closed <details> around the target before highlighting it (F4)', async () => {
+    mount({
+      children: (
+        <details data-testid="d">
+          <summary>More</summary>
+          <div data-tour="first">first</div>
+        </details>
+      ),
+    });
+    await waitFor(() => expect(lastHighlight()?.element).toBe('[data-tour="first"]'));
+    expect((document.querySelector('[data-testid="d"]') as HTMLDetailsElement).open).toBe(true);
+  });
+
   it('Escape closes the picker', () => {
     const view = mount({ initial: STATE });
     fireEvent.click(view.getByRole('button', { name: /Take the tour/ }));

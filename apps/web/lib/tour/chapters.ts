@@ -302,7 +302,7 @@ export const CHAPTERS: Record<TourChapterId, { title: string; steps: TourStep[] 
         kind: 'action',
         advanceOn: { appears: 'validate-status' },
         title: 'Generate the validation pack',
-        body: 'Press Generate validation pack when ready: it writes a plan, finds prospects and drafts emails for about $0.60–1.50. Skip new prospect search saves about $0.45–0.60 of that. No button? The example comes ready-made, and real cases need your sender details first.',
+        body: 'Press Generate validation pack (Run validation again once a pack exists): it writes a plan, finds prospects and drafts emails for about $0.60–1.50. Skip new prospect search saves about $0.45–0.60. No button? The example is ready-made, and real cases need your sender details first.',
       },
       {
         id: 'validate-wait',
