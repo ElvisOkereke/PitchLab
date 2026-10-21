@@ -8,6 +8,11 @@ describe('core package surface', () => {
     expect(await db.select().from(cases)).toEqual([]);
   });
 
+  it('exposes the shared Postgres pool config for the web app', async () => {
+    const { pgPoolConfig } = await import('@bcg/core/db/pg-config');
+    expect(pgPoolConfig('postgres://u:p@127.0.0.1:5433/d', { defaultMax: 5 }).max).toBe(5);
+  });
+
   it('exposes the outreach tracking helpers without the LLM router', async () => {
     const tracking = await import('@bcg/core/validation/tracking');
     const outreach = await import('@bcg/core/validation/outreach');
