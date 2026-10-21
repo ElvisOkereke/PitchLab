@@ -59,7 +59,10 @@ Open after tuning-4:
 - CASL footer checks are substring-only. Tighten them when outreach drafting is built.
 
 ## Plan 4 (Continuous + deploy)
-- **TLS for remote Postgres** (`sslmode` or the `ssl` option) on Railway.
+- [x] **TLS for remote Postgres** (`sslmode` or the `ssl` option) on Railway. Done 2026-10-20 (branch `supabase`):
+  both pools use `packages/core/src/db/pg-config.ts`. `DATABASE_SSL` auto/verify/disable (auto = verified TLS for
+  non-local hosts), `DATABASE_SSL_CA` for a private CA, URL TLS parameters removed, `DATABASE_POOL_MAX`, timeouts,
+  and an idle-error listener on the worker pool. No mode skips certificate verification.
 - **Spend caps need accurate cost data:**
   - Cache write and read tokens are priced at the plain input rate.
   - In-adapter fallbacks (the stream-403 retry and the forced-tool rejection) are not logged in `llm_calls`.

@@ -46,7 +46,14 @@
   Owner actions: **start Docker Desktop** and repeat the acceptance (commands at the end of the results doc);
   **set sender identity** (`gen config set sender.*`, also editable in the dashboard's Settings); **choose a dashboard
   password** (`npm run hash-password -w apps/web`). Your local DB lacks migration 0006: back up `.data/pglite`, then
-  `npm run db:migrate` before `db:copy`.
+  `DATABASE_URL=pglite://.data/pglite npm run gen -- runs` before `db:copy` (`npm run db:migrate` resolves the
+  relative path inside `packages/core` and would migrate a new empty folder instead).
+  **Supabase (free) instead of Docker, branch `supabase` (owner decision 2026-10-20):** web + worker on the owner's PC,
+  database at Supabase via the session pooler. Both pools now share `packages/core/src/db/pg-config.ts`: verified TLS
+  for non-local hosts (`DATABASE_SSL` auto/verify/disable, `DATABASE_SSL_CA` for Supabase's certificate; no mode
+  skips verification), URL `sslmode`-style parameters removed, `DATABASE_POOL_MAX` (web 5, worker/CLI 4), 15 s
+  connect timeout, idle-error listener on the worker pool. Owner steps: `docs/dashboard.md`, "Free setup". Not yet
+  verified against a live Supabase project.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
@@ -312,3 +319,14 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   acceptance section. Observation: leaderboard `.by-toggle` links are 32px tall (rule: 44px). Not verified: Docker
   Postgres, advisory locks and SKIP LOCKED (`TEST_DATABASE_URL` test skipped), a real phone. A socket-multiplexer slot
   leak (fallback only) caused one spurious failed run.
+- **2026-10-20 (Supabase):** owner chose a free Supabase database with web + worker on the PC (no Docker). Plan
+  `docs/superpowers/plans/2026-10-20-supabase-local.md`, branch `supabase`, TDD. New web-safe
+  `packages/core/src/db/pg-config.ts` (`@bcg/core/db/pg-config`) used by `createDb` and the web `getDb`: TLS from
+  `DATABASE_SSL` only (URL `sslmode`, `ssl`, `sslrootcert`, `sslcert`, `sslkey`, `sslpassword`, `uselibpqcompat`
+  removed, because pg 8.23 lets them override the `ssl` option), `ssl: false` set explicitly so `PGSSLMODE` cannot
+  decide either, CA from `DATABASE_SSL_CA`, pool max 1–20, keep-alive and timeouts; the worker pool gained an
+  idle-error listener. A test fails if `rejectUnauthorized: false` appears in `packages/core/src` or `apps/web`. Web
+  env validates the three new variables. Guide: `docs/dashboard.md` "Free setup". Found while writing it:
+  `npm run db:migrate` resolves `pglite://.data/pglite` inside `packages/core` (a new empty folder there, not the real DB), so the guide
+  now uses `npm run gen -- runs` with the shell `DATABASE_URL` to migrate the local DB; `db:copy` migrates Supabase.
+  Not verified live: the Supabase connection and its certificate chain.
