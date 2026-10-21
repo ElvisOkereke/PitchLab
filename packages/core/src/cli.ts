@@ -21,7 +21,8 @@ import { fetchPage } from './tools/fetch-page';
 import { computeChecklistStatus } from './validation/checklist';
 import { markOutreach, outreachCounts } from './validation/outreach';
 import { parseProspectCsv, upsertProspects } from './validation/prospects';
-import { runValidation } from './validation/run';
+import { executeValidationJob } from './validation/job';
+import { runValidation, type ValidationDeps } from './validation/run';
 import { getSetting, setSetting } from './validation/settings';
 import { resolveModels, runWorker, workerStatus } from './worker';
 
@@ -174,6 +175,14 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
           busy = false;
         }
       },
+      executeValidation: async (jobId) => {
+        busy = true;
+        try {
+          return await executeValidationJob(validationDeps(env, db), jobId);
+        } finally {
+          busy = false;
+        }
+      },
     });
     return 0;
   } finally {
@@ -274,6 +283,11 @@ async function spendSince(db: Db, since: Date): Promise<number> {
   return Number(llm?.total ?? 0) + Number(data?.total ?? 0);
 }
 
+/** The deps `runValidation` needs (shared by `gen validate` and the worker's validation jobs). */
+function validationDeps(env: Env, db: Db): ValidationDeps {
+  return { db, router: buildRouter(env, db), fetchPage, log: out, outDir: VALIDATION_DIR, placesApiKey: env.GOOGLE_PLACES_API_KEY };
+}
+
 async function validateCommand(slug: string, opts: ValidateCliOpts): Promise<number> {
   loadDotEnv();
   const env = loadEnv();
@@ -281,11 +295,7 @@ async function validateCommand(slug: string, opts: ValidateCliOpts): Promise<num
   try {
     const kase = await findCase(db, slug);
     const started = new Date();
-    const result = await runValidation(
-      { db, router: buildRouter(env, db), fetchPage, log: out, outDir: VALIDATION_DIR, placesApiKey: env.GOOGLE_PLACES_API_KEY },
-      kase.id,
-      opts,
-    );
+    const result = await runValidation(validationDeps(env, db), kase.id, opts);
     out('');
     out(`Validation for ${slug}:`);
     for (const s of result.steps) out(`  ${s.step.padEnd(10)} ${s.status.padEnd(8)} ${s.detail}`);

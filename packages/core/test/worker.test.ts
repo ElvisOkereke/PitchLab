@@ -4,13 +4,14 @@ import { loadEnv } from '../src/config/env';
 import { DEFAULT_MODELS } from '../src/config/models';
 import { createDb, type Db } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
-import { runs } from '../src/db/schema';
+import { runs, validationJobs } from '../src/db/schema';
+import { ValidationJobOptionsSchema } from '../src/dashboard/validation-jobs';
 import { WORKER_STATUS_KEY, readWorkerStatus } from '../src/dashboard/settings';
 import { createRun } from '../src/pipeline/run';
 import { defaultRunConfig, type RunConfig } from '../src/pipeline/types';
 import { setSetting } from '../src/validation/settings';
-import { claimNextRun, resolveModels, runWorker, workerStatus } from '../src/worker';
-import { insertRun, testDb } from './helpers/db';
+import { claimNextRun, claimNextValidationJob, resolveModels, runWorker, workerStatus } from '../src/worker';
+import { insertCase, insertIdea, insertRun, testDb } from './helpers/db';
 
 const cfg = defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 });
 const statusOf = async (db: Db, id: string) => (await db.select().from(runs).where(eq(runs.id, id)))[0]!;
@@ -21,6 +22,13 @@ async function insertAt(db: Db, config: RunConfig, createdAt: Date): Promise<str
 }
 
 const never = new AbortController().signal;
+const noValidation = async () => 'succeeded' as const;
+async function insertJob(db: Db): Promise<string> {
+  const idea = await insertIdea(db, (await insertRun(db, cfg)).id);
+  const kase = await insertCase(db, idea.id);
+  const [row] = await db.insert(validationJobs).values({ caseId: kase.id, options: ValidationJobOptionsSchema.parse({}) }).returning({ id: validationJobs.id });
+  return row!.id;
+}
 const quietLog = () => {};
 
 describe('claimNextRun', () => {
@@ -67,6 +75,44 @@ describe.runIf(process.env.TEST_DATABASE_URL)('on real Postgres', () => {
   });
 });
 
+describe('claimNextValidationJob', () => {
+  it('two concurrent claims never take the same job', async () => {
+    const db = await testDb();
+    await insertJob(db);
+    const [a, b] = await Promise.all([claimNextValidationJob(db), claimNextValidationJob(db)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const [row] = await db.select().from(validationJobs).where(eq(validationJobs.id, (a ?? b)!));
+    expect(row!.status).toBe('running');
+    expect(row!.startedAt).toBeInstanceOf(Date);
+    expect(await claimNextValidationJob(db)).toBeNull();
+  });
+});
+
+describe('runWorker with validation jobs', () => {
+  it('runs a queued run before a queued job', async () => {
+    const db = await testDb();
+    const runId = (await insertRun(db, cfg)).id;
+    await insertJob(db);
+    const execute = vi.fn(async () => 'succeeded' as const);
+    const executeValidation = vi.fn(async () => 'succeeded' as const);
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute, executeValidation });
+    expect(execute).toHaveBeenCalledWith(runId);
+    expect(executeValidation).not.toHaveBeenCalled();
+  });
+
+  it('executes a job when no run is queued', async () => {
+    const db = await testDb();
+    const jobId = await insertJob(db);
+    // insertJob created a queued run too (its idea needs one): clear it so only the job is pending.
+    await db.update(runs).set({ status: 'succeeded' });
+    const execute = vi.fn(async () => 'succeeded' as const);
+    const executeValidation = vi.fn(async () => 'succeeded' as const);
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute, executeValidation });
+    expect(execute).not.toHaveBeenCalled();
+    expect(executeValidation).toHaveBeenCalledWith(jobId);
+  });
+});
+
 describe('runWorker', () => {
   it('executes queued runs oldest first and writes a heartbeat with no secret values', async () => {
     const db = await testDb();
@@ -75,7 +121,7 @@ describe('runWorker', () => {
     const env = loadEnv({ LLM_API_KEY: 'test-key-value', GITHUB_TOKEN: 'gh-secret-value', MODEL_OVERRIDES: '{"score":"gemini-x"}' });
     const models = resolveModels(env);
     const seen: string[] = [];
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 10, signal: never, once: true, log: quietLog,
       heartbeat: () => setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models)),
       execute: async (id) => { seen.push(id); return 'succeeded'; },
@@ -93,7 +139,7 @@ describe('runWorker', () => {
     const db = await testDb();
     const id = await insertAt(db, { ...cfg, ideaCount: 1e9 }, new Date());
     const execute = vi.fn(async () => 'succeeded' as const);
-    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute });
+    await runWorker({ executeValidation: noValidation, db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute });
     expect(execute).not.toHaveBeenCalled();
     const row = await statusOf(db, id);
     expect(row.status).toBe('failed');
@@ -105,7 +151,7 @@ describe('runWorker', () => {
   it('marks the run failed when execute throws (it never stays running)', async () => {
     const db = await testDb();
     const id = await insertAt(db, cfg, new Date());
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {},
       execute: async () => { throw new Error('Model config: bad'); },
     });
@@ -120,7 +166,7 @@ describe('runWorker', () => {
     const seen: string[] = [];
     let beats = 0;
     const started = Date.now();
-    const done = runWorker({
+    const done = runWorker({ executeValidation: noValidation,
       db, intervalMs: 60_000, signal: ctrl.signal, log: quietLog,
       heartbeat: async () => { beats++; },
       execute: async (id) => { seen.push(id); return 'succeeded'; },
@@ -135,7 +181,7 @@ describe('runWorker', () => {
   it('scrubs credentials from a setup error it stores (D2-R1)', async () => {
     const db = await testDb();
     const id = await insertAt(db, cfg, new Date());
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {},
       execute: async () => { throw new Error('auth failed for api_key=ghp_abcdefghij0123456789ABCD'); },
     });
@@ -146,7 +192,7 @@ describe('runWorker', () => {
     const db = await testDb();
     await insertRun(db, cfg);
     let beats = 0;
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 20, signal: never, once: true, log: quietLog,
       heartbeat: async () => { beats++; },
       execute: async () => { await new Promise((r) => setTimeout(r, 150)); return 'succeeded'; },
@@ -160,7 +206,7 @@ describe('runWorker', () => {
   it('logs "no queued runs" on an idle --once pass and survives a failing heartbeat', async () => {
     const db = await testDb();
     const log = vi.fn();
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 10, signal: never, once: true, log,
       heartbeat: async () => { throw new Error('db down'); }, execute: async () => 'succeeded',
     });
@@ -173,7 +219,7 @@ describe('runWorker', () => {
     const { id } = await insertRun(db, cfg);
     const ctrl = new AbortController();
     const execute = vi.fn(async () => 'succeeded' as const);
-    await runWorker({
+    await runWorker({ executeValidation: noValidation,
       db, intervalMs: 60_000, signal: ctrl.signal, log: quietLog, execute,
       heartbeat: async () => { ctrl.abort(); }, // SIGINT ("Stopping.") arrives while the heartbeat is in flight
     });
@@ -187,7 +233,7 @@ describe('runWorker', () => {
     const ctrl = new AbortController();
     ctrl.abort();
     const execute = vi.fn(async () => 'succeeded' as const);
-    await runWorker({ db, intervalMs: 60_000, signal: ctrl.signal, log: quietLog, heartbeat: async () => {}, execute });
+    await runWorker({ executeValidation: noValidation, db, intervalMs: 60_000, signal: ctrl.signal, log: quietLog, heartbeat: async () => {}, execute });
     expect(execute).not.toHaveBeenCalled();
   });
 });

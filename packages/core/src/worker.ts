@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Env } from './config/env';
 import { DEFAULT_MODELS, MODEL_STAGES, isModelStage, type ModelStage } from './config/models';
 import type { Db } from './db/client';
-import { runs } from './db/schema';
+import { runs, validationJobs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
 import { errorMessage, scrubError } from './tools/scrub';
@@ -24,6 +24,20 @@ export async function claimNextRun(db: Db): Promise<string | null> {
     .set({ status: 'running', startedAt: sql`coalesce(${runs.startedAt}, now())` })
     .where(and(eq(runs.status, 'queued'), eq(runs.id, sql`(${next})`)))
     .returning({ id: runs.id });
+  return row?.id ?? null;
+}
+
+/** Same as claimNextRun, for the oldest queued validation job (FOR UPDATE SKIP LOCKED). */
+export async function claimNextValidationJob(db: Db): Promise<string | null> {
+  const next = db.select({ id: validationJobs.id }).from(validationJobs)
+    .where(eq(validationJobs.status, 'queued'))
+    .orderBy(asc(validationJobs.createdAt), asc(validationJobs.id))
+    .limit(1)
+    .for('update', { skipLocked: true });
+  const [row] = await db.update(validationJobs)
+    .set({ status: 'running', startedAt: sql`now()` })
+    .where(and(eq(validationJobs.status, 'queued'), eq(validationJobs.id, sql`(${next})`)))
+    .returning({ id: validationJobs.id });
   return row?.id ?? null;
 }
 
@@ -52,6 +66,7 @@ export type WorkerOptions = {
   intervalMs: number;
   signal: AbortSignal;
   execute: (runId: string) => Promise<'succeeded' | 'failed'>;
+  executeValidation: (jobId: string) => Promise<'succeeded' | 'failed'>;
   heartbeat: () => Promise<void>;
   log: (m: string) => void;
   once?: boolean;
@@ -78,7 +93,8 @@ async function failRun(db: Db, id: string, error: string): Promise<void> {
 }
 
 /**
- * Loop: heartbeat, then claim (the heartbeat also repeats every `intervalMs` while a run executes). A claimed run's
+ * Loop: heartbeat, then claim a run; runs go first, and only when none is queued is a validation job claimed (the
+ * heartbeat also repeats every `intervalMs` while either executes). A claimed run's
  * stored config is re-validated with RunConfigSchema; an invalid one is
  * failed (`invalid run config: …`) instead of executed. After a run the next one is claimed at once; when nothing is
  * queued the loop sleeps `intervalMs` (abortable). It exits when `signal` aborts (a running `execute` is always
@@ -98,6 +114,24 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
     if (o.signal.aborted) return;
     const id = await claimNextRun(o.db);
     if (id === null) {
+      const jobId = await claimNextValidationJob(o.db);
+      if (jobId !== null) {
+        o.log(`validation job ${jobId} claimed`);
+        const timer = setInterval(() => void beat(), o.intervalMs);
+        try {
+          const status = await o.executeValidation(jobId);
+          o.log(`validation job ${jobId} ${status}`);
+        } catch (err) {
+          await o.db.update(validationJobs)
+            .set({ status: 'failed', error: scrubError(errorMessage(err)).slice(0, ERROR_MAX), finishedAt: new Date() })
+            .where(eq(validationJobs.id, jobId));
+          o.log(`validation job ${jobId} failed: ${errorMessage(err)}`);
+        } finally {
+          clearInterval(timer);
+        }
+        if (o.once) return;
+        continue;
+      }
       if (o.once) {
         o.log('no queued runs');
         return;

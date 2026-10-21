@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm';
 import type { CaseSections } from '../case/schema';
 import type { RunConfig } from '../pipeline/types';
+import type { ValidationJobOptions } from '../dashboard/validation-jobs';
+import type { StepResult } from '../validation/run';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
   vector, primaryKey, uniqueIndex, index, check,
@@ -318,13 +320,13 @@ export const stageEvents = pgTable('stage_events', {
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('stage_events_case_at_idx').on(t.caseId, t.at)]);
 
-/** Queued validation-pack jobs (the worker picks them up). `options` and `steps` are narrowed to real types later. */
+/** Queued validation-pack jobs (the worker picks them up). */
 export const validationJobs = pgTable('validation_jobs', {
   id: id(),
   caseId: uuid('case_id').notNull().references(() => cases.id),
-  options: jsonb('options').$type<unknown>().notNull(),
+  options: jsonb('options').$type<ValidationJobOptions>().notNull(),
   status: runStatus('status').notNull().default('queued'),
-  steps: jsonb('steps').$type<unknown>(),
+  steps: jsonb('steps').$type<StepResult[]>(),
   error: text('error'),
   costUsd: numeric('cost_usd').notNull().default('0'),
   startedAt: timestamp('started_at', { withTimezone: true }),
