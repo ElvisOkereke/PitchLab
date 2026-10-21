@@ -18,8 +18,11 @@ export type PgPoolOptions = {
   readFile?: (path: string) => string;
 };
 
-/** Removed from the URL: pg lets them override the `ssl` option (and `sslmode=require` means verify-full in pg 8.23). */
-const TLS_PARAMS = new Set(['sslmode', 'ssl', 'sslrootcert', 'sslcert', 'sslkey', 'sslpassword', 'uselibpqcompat']);
+/**
+ * Removed from the URL: pg lets them override the `ssl` option (`sslmode=require` means verify-full in pg 8.23, and
+ * `sslnegotiation=direct` replaces the ssl object with `true`, dropping the CA).
+ */
+const TLS_PARAMS = new Set(['sslmode', 'ssl', 'sslrootcert', 'sslcert', 'sslkey', 'sslpassword', 'uselibpqcompat', 'sslnegotiation']);
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const SSL_MODES = new Set(['auto', 'verify', 'disable']);
 
@@ -45,29 +48,30 @@ function stripTlsParams(url: string): string {
   return `${main.slice(0, q)}${kept.length ? `?${kept.join('&')}` : ''}${hash}`;
 }
 
-/** The host pg will connect to (a `host` query parameter wins, as in pg-connection-string), or '' if unparseable. */
-function targetHost(url: string): string {
+const normaliseHost = (host: string) => host.replace(/^\[(.+)\]$/, '$1').toLowerCase();
+const isLocalHost = (host: string) => LOCAL_HOSTS.has(host) || host.endsWith('.railway.internal');
+
+/**
+ * True only when every host pg might connect to is local: the URL host AND each `host` query value (pg-connection-
+ * string lets a `host` parameter replace the URL host and keeps the last one). Anything unparseable counts as remote.
+ */
+function allHostsLocal(url: string): boolean {
   // Same normalisation as pg-connection-string, so a password with a space or a bare % parses the same way.
   const normalised = / |%[^a-f0-9]|%[a-f0-9][^a-f0-9]/i.test(url) ? encodeURI(url).replace(/%25(\d\d)/g, '%$1') : url;
   let parsed: URL;
   try {
     parsed = new URL(normalised);
   } catch {
-    return '';
+    return false;
   }
-  const fromQuery = parsed.searchParams.get('host');
-  let host = fromQuery ?? parsed.hostname;
-  if (fromQuery === null) {
-    try {
-      host = decodeURIComponent(host);
-    } catch {
-      // keep the raw hostname
-    }
+  let authority: string;
+  try {
+    authority = decodeURIComponent(parsed.hostname);
+  } catch {
+    return false;
   }
-  return host.replace(/^\[(.+)\]$/, '$1').toLowerCase();
+  return [authority, ...parsed.searchParams.getAll('host')].every((h) => isLocalHost(normaliseHost(h)));
 }
-
-const isLocalHost = (host: string) => LOCAL_HOSTS.has(host) || host.endsWith('.railway.internal');
 
 function poolMax(value: string | undefined, fallback: number): number {
   const v = blankToUndefined(value);
@@ -90,7 +94,7 @@ export function pgPoolConfig(url: string, opts: PgPoolOptions): PoolConfig {
   const max = poolMax(opts.poolMax, opts.defaultMax);
   const connectionString = stripTlsParams(url);
 
-  const tls = mode === 'verify' || (mode === 'auto' && !isLocalHost(targetHost(connectionString)));
+  const tls = mode === 'verify' || (mode === 'auto' && !allHostsLocal(connectionString));
   // `false`, not undefined: pg would otherwise fall back to the PGSSLMODE environment variable.
   let ssl: PoolConfig['ssl'] = false;
   if (tls) {
@@ -104,5 +108,12 @@ export function pgPoolConfig(url: string, opts: PgPoolOptions): PoolConfig {
       }
     }
   }
-  return { connectionString, ssl, max, connectionTimeoutMillis: 15_000, idleTimeoutMillis: 30_000, keepAlive: true };
+  return {
+    connectionString, ssl, max,
+    connectionTimeoutMillis: 15_000,
+    idleTimeoutMillis: 30_000,
+    // Keep-alive probes from 10 s of silence, so a connection dropped by the pooler or a NAT is noticed.
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
+  };
 }

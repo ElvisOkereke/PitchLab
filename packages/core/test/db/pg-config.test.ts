@@ -15,6 +15,10 @@ const readFile = (p: string) => {
   throw new Error(`ENOENT: no such file, open '${p}'`);
 };
 const base = { defaultMax: 4, readFile };
+// pg's own parser/merger: proves what pg will actually use, not just what we pass.
+const ConnectionParameters = createRequire(import.meta.url)('pg/lib/connection-parameters') as new (c: object) => {
+  ssl: unknown; host: string; password: string;
+};
 
 function messageOf(f: () => unknown): string {
   try {
@@ -38,9 +42,20 @@ describe('pgPoolConfig: URL hygiene', () => {
     expect(pgPoolConfig(`${LOCAL}?connect_timeout=5`, base).connectionString).toBe(`${LOCAL}?connect_timeout=5`);
   });
 
+  it('strips sslnegotiation too', () => {
+    expect(pgPoolConfig(`${REMOTE}?sslnegotiation=direct&application_name=bcg`, base).connectionString).toBe(`${REMOTE}?application_name=bcg`);
+  });
+
+  it('real pg: sslnegotiation=direct no longer changes the ssl config (disable, auto-local, auto-remote)', () => {
+    const disabled = new ConnectionParameters(pgPoolConfig(`${REMOTE}?sslnegotiation=direct`, { ...base, ssl: 'disable' }));
+    expect(disabled.ssl).toBe(false);
+    const local = new ConnectionParameters(pgPoolConfig(`${LOCAL}?sslnegotiation=direct`, base));
+    expect(local.ssl).toBe(false);
+    const remote = new ConnectionParameters(pgPoolConfig(`${REMOTE}?sslnegotiation=direct`, { ...base, sslCa: CA_PATH }));
+    expect(remote.ssl).toEqual({ rejectUnauthorized: true, ca: PEM });
+  });
+
   it('real pg: URL sslmode can no longer override the env-derived ssl setting', () => {
-    const require = createRequire(import.meta.url);
-    const ConnectionParameters = require('pg/lib/connection-parameters') as new (c: object) => { ssl: unknown; host: string; password: string };
     const verified = new ConnectionParameters(pgPoolConfig(`${REMOTE}?sslmode=no-verify`, base));
     expect(verified.ssl).toEqual({ rejectUnauthorized: true });
     expect(verified.host).toBe('aws-0-ca-central-1.pooler.supabase.com');
@@ -70,9 +85,25 @@ describe('pgPoolConfig: DATABASE_SSL', () => {
     expect(pgPoolConfig(REMOTE, { ...base, ssl: 'auto' }).ssl).toEqual({ rejectUnauthorized: true });
   });
 
-  it('auto follows a host query parameter, which pg prefers over the URL host', () => {
-    expect(pgPoolConfig('postgres://u:p@localhost/d?host=db.example.com', base).ssl).toEqual({ rejectUnauthorized: true });
-    expect(pgPoolConfig('postgres://u:p@db.example.com/d?host=localhost', base).ssl).toBe(false);
+  it('auto is plain only when the URL host AND every host query parameter are local', () => {
+    const TLS = { rejectUnauthorized: true };
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=127.0.0.1', base).ssl).toBe(false);
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=db.example.com', base).ssl).toEqual(TLS);
+    // A remote URL host with a local host parameter: still verified TLS.
+    expect(pgPoolConfig('postgres://u:p@db.example.com/d?host=localhost', base).ssl).toEqual(TLS);
+    // Duplicated host parameters, both orders (pg uses the last one).
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=localhost&host=evil.example', base).ssl).toEqual(TLS);
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=evil.example&host=localhost', base).ssl).toEqual(TLS);
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=localhost&host=%3A%3A1', base).ssl).toBe(false);
+    // An empty host parameter, or an unparseable URL, counts as remote.
+    expect(pgPoolConfig('postgres://u:p@localhost/d?host=', base).ssl).toEqual(TLS);
+    expect(pgPoolConfig('postgres://u:p@local host:99999999/d', base).ssl).toEqual(TLS);
+  });
+
+  it('real pg: duplicated host parameters cannot pick plain TCP to a remote host', () => {
+    const p = new ConnectionParameters(pgPoolConfig('postgres://u:p@localhost/d?host=localhost&host=evil.example', base));
+    expect(p.host).toBe('evil.example');
+    expect(p.ssl).toEqual({ rejectUnauthorized: true });
   });
 
   it('auto treats a look-alike host as remote', () => {
@@ -161,8 +192,10 @@ describe('pgPoolConfig: DATABASE_POOL_MAX and timeouts', () => {
     }
   });
 
-  it('sets the connection and idle timeouts and TCP keep-alive', () => {
-    expect(pgPoolConfig(REMOTE, base)).toMatchObject({ connectionTimeoutMillis: 15000, idleTimeoutMillis: 30000, keepAlive: true });
+  it('sets the connection and idle timeouts and TCP keep-alive (first probe after 10 s)', () => {
+    expect(pgPoolConfig(REMOTE, base)).toMatchObject({
+      connectionTimeoutMillis: 15000, idleTimeoutMillis: 30000, keepAlive: true, keepAliveInitialDelayMillis: 10000,
+    });
   });
 });
 
@@ -178,11 +211,35 @@ describe('no TLS mode disables certificate verification', () => {
     });
   }
 
-  it('rejectUnauthorized is never set to false in packages/core/src or apps/web', () => {
-    const files = [...sources(join(repo, 'packages', 'core', 'src')), ...sources(join(repo, 'apps', 'web'))];
+  // Built from pieces so this file never matches itself.
+  const BYPASS = [
+    new RegExp(['reject', 'Unauthorized', String.raw`['"]?\s*[:=]\s*(?:false|!1|0)\b`].join('')),
+    new RegExp(['check', 'Server', 'Identity'].join('')),
+    new RegExp(['NODE_TLS_', 'REJECT_UNAUTHORIZED', String.raw`['"]?\]?\s*=(?!=)`].join('')),
+  ];
+  const bypasses = (text: string) => BYPASS.some((re) => re.test(text));
+
+  it('the guard recognises every way of switching verification off', () => {
+    const r = ['reject', 'Unauthorized'].join('');
+    const n = ['NODE_TLS_', 'REJECT_UNAUTHORIZED'].join('');
+    for (const bad of [
+      `{ ${r}: false }`, `{${r}:false}`, `{ ${r}: !1 }`, `{ "${r}": false }`, `ssl.${r} = false`,
+      `{ ${['check', 'Server', 'Identity'].join('')}: () => undefined }`,
+      `process.env.${n} = '0'`, `process.env['${n}']='0'`, `${n}=0 node x.js`,
+    ]) expect(bypasses(bad), bad).toBe(true);
+    for (const ok of [`{ ${r}: true }`, `{${r}:true}`, `if (process.env.${n} === '0') throw`]) expect(bypasses(ok), ok).toBe(false);
+  });
+
+  it('nothing in packages/core (src, scripts) or apps/web (incl. scripts) switches certificate verification off', () => {
+    const files = [
+      ...sources(join(repo, 'packages', 'core', 'src')),
+      ...sources(join(repo, 'packages', 'core', 'scripts')),
+      ...sources(join(repo, 'apps', 'web')),
+    ];
     expect(files.length).toBeGreaterThan(50);
-    const pattern = new RegExp(['reject', 'Unauthorized', String.raw`['"]?\s*[:=]\s*false`].join(''));
-    const hits = files.filter((f) => pattern.test(readFileSync(f, 'utf8')));
+    expect(files.some((f) => f.includes(join('apps', 'web', 'scripts')))).toBe(true);
+    expect(files.some((f) => f.includes(join('packages', 'core', 'scripts')))).toBe(true);
+    const hits = files.filter((f) => bypasses(readFileSync(f, 'utf8')));
     expect(hits).toEqual([]);
   });
 });

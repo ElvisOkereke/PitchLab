@@ -45,6 +45,7 @@ describe('createDb (postgres)', () => {
       connectionTimeoutMillis: 15000,
       idleTimeoutMillis: 30000,
       keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     });
   });
 
