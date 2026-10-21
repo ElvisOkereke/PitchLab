@@ -4,6 +4,7 @@ import { CASE_NOTICES, CASE_TABS, CASE_TAB_LABEL, caseHref, type CaseNotice, typ
 import { checkLabel } from '@/lib/gate';
 import { STAGE_LABEL } from '@/lib/stages';
 import { ExampleBadge } from './example-badge';
+import { HelpTip } from './help-tip';
 import { StageMoveForm } from './stage-move-form';
 
 /**
@@ -33,6 +34,7 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
       ) : null}
       <div className="case-meta">
         <span className={`stage-chip stage-${c.stage}`}>{STAGE_LABEL[c.stage]}</span>
+        <HelpTip term="stage" />
         <a href={`${caseHref(c.slug)}/export.md`} className="button secondary" download>
           Export Markdown
         </a>
@@ -43,9 +45,9 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
         </p>
       ) : null}
       {gateFlags.length > 0 ? (
-        <p className="banner banner-warn" role="note">
-          ⚠️ Gate flags: {gateFlags.map(checkLabel).join(', ')}
-        </p>
+        <div className="banner banner-warn" role="note">
+          ⚠️ Gate flags: {gateFlags.map(checkLabel).join(', ')} <HelpTip term="gateFlags" />
+        </div>
       ) : null}
       <section className="case-move card" aria-label="Move stage">
         <StageMoveForm caseId={c.id} slug={c.slug} stage={c.stage} returnTo={caseHref(c.slug, tab)} />

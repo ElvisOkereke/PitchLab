@@ -2,6 +2,7 @@ import { CRITERIA } from '@bcg/core/case/schema';
 import type { CaseView } from '@bcg/core/dashboard/case-view';
 import { CRITERION_LABEL, OWNER_CRITERIA, scoreSummary } from '@bcg/core/dashboard/criteria';
 import { formatScore } from '@/lib/stages';
+import { HelpTip } from '../help-tip';
 import { ScoreForm } from '../score-form';
 
 /** AI scores (read-only) and the owner's score form (7 criteria + "Your gut"), pre-filled with his latest values. */
@@ -17,7 +18,9 @@ export function ScoreTab({ view }: { view: CaseView }) {
   });
   return (
     <div className="tab tab-score">
-      <h2>AI scores</h2>
+      <h2>
+        AI scores <HelpTip term="aiScore" />
+      </h2>
       <p>
         AI mean: {formatScore(summary.ai)} · Your mean: {formatScore(summary.owner)}
       </p>

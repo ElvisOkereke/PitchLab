@@ -6,6 +6,7 @@ import { moveStageAction, overturnKillAction } from '@/actions/stage';
 import type { FormState } from '@/lib/form';
 import { STAGES, STAGE_LABEL } from '@/lib/stages';
 import { useFormFields } from '@/lib/use-form-fields';
+import { HelpTip } from './help-tip';
 
 /**
  * Move a case to another stage: a select of the other stages, a note (required to kill; checked on the server, hinted
@@ -67,6 +68,7 @@ export function StageMoveForm({ caseId, slug, stage, returnTo }: { caseId: strin
           <button type="submit" className="secondary">
             Overturn kill
           </button>
+          <HelpTip term="overturnKill" />
         </form>
       ) : null}
     </div>

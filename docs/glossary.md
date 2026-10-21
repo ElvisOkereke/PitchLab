@@ -1,0 +1,96 @@
+# PitchLab glossary
+
+Plain-language meanings for the terms you will see in PitchLab. The first group matches the "?" tips in the app; the second group covers the steps a run goes through and the validation tools.
+
+## Terms with a "?" tip in the app
+
+### Seed
+The starting point for a run. Open looks across every sector, Sectors and Lenses narrow it to the ones you tick, and Your idea builds a case for an idea you describe.
+
+### Lenses
+A lens is a pattern for spotting a business idea, such as a silent failure to monitor or a task to turn into a fixed-price service. Tick lenses to make the run look only through those patterns.
+
+### Sectors
+The kinds of small business the run can research, such as HVAC, dental clinics or managed IT providers. Tick some to keep the run to those sectors.
+
+### Ideas to generate
+How many raw ideas the run writes down before it filters them. More ideas give the filters more to choose from.
+
+### Ideas to turn into cases
+How many of the surviving ideas get a full business case with sources and numbers. Each case is the expensive part of a run, so keep this small.
+
+### Gate flags
+The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it. For other seeds, an idea that fails can be killed at the gate before it gets a case.
+
+### Stage
+Where a case is in your own process: New, Validating, Pilot, Live or Killed. You move it by hand; PitchLab never changes it for you.
+
+### AI scores
+The AI rates the case on each criterion from the sources it found. They are a starting opinion, separate from your own scores, which you enter on the same tab.
+
+### CASL basis
+CASL is Canada's anti-spam law. This says how a prospect's email address was found: published by the business itself (self-published), on a third-party site (third-party), or unknown. If it says "unknown — do not email", do not email that address. PitchLab never sends email itself.
+
+### Checklist
+The targets that decide whether an idea is worth pursuing, such as 50 emails sent, 3 positive replies and 5 buyer interviews. Each one passes when your tracked numbers reach its target.
+
+### Overturn kill
+Moves a killed case back to New so you can work on it again. Use it when you killed an idea too early or the facts changed.
+
+### Worker
+The background program that does the work in your queued runs. Start it with `npm run worker`. It checks in regularly, and the dashboard shows "not seen" after 60 seconds of silence.
+
+### Notional spend
+An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider's invoice is the real figure.
+
+## How a run works
+
+### Run
+One pass of the pipeline. You queue it with a seed and two counts, the worker picks it up, and it ends with zero or more cases.
+
+### Harvest
+The first step. It researches the web for real complaints and signs of demand in the sectors or lenses you chose.
+
+### Signal
+One piece of evidence found while harvesting, such as a forum thread or review, with its link.
+
+### Voice
+Who wrote a signal: someone inside the affected business (operator), an independent third party (neutral), or someone selling to that market (vendor). It helps show whether the pain is real.
+
+### Ideate
+The step where the AI writes business ideas based on the signals, up to the number you asked for.
+
+### Dedupe
+Removes ideas that are near copies of each other, or of ideas that already have a case or were already killed, so you do not see the same idea twice.
+
+### Screen
+A quick filter that keeps the most promising ideas and limits how many share the same way of delivering value, before the stricter gate.
+
+### Gate
+The stricter pass/fail check on each remaining idea. See Gate flags above.
+
+### Case
+The full business case for one idea: summary, evidence, numbers, competitors and pitch. Cases are what appear on the board.
+
+### Claim
+A specific factual statement in a case, such as a price or a number, that can be checked against a source.
+
+### Verify
+Checks the claims against their sources. The share of claims that hold up limits how high the evidence score can go.
+
+### Score
+The AI's rating of a case on each criterion, capped by how well its claims verified. You add your own scores next to them.
+
+## Validation tools
+
+### Validation pack
+A set of documents the AI generates for a case: an MVP spec, a pilot plan, an interview kit, the checklist, a landing page, prospects and draft emails for them. Generating one costs money, about $0.60–1.50.
+
+### Prospect
+A real business that could be a customer, found for a case along with its website, location and CASL basis.
+
+### Draft
+A ready-to-edit outreach email for a prospect (a first email and two follow-ups). You review and send it yourself, outside PitchLab, then record what happened.
+
+### Landing page
+A simple page that describes the offer and asks visitors to leave their email, so you can measure interest. Its conversion rate feeds the checklist.

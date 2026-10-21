@@ -856,3 +856,60 @@ blockquote {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* Inline help tips (details/summary; no JS needed). */
+.help-tip {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 100%;
+}
+.help-tip > summary {
+  display: inline-flex;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  list-style: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+  align-items: center;
+  font-size: 0; /* the visible ? is drawn by ::before */
+}
+.help-tip > summary::-webkit-details-marker {
+  display: none;
+}
+.help-tip > summary::before {
+  content: '?';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  font-size: 0.875rem;
+}
+.help-tip[open] > summary::before {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.help-tip > p {
+  display: block;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  max-width: 36rem;
+  background: var(--card);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}

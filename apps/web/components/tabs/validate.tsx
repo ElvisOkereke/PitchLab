@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { caseHref } from '@/lib/case-query';
 import { formatDateTime } from '@/lib/time';
 import { ExternalLink } from '../external-link';
+import { HelpTip } from '../help-tip';
 import { MarkOutreachForm } from '../mark-outreach-form';
 import { TextBlock } from '../text-block';
 import { ValidationJobForm } from '../validation-job-form';
@@ -210,7 +211,9 @@ export function ValidateTab({
       </p>
       {docs.success ? <PackDocuments docs={docs.data} /> : <p className="muted">The pack documents could not be read.</p>}
 
-      <h2>Checklist</h2>
+      <h2>
+        Checklist <HelpTip term="checklist" />
+      </h2>
       {validate.checklist && validate.checklist.length > 0 ? (
         <ul className="plain stack" data-testid="checklist">
           {validate.checklist.map((g) => (
@@ -248,7 +251,9 @@ export function ValidateTab({
                 <th scope="col">Website</th>
                 <th scope="col">Location</th>
                 <th scope="col">Email</th>
-                <th scope="col">CASL basis</th>
+                <th scope="col">
+                  CASL basis <HelpTip term="caslBasis" />
+                </th>
                 <th scope="col">Status</th>
                 <th scope="col">Fit</th>
               </tr>

@@ -3,6 +3,7 @@ import type { RunListRow, RunStatus } from '@bcg/core/dashboard/runs';
 import type { WorkerStatus } from '@bcg/core/dashboard/settings';
 import Link from 'next/link';
 import { safeNext } from '@/lib/auth/safe-next';
+import { HelpTip } from './help-tip';
 import { runCost, seedSummary } from '@/lib/run-format';
 import { formatDateTime, relativeTime, usd } from '@/lib/time';
 
@@ -58,7 +59,9 @@ export function CommandCenter({ data }: { data: CommandData }) {
       </section>
 
       <section data-testid="spend" aria-labelledby="spend-title" className="card">
-        <h2 id="spend-title">Spend</h2>
+        <h2 id="spend-title">
+          Spend <HelpTip term="notionalSpend" />
+        </h2>
         <dl className="fields">
           <div>
             <dt>Today</dt>
@@ -74,15 +77,15 @@ export function CommandCenter({ data }: { data: CommandData }) {
 
       <section data-testid="worker" aria-labelledby="worker-title" className="card">
         <h2 id="worker-title">Generator</h2>
-        <p>
-          Worker:{' '}
+        <div>
+          Worker: <HelpTip term="worker" />{' '}
           {seen.fresh ? (
             <span className="badge badge-ok">last seen {secondsAgo} s ago</span>
           ) : (
             <span className="badge badge-warn">not seen</span>
           )}
           {!seen.fresh && seen.at ? <span className="muted small"> (last heartbeat {relativeTime(seen.at, now)})</span> : null}
-        </p>
+        </div>
         {!seen.fresh ? <p className="muted small">Start it with npm run worker.</p> : null}
         <p>
           Runs: {data.runs.queued} queued · {data.runs.running} running · <Link href="/runs">Runs</Link>

@@ -4,6 +4,7 @@ import { useActionState, useEffect, useState } from 'react';
 import { queueRunAction } from '@/actions/runs';
 import type { FormState } from '@/lib/form';
 import { useFormFields } from '@/lib/use-form-fields';
+import { HelpTip } from './help-tip';
 
 type Seed = 'open' | 'sector' | 'lens' | 'idea';
 
@@ -32,7 +33,9 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
   return (
     <form key={f.formKey} action={formAction} className="queue-form" data-testid="queue-run">
       <fieldset className="seed-choice">
-        <legend>Seed</legend>
+        <legend>
+          Seed <HelpTip term="seed" />
+        </legend>
         {SEEDS.map((s) => (
           <div key={s.value} className="choice">
             <input
@@ -50,7 +53,9 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       </fieldset>
 
       <fieldset hidden={!shown('sector')} disabled={!shown('sector')} data-seed="sector">
-        <legend>Sectors (for “Sectors”)</legend>
+        <legend>
+          Sectors (for “Sectors”) <HelpTip term="sector" />
+        </legend>
         <div className="checks">
           {sectors.map((s, i) => (
             <div key={s} className="choice">
@@ -69,7 +74,9 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       </fieldset>
 
       <fieldset hidden={!shown('lens')} disabled={!shown('lens')} data-seed="lens">
-        <legend>Lenses (for “Lenses”)</legend>
+        <legend>
+          Lenses (for “Lenses”) <HelpTip term="lens" />
+        </legend>
         <div className="checks">
           {lenses.map((l) => (
             <div key={l.id} className="choice">
@@ -102,7 +109,10 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
 
       <div className="counts">
         <div>
-          <label htmlFor="idea-count">Ideas to generate</label>
+          <div className="label-row">
+            <label htmlFor="idea-count">Ideas to generate</label>
+            <HelpTip term="ideaCount" />
+          </div>
           <input
             id="idea-count"
             type="number"
@@ -116,7 +126,10 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
           />
         </div>
         <div>
-          <label htmlFor="advance-count">Ideas to turn into cases</label>
+          <div className="label-row">
+            <label htmlFor="advance-count">Ideas to turn into cases</label>
+            <HelpTip term="advanceCount" />
+          </div>
           <input
             id="advance-count"
             type="number"
