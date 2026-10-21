@@ -331,6 +331,19 @@ describe('TourButton and ChapterPicker', () => {
     expect((document.querySelector('[data-testid="d"]') as HTMLDetailsElement).open).toBe(true);
   });
 
+  it('leaves a closed <details> closed when the target is the <details> itself', async () => {
+    mount({
+      children: (
+        <details data-testid="d2" data-tour="first">
+          <summary>Prospect</summary>
+          <div>body</div>
+        </details>
+      ),
+    });
+    await waitFor(() => expect(lastHighlight()?.element).toBe('[data-tour="first"]'));
+    expect((document.querySelector('[data-testid="d2"]') as HTMLDetailsElement).open).toBe(false);
+  });
+
   it('Escape closes the picker', () => {
     const view = mount({ initial: STATE });
     fireEvent.click(view.getByRole('button', { name: /Take the tour/ }));

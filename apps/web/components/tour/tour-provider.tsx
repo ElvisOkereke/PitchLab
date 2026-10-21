@@ -177,7 +177,7 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
     const how = resolve(step, { caseSlug }, location, targetEl !== null);
     // A target inside a closed <details> has a zero-size box: open it so the highlight has something to show.
     if (how.show === 'highlight' && targetEl) {
-      const details = targetEl.closest('details');
+      const details = targetEl.parentElement?.closest('details');
       if (details && !details.open) details.open = true;
     }
     const done = next(pos, chapters);
