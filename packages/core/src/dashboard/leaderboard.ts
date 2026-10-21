@@ -12,6 +12,7 @@ export type LeaderRow = {
   slug: string;
   title: string;
   stage: CaseStage;
+  isExample: boolean;
   ai: Partial<Record<Criterion, number>>;
   owner: Partial<Record<OwnerCriterion, number>>;
   aiTotal: number | null;
@@ -30,7 +31,7 @@ export type LeaderSort = z.infer<typeof LeaderSortSchema>;
 
 /** Every case (up to LEADERBOARD_LIMIT) with its latest AI and owner score per criterion and both means. */
 export async function listLeaderboard(db: Db): Promise<LeaderRow[]> {
-  const rows = await db.select({ id: cases.id, slug: cases.slug, title: cases.title, stage: cases.stage })
+  const rows = await db.select({ id: cases.id, slug: cases.slug, title: cases.title, stage: cases.stage, isExample: cases.isExample })
     .from(cases)
     .orderBy(desc(cases.updatedAt), cases.slug)
     .limit(LEADERBOARD_LIMIT);
@@ -50,7 +51,7 @@ export async function listLeaderboard(db: Db): Promise<LeaderRow[]> {
       if (e?.ai && c !== 'gut') ai[c] = e.ai.value;
       if (e?.owner) owner[c] = e.owner.value;
     }
-    return { slug: r.slug, title: r.title, stage: r.stage, ai, owner, aiTotal: sum.ai, ownerTotal: sum.owner };
+    return { slug: r.slug, title: r.title, stage: r.stage, isExample: r.isExample, ai, owner, aiTotal: sum.ai, ownerTotal: sum.owner };
   });
 }
 

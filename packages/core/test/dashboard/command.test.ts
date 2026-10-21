@@ -5,6 +5,7 @@ import { dataCalls, llmCalls, outreachEvents, prospects, runs, scores } from '..
 import { needsYou, spendSince, torontoDayStart, torontoWeekStart } from '../../src/dashboard/command';
 import { moveStage } from '../../src/dashboard/stage';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 describe('Toronto days', () => {
@@ -113,5 +114,20 @@ describe('command center data', () => {
       expect(text).toContain('boom');
       expect(text).not.toMatch(/xoxb|hunter2|u:p@|sig=|a1b2c3/);
     }
+  });
+});
+
+describe('example case in command center', () => {
+  it('needsYou skips the example; spendSince is unchanged', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await insertCase(db, (await insertIdea(db, run.id)).id, { slug: 'real', title: 'Real' });
+    const since = new Date('2000-01-01T00:00:00Z');
+    const spend = await spendSince(db, since);
+    await ensureExample(db);
+    expect(await spendSince(db, since)).toEqual(spend);
+    const items = await needsYou(db, new Date());
+    expect(items.some((i) => i.href.includes('/real'))).toBe(true);
+    expect(items.some((i) => i.href.includes(EXAMPLE_SLUG))).toBe(false);
   });
 });

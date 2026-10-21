@@ -7,7 +7,7 @@ import { leaderHref, parseLeaderSort } from '@/lib/leaderboard-query';
 afterEach(cleanup);
 
 const row = (slug: string, o: Partial<LeaderRow> = {}): LeaderRow => ({
-  slug, title: slug.toUpperCase(), stage: 'new', ai: {}, owner: {}, aiTotal: null, ownerTotal: null, ...o,
+  slug, title: slug.toUpperCase(), stage: 'new', isExample: false, ai: {}, owner: {}, aiTotal: null, ownerTotal: null, ...o,
 });
 const rows = [
   row('alpha', { aiTotal: 3.2, ownerTotal: 4, ai: { pain: 4, roi: 2 }, owner: { pain: 5, gut: 3 } }),

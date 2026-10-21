@@ -7,6 +7,7 @@ import {
   MAX_QUEUED, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, listRuns, queueGateKillRerun, queueRun, requeueRun,
 } from '../../src/dashboard/runs';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 let db: Db;
@@ -160,5 +161,17 @@ describe('countRunsByStatus', () => {
     await insertRun(db, cfg);
     await db.insert(runs).values([{ config: cfg, status: 'running' }, { config: cfg, status: 'failed', error: 'x' }]);
     expect(await countRunsByStatus(db)).toEqual({ queued: 2, running: 1, succeeded: 0, failed: 1 });
+  });
+});
+
+describe('example run is hidden', () => {
+  it('listRuns and countRunsByStatus exclude the example run', async () => {
+    await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const before = await listRuns(db, {});
+    await ensureExample(db);
+    const after = await listRuns(db, {});
+    expect(after.total).toBe(before.total);
+    expect(after.rows.every((r) => !r.isExample)).toBe(true);
+    expect((await countRunsByStatus(db)).succeeded).toBe(0);
   });
 });

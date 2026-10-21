@@ -188,7 +188,7 @@ export type RunStatus = (typeof runStatus.enumValues)[number];
 
 /** How many runs are in each status (command center, and the Runs page's auto-refresh while work is pending). */
 export async function countRunsByStatus(db: Db): Promise<Record<RunStatus, number>> {
-  const rows = await db.select({ status: runs.status, n: count() }).from(runs).groupBy(runs.status);
+  const rows = await db.select({ status: runs.status, n: count() }).from(runs).where(eq(runs.isExample, false)).groupBy(runs.status);
   return Object.fromEntries(runStatus.enumValues.map((s) => [s, rows.find((r) => r.status === s)?.n ?? 0])) as Record<RunStatus, number>;
 }
 
@@ -200,8 +200,8 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
   const pageSize = Math.min(Math.max(intOr(o.pageSize, RUNS_PAGE_DEFAULT), 1), RUNS_PAGE_MAX);
   const page = clampPage(o.page);
   const [rows, [totalRow]] = await Promise.all([
-    db.select().from(runs).orderBy(desc(runs.createdAt), desc(runs.id)).limit(pageSize).offset((page - 1) * pageSize),
-    db.select({ n: count() }).from(runs),
+    db.select().from(runs).where(eq(runs.isExample, false)).orderBy(desc(runs.createdAt), desc(runs.id)).limit(pageSize).offset((page - 1) * pageSize),
+    db.select({ n: count() }).from(runs).where(eq(runs.isExample, false)),
   ]);
   const ids = rows.map((r) => r.id);
   const [caseCounts, stageRows] = ids.length === 0 ? [[], []] : await Promise.all([

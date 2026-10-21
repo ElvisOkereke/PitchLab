@@ -11,7 +11,7 @@ vi.mock('@/actions/stage', () => ({
 const { BoardView } = await import('@/components/board-view');
 
 const card = (i: number, stage: BoardCard['stage']): BoardCard => ({
-  id: `11111111-1111-4111-8111-11111111111${i}`, slug: `case-${i}`, title: `Case ${i}`, stage,
+  id: `11111111-1111-4111-8111-11111111111${i}`, slug: `case-${i}`, title: `Case ${i}`, stage, isExample: false,
   aiScore: 3, ownerScore: null, metric: 'ROI n/a', updatedAt: new Date(),
 });
 

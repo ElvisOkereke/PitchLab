@@ -77,21 +77,21 @@ export async function needsYou(db: Db, now: Date): Promise<NeedsYouItem[]> {
 
   const [unscored, advisory, replies, failed] = await Promise.all([
     db.select({ slug: cases.slug, title: cases.title, at: cases.createdAt }).from(cases)
-      .where(and(ne(cases.stage, 'killed'), notExists(ownerScore)))
+      .where(and(eq(cases.isExample, false), ne(cases.stage, 'killed'), notExists(ownerScore)))
       .orderBy(desc(cases.createdAt)).limit(NEEDS_YOU_MAX),
     // gateAdvisory is written as `summary.gateFlags.length > 0` by deep-case.
     db.select({ slug: cases.slug, title: cases.title, at: cases.createdAt }).from(cases)
-      .where(and(eq(cases.gateAdvisory, true), ne(cases.stage, 'killed'), notExists(anyEvent)))
+      .where(and(eq(cases.isExample, false), eq(cases.gateAdvisory, true), ne(cases.stage, 'killed'), notExists(anyEvent)))
       .orderBy(desc(cases.createdAt)).limit(NEEDS_YOU_MAX),
     db.select({ name: prospects.name, slug: cases.slug, title: cases.title, at: lastEvent }).from(prospects)
       .innerJoin(cases, eq(cases.id, prospects.caseId))
       .innerJoin(outreachEvents, eq(outreachEvents.prospectId, prospects.id))
-      .where(eq(prospects.status, 'sent'))
+      .where(and(eq(prospects.status, 'sent'), eq(cases.isExample, false)))
       .groupBy(prospects.id, prospects.name, cases.slug, cases.title)
       .having(lt(lastEvent, replyBefore))
       .orderBy(desc(lastEvent)).limit(NEEDS_YOU_MAX),
     db.select({ id: runs.id, stage: runs.currentStage, error: runs.error, finishedAt: runs.finishedAt, createdAt: runs.createdAt }).from(runs)
-      .where(and(eq(runs.status, 'failed'), or(gte(runs.finishedAt, failedSince), and(isNull(runs.finishedAt), gte(runs.createdAt, failedSince)))))
+      .where(and(eq(runs.isExample, false), eq(runs.status, 'failed'), or(gte(runs.finishedAt, failedSince), and(isNull(runs.finishedAt), gte(runs.createdAt, failedSince)))))
       .orderBy(desc(runs.createdAt)).limit(NEEDS_YOU_MAX),
   ]);
 

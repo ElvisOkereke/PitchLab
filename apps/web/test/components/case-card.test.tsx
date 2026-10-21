@@ -13,6 +13,7 @@ const { CaseCard } = await import('@/components/case-card');
 const card: BoardCard = {
   id: '11111111-1111-4111-8111-111111111111',
   slug: 'dental-recall-monitor',
+  isExample: false,
   title: 'Dental recall monitor',
   stage: 'new',
   aiScore: 3.4,

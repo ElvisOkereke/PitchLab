@@ -12,6 +12,7 @@ export type BoardCard = {
   slug: string;
   title: string;
   stage: CaseStage;
+  isExample: boolean;
   aiScore: number | null;
   ownerScore: number | null;
   metric: string;
@@ -62,7 +63,7 @@ export async function listBoard(db: Db, f: BoardFilters): Promise<{ columns: Rec
 
   const columnRows = await Promise.all(STAGES.map((stage) =>
     db.select({
-      id: cases.id, slug: cases.slug, title: cases.title, stage: cases.stage, updatedAt: cases.updatedAt,
+      id: cases.id, slug: cases.slug, title: cases.title, stage: cases.stage, isExample: cases.isExample, updatedAt: cases.updatedAt,
       aiScore: means.ai, ownerScore: means.owner, roi,
     })
       .from(cases)
@@ -92,7 +93,7 @@ export async function listBoard(db: Db, f: BoardFilters): Promise<{ columns: Rec
   const outreachOf = new Map(outreach.map((o) => [o.caseId, { sent: o.sent, prospects: o.prospects }]));
 
   const columns = Object.fromEntries(STAGES.map((s, i) => [s, columnRows[i]!.map((r): BoardCard => ({
-    id: r.id, slug: r.slug, title: r.title, stage: r.stage, updatedAt: r.updatedAt,
+    id: r.id, slug: r.slug, title: r.title, stage: r.stage, isExample: r.isExample, updatedAt: r.updatedAt,
     aiScore: r.aiScore ?? null, ownerScore: r.ownerScore ?? null,
     metric: keyMetric({ roiMultiple: r.roi ?? null, outreach: outreachOf.get(r.id) }),
   }))])) as Record<CaseStage, BoardCard[]>;

@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { scores } from '../../src/db/schema';
 import { LEADERBOARD_LIMIT, LeaderSortSchema, listLeaderboard, sortLeaderboard, type LeaderRow } from '../../src/dashboard/leaderboard';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 const row = (title: string, o: Partial<LeaderRow> = {}): LeaderRow =>
-  ({ slug: title.toLowerCase(), title, stage: 'new', ai: {}, owner: {}, aiTotal: null, ownerTotal: null, ...o });
+  ({ slug: title.toLowerCase(), title, stage: 'new', isExample: false, ai: {}, owner: {}, aiTotal: null, ownerTotal: null, ...o });
 
 describe('leaderboard', () => {
   it('listLeaderboard reads the latest AI and owner score per criterion', async () => {
@@ -23,7 +24,7 @@ describe('leaderboard', () => {
     const rows = await listLeaderboard(db);
     expect(rows).toHaveLength(2);
     const one = rows.find((r) => r.slug === 'one')!;
-    expect(one).toEqual({ slug: 'one', title: 'One', stage: 'new', ai: { pain: 4, roi: 3 }, owner: { pain: 5, gut: 2 }, aiTotal: 3.5, ownerTotal: 3.5 });
+    expect(one).toEqual({ slug: 'one', title: 'One', stage: 'new', isExample: false, ai: { pain: 4, roi: 3 }, owner: { pain: 5, gut: 2 }, aiTotal: 3.5, ownerTotal: 3.5 });
     expect(rows.find((r) => r.slug === 'two')).toMatchObject({ ai: {}, owner: {}, aiTotal: null, ownerTotal: null });
     expect(LEADERBOARD_LIMIT).toBe(500);
   });
@@ -51,5 +52,17 @@ describe('leaderboard', () => {
     expect(sortLeaderboard(rows, { key: 'pain', by: 'owner', dir: 'desc' }).map((r) => r.title)).toEqual(['a', 'b', 'c']);
     expect(sortLeaderboard(rows, { key: 'gut', by: 'ai', dir: 'asc' }).map((r) => r.title)).toEqual(['b', 'c', 'a']);
     expect(rows.map((r) => r.title)).toEqual(['b', 'a', 'c']); // input not mutated
+  });
+});
+
+describe('example on the leaderboard', () => {
+  it('lists the example flagged, real rows not', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await insertCase(db, (await insertIdea(db, run.id)).id, { slug: 'real', title: 'Real' });
+    await ensureExample(db);
+    const rows = await listLeaderboard(db);
+    expect(rows.find((r) => r.slug === EXAMPLE_SLUG)?.isExample).toBe(true);
+    expect(rows.find((r) => r.slug === 'real')?.isExample).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import type { Db } from '../../src/db/client';
 import { gateVerdicts, outreachEvents, prospects, scores } from '../../src/db/schema';
 import { BOARD_LIMIT, keyMetric, listBoard, listGateKills } from '../../src/dashboard/board';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 let db: Db;
@@ -95,5 +96,15 @@ describe('board', () => {
     expect(kills[0]).toMatchObject({ ideaId: newer.id, oneLiner: 'nl', failed: [{ check: 'generic', reasoning: 'too generic' }] });
     expect(kills[1]!.failed).toEqual([{ check: 'control', reasoning: 'needs platform access' }]);
     expect(await listGateKills(db, 1)).toHaveLength(1);
+  });
+});
+
+describe('example on the board', () => {
+  it('shows the example card flagged, real cards not', async () => {
+    await addCase({ slug: 'real' });
+    await ensureExample(db);
+    const cards = Object.values((await listBoard(db, {})).columns).flat();
+    expect(cards.find((c) => c.slug === EXAMPLE_SLUG)?.isExample).toBe(true);
+    expect(cards.find((c) => c.slug === 'real')?.isExample).toBe(false);
   });
 });
