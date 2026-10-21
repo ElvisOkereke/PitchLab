@@ -6,7 +6,7 @@ import { useTour } from './tour-provider';
 export function TourButton() {
   const { openPicker, newSteps } = useTour();
   return (
-    <button type="button" className="secondary tour-button" aria-haspopup="dialog" onClick={openPicker}>
+    <button type="button" className="secondary tour-button" aria-haspopup="dialog" onClick={openPicker} data-tour="tour-button">
       Take the tour
       {newSteps ? (
         <>

@@ -38,7 +38,7 @@ export function SettingsForm({ fields }: { fields: SettingField[] }) {
           </div>
         );
       })}
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} data-tour="settings-save">
         {pending ? 'Saving…' : 'Save settings'}
       </button>
       {state.error ? (

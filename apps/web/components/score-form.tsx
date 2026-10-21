@@ -21,7 +21,7 @@ export function ScoreForm({ caseId, slug, rows }: { caseId: string; slug: string
   );
   const f = useFormFields(initial, state);
   return (
-    <form key={f.formKey} action={formAction} className="score-form" data-testid="score-form">
+    <form key={f.formKey} action={formAction} className="score-form" data-testid="score-form" data-tour="score-form">
       <input type="hidden" name="caseId" value={caseId} />
       <input type="hidden" name="slug" value={slug} />
       {rows.map((r) => {
@@ -52,7 +52,7 @@ export function ScoreForm({ caseId, slug, rows }: { caseId: string; slug: string
         );
       })}
       <p className="muted small">Leave a score blank to keep it as it is.</p>
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} data-tour="score-save">
         {pending ? 'Saving…' : 'Save my scores'}
       </button>
       {state.error ? (

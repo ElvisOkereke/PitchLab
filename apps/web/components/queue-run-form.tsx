@@ -32,7 +32,7 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
 
   return (
     <form key={f.formKey} action={formAction} className="queue-form" data-testid="queue-run">
-      <fieldset className="seed-choice">
+      <fieldset className="seed-choice" data-tour="queue-seed">
         <legend>Seed</legend>
         <HelpTip term="seed" />
         {SEEDS.map((s) => (
@@ -104,7 +104,7 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
         />
       </fieldset>
 
-      <div className="counts">
+      <div className="counts" data-tour="queue-counts">
         <div>
           <div className="label-row">
             <label htmlFor="idea-count">Ideas to generate</label>
@@ -141,7 +141,7 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
         </div>
       </div>
 
-      <button type="submit" disabled={pending}>
+      <button type="submit" disabled={pending} data-tour="queue-submit">
         {pending ? 'Queueing…' : 'Queue run'}
       </button>
       {state.error ? (
@@ -150,7 +150,7 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
         </p>
       ) : null}
       {state.ok ? (
-        <p className="ok" role="status">
+        <p className="ok" role="status" data-tour="queue-ok">
           Queued. It starts when <code>npm run worker</code> is running.
         </p>
       ) : null}

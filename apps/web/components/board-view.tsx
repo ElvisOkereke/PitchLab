@@ -34,7 +34,7 @@ export function BoardView({ board, gateKills, lenses, query }: BoardViewProps) {
         </p>
       ) : null}
 
-      <form method="get" action="/" className="board-filters">
+      <form method="get" action="/" className="board-filters" data-tour="board-filters">
         <input type="hidden" name="stage" value={selected} />
         <label>
           <span className="visually-hidden">Lens</span>
@@ -72,7 +72,7 @@ export function BoardView({ board, gateKills, lenses, query }: BoardViewProps) {
         ))}
       </nav>
 
-      <div className="board">
+      <div className="board" data-tour="board-columns">
         {STAGES.map((s) => {
           const cards = board.columns[s];
           return (
@@ -81,8 +81,8 @@ export function BoardView({ board, gateKills, lenses, query }: BoardViewProps) {
                 {STAGE_LABEL[s]} <span className="count">{board.counts[s]}</span>
               </h2>
               {cards.length === 0 ? <p className="muted">No cases.</p> : null}
-              {cards.map((c) => (
-                <CaseCard key={c.id} card={c} />
+              {cards.map((c, i) => (
+                <CaseCard key={c.id} card={c} tourAnchor={s === selected && i === 0} />
               ))}
               {board.counts[s] > cards.length ? (
                 <p className="muted">

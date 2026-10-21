@@ -4,10 +4,13 @@ import { formatScore } from '@/lib/stages';
 import { ExampleBadge } from './example-badge';
 import { StageMoveForm } from './stage-move-form';
 
-/** A board card: title link, AI score, owner score, key metric and a compact stage-move form. */
-export function CaseCard({ card }: { card: BoardCard }) {
+/**
+ * A board card: title link, AI score, owner score, key metric and a compact stage-move form. `tourAnchor` marks the
+ * one card the guided tour points at (the first card of the column shown on phones).
+ */
+export function CaseCard({ card, tourAnchor = false }: { card: BoardCard; tourAnchor?: boolean }) {
   return (
-    <article className="case-card card" data-case={card.slug}>
+    <article className="case-card card" data-case={card.slug} data-tour={tourAnchor ? 'board-first-card' : undefined}>
       <h3 className="case-card-title">
         <Link href={`/cases/${card.slug}`}>{card.title}</Link>
         {card.isExample ? <> <ExampleBadge /></> : null}

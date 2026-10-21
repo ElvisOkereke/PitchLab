@@ -25,7 +25,7 @@ export function ScoreTab({ view }: { view: CaseView }) {
       <p>
         AI mean: {formatScore(summary.ai)} · Your mean: {formatScore(summary.owner)}
       </p>
-      <div className="scroll-x" data-testid="ai-scores">
+      <div className="scroll-x" data-testid="ai-scores" data-tour="score-ai">
         {aiRows.length === 0 ? (
           <p className="muted">Not scored yet.</p>
         ) : (

@@ -7,6 +7,17 @@ import { ExampleBadge } from './example-badge';
 import { HelpTip } from './help-tip';
 import { StageMoveForm } from './stage-move-form';
 
+/** The guided tour's anchors on the tab links. */
+const TAB_TOUR: Record<CaseTab, { 'data-tour': string }> = {
+  summary: { 'data-tour': 'tab-summary' },
+  evidence: { 'data-tour': 'tab-evidence' },
+  numbers: { 'data-tour': 'tab-numbers' },
+  competitors: { 'data-tour': 'tab-competitors' },
+  pitch: { 'data-tour': 'tab-pitch' },
+  validate: { 'data-tour': 'tab-validate' },
+  score: { 'data-tour': 'tab-score' },
+};
+
 /**
  * Top of the case page: title, stage chip, stage-move form (and "Overturn kill" when killed), kill reason, gate-flag
  * banner, export link and the tab links. Both forms return to this tab (`returnTo`). Legacy sections without
@@ -33,9 +44,9 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
         </p>
       ) : null}
       <div className="case-meta">
-        <span className={`stage-chip stage-${c.stage}`}>{STAGE_LABEL[c.stage]}</span>
+        <span className={`stage-chip stage-${c.stage}`} data-tour="case-stage">{STAGE_LABEL[c.stage]}</span>
         <HelpTip term="stage" />
-        <a href={`${caseHref(c.slug)}/export.md`} className="button secondary" download>
+        <a href={`${caseHref(c.slug)}/export.md`} className="button secondary" download data-tour="case-export">
           Export Markdown
         </a>
       </div>
@@ -45,16 +56,16 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
         </p>
       ) : null}
       {gateFlags.length > 0 ? (
-        <div className="banner banner-warn" role="note">
+        <div className="banner banner-warn" role="note" data-tour="case-gate-flags">
           ⚠️ Gate flags: {gateFlags.map(checkLabel).join(', ')} <HelpTip term="gateFlags" />
         </div>
       ) : null}
-      <section className="case-move card" aria-label="Move stage">
+      <section className="case-move card" aria-label="Move stage" data-tour="stage-move">
         <StageMoveForm caseId={c.id} slug={c.slug} stage={c.stage} returnTo={caseHref(c.slug, tab)} />
       </section>
       <nav aria-label="Case sections" className="tabs">
         {CASE_TABS.map((t) => (
-          <Link key={t} href={caseHref(c.slug, t)} className="tab-link" aria-current={t === tab ? 'page' : undefined}>
+          <Link key={t} href={caseHref(c.slug, t)} {...TAB_TOUR[t]} className="tab-link" aria-current={t === tab ? 'page' : undefined}>
             {CASE_TAB_LABEL[t]}
           </Link>
         ))}

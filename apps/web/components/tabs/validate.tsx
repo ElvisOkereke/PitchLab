@@ -132,7 +132,7 @@ function PackDocuments({ docs }: { docs: PackDocs }) {
 function LandingSummary({ landing }: { landing: NonNullable<ValidateView['landing']> }) {
   const copy = LandingCopySchema.safeParse(landing.copy);
   return (
-    <section data-testid="landing" aria-labelledby="landing-title">
+    <section data-testid="landing" data-tour="validate-landing" aria-labelledby="landing-title">
       <h2 id="landing-title">Landing page</h2>
       <p>
         {landing.publishedUrl ? (
@@ -209,14 +209,20 @@ export function ValidateTab({
       <p className="muted small">
         Generated {formatDateTime(validate.pack.updatedAt)} · {validate.pack.model}
       </p>
-      {docs.success ? <PackDocuments docs={docs.data} /> : <p className="muted">The pack documents could not be read.</p>}
+      {docs.success ? (
+        <div data-tour="validate-pack-docs">
+          <PackDocuments docs={docs.data} />
+        </div>
+      ) : (
+        <p className="muted">The pack documents could not be read.</p>
+      )}
 
       <div className="label-row">
         <h2>Checklist</h2>
         <HelpTip term="checklist" />
       </div>
       {validate.checklist && validate.checklist.length > 0 ? (
-        <ul className="plain stack" data-testid="checklist">
+        <ul className="plain stack" data-testid="checklist" data-tour="validate-checklist">
           {validate.checklist.map((g) => (
             <li key={g.id}>
               <span className={`badge ${g.state === 'pass' ? 'badge-ok' : 'badge-muted'}`}>{g.state}</span> {g.description}{' '}
@@ -231,7 +237,7 @@ export function ValidateTab({
       )}
 
       <h2>Outreach</h2>
-      <p data-testid="outreach-counts">
+      <p data-testid="outreach-counts" data-tour="outreach-counts">
         {c.prospects} prospects · {c.withEmail} with email ·{' '}
         {EVENT_TYPES.filter((t) => t !== 'note').map((t, i) => (
           <span key={t}>
@@ -250,7 +256,7 @@ export function ValidateTab({
         </div>
       ) : null}
       {rows.length > 0 ? (
-        <div className="scroll-x">
+        <div className="scroll-x" data-tour="validate-prospects">
           <table className="stacked" data-testid="prospects">
             <thead>
               <tr>
@@ -301,8 +307,8 @@ export function ValidateTab({
         <>
           <h2>Drafts and tracking</h2>
           <div className="stack">
-            {rows.map((p) => (
-              <details key={p.id} className="card" data-testid="prospect-drafts">
+            {rows.map((p, i) => (
+              <details key={p.id} className="card" data-testid="prospect-drafts" data-tour={i === 0 ? 'validate-drafts' : undefined}>
                 <summary>
                   {p.name} · {p.status.replace('_', ' ')}
                 </summary>
@@ -315,7 +321,7 @@ export function ValidateTab({
                   </article>
                 ))}
                 {(validate.drafts.get(p.id) ?? []).length === 0 ? <p className="muted">No drafts.</p> : null}
-                <MarkOutreachForm prospectId={p.id} slug={slug} />
+                <MarkOutreachForm prospectId={p.id} slug={slug} tourAnchor={i === 0} />
               </details>
             ))}
           </div>

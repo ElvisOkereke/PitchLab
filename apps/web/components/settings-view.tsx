@@ -45,14 +45,14 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
         </p>
       ) : null}
 
-      <section aria-labelledby="sender-title" className="card">
+      <section aria-labelledby="sender-title" className="card" data-tour="settings-sender">
         <h2 id="sender-title">Sender and landing page</h2>
         <SettingsForm fields={fields} />
       </section>
 
       <ExampleSettings hidden={data.example.hidden} />
 
-      <section aria-labelledby="connections-title" className="card" data-testid="connections">
+      <section aria-labelledby="connections-title" className="card" data-testid="connections" data-tour="settings-connections">
         <h2 id="connections-title">Connections</h2>
         <ul className="plain stack">
           {PROVIDERS.map(([k, label]) => (

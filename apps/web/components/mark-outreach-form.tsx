@@ -20,12 +20,12 @@ const TYPES = [
  * Log what happened with one prospect (the owner sends email himself; this only records it). Works without JS. An
  * error keeps the choice and the note; a success clears the note so it is not recorded twice.
  */
-export function MarkOutreachForm({ prospectId, slug }: { prospectId: string; slug: string }) {
+export function MarkOutreachForm({ prospectId, slug, tourAnchor = false }: { prospectId: string; slug: string; tourAnchor?: boolean }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(markOutreachAction, {});
   const f = useFormFields({ type: 'sent', note: '' }, state, { clearOnSuccess: ['note'] });
   const interview = f.text('type') === 'note';
   return (
-    <form key={f.formKey} action={formAction} className="mark-outreach" data-testid="mark-outreach">
+    <form key={f.formKey} action={formAction} className="mark-outreach" data-testid="mark-outreach" data-tour={tourAnchor ? 'mark-outreach' : undefined}>
       <input type="hidden" name="prospectId" value={prospectId} />
       <input type="hidden" name="slug" value={slug} />
       <label htmlFor={`type-${prospectId}`}>What happened</label>

@@ -14,7 +14,7 @@ const cut = (s: string) => (s.length > ERROR_SHOWN ? `${s.slice(0, ERROR_SHOWN)}
 export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[]; total: number; page: number; pageSize: number }) {
   const pages = Math.max(1, Math.ceil(total / pageSize));
   return (
-    <section aria-labelledby="history-title">
+    <section aria-labelledby="history-title" data-tour="runs-history">
       <h2 id="history-title">History</h2>
       {rows.length === 0 ? <p className="muted">No runs on this page.</p> : null}
       {rows.length > 0 ? (

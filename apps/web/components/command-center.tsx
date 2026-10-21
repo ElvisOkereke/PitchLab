@@ -45,7 +45,7 @@ export function CommandCenter({ data }: { data: CommandData }) {
     <main className="command-page">
       <h1>Command center</h1>
 
-      <section data-testid="needs-you" aria-labelledby="needs-you-title" className="card">
+      <section data-testid="needs-you" data-tour="needs-you" aria-labelledby="needs-you-title" className="card">
         <h2 id="needs-you-title">Needs you ({data.needsYou.length})</h2>
         {data.needsYou.length === 0 ? <p className="muted">Nothing needs you right now.</p> : null}
         <ul className="plain stack">
@@ -78,7 +78,7 @@ export function CommandCenter({ data }: { data: CommandData }) {
 
       <section data-testid="worker" aria-labelledby="worker-title" className="card">
         <h2 id="worker-title">Generator</h2>
-        <div>
+        <div data-tour="worker-badge">
           Worker: <HelpTip term="worker" />{' '}
           {seen.fresh ? (
             <span className="badge badge-ok">last seen {secondsAgo} s ago</span>
