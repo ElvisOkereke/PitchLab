@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { loadEnvConfig } from '@next/env';
 import type { NextConfig } from 'next';
+import { loadRepoEnv } from './lib/load-repo-env';
 import { securityHeaders } from './lib/security-headers';
 
 /** The npm workspaces root: the nearest folder above the app whose package.json declares `workspaces`. */
@@ -15,7 +15,7 @@ function findRepoRoot(start: string): string {
 
 const repoRoot = findRepoRoot(process.cwd());
 // The repo root .env is the single env file (no apps/web/.env). Not loaded when the config is imported by a test.
-if (!process.env.VITEST) loadEnvConfig(repoRoot, process.env.NODE_ENV !== 'production');
+if (!process.env.VITEST) loadRepoEnv(repoRoot);
 
 const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
