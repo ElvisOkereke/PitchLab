@@ -36,6 +36,7 @@ export async function loadAlreadySold(db: Db, limit = 15): Promise<{ sold: strin
     .select({ title: ideas.title })
     .from(ideas)
     .innerJoin(cases, eq(cases.ideaId, ideas.id))
+    .where(eq(cases.isExample, false))
     .orderBy(desc(cases.createdAt), asc(ideas.id))
     .limit(limit);
   const covered = written.map((w) => capField(w.title, 200));

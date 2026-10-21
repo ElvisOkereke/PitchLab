@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { landingPages, outreachDrafts, outreachEvents, prospects, suppressions, validationPacks } from '../../src/db/schema';
+import { ensureExample } from '../../src/example/example';
+import { cases, landingPages, outreachDrafts, outreachEvents, prospects, suppressions, validationPacks } from '../../src/db/schema';
 import type { CaseSections } from '../../src/case/schema';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { runValidation, type ValidationDeps } from '../../src/validation/run';
@@ -293,6 +294,15 @@ describe('runValidation', () => {
     expect((await db.select().from(prospects)).map((p) => p.domain)).toEqual(['northline-logistics.ca']);
     expect(logs.join('\n')).toMatch(/pilot site.*acme-freight\.com/i);
     expect(fetchPage.mock.calls.map((c) => String(c[0]))).not.toContainEqual(expect.stringContaining('acme-freight'));
+  });
+
+  it('refuses the built-in example case before any call (I2)', async () => {
+    const db = await testDb();
+    await ensureExample(db);
+    const [ex] = await db.select().from(cases).where(eq(cases.isExample, true));
+    const { deps, router } = setup(db, {});
+    await expect(runValidation(deps, ex!.id)).rejects.toThrow(/built-in example case/);
+    expect(router.calls ?? []).toHaveLength(0);
   });
 
   it('an invalid --pilot-site throws before any model or fetch call (P3-R21)', async () => {

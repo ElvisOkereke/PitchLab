@@ -1,15 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { count, eq } from 'drizzle-orm';
 import { createTestDb } from '../../src/db/test-db';
 import {
-  cases, dataCalls, ideas, llmCalls, outreachEvents, prospects, runs, scores,
+  cases, dataCalls, ideas, llmCalls, outreachEvents, prospects, runs, scores, suppressions,
 } from '../../src/db/schema';
 import { CaseSectionsSchema } from '../../src/case/schema';
 import { LandingCopySchema, PackSectionsSchema } from '../../src/validation/schema';
 import {
-  EXAMPLE_HIDDEN_KEY, EXAMPLE_SLUG, ensureExample, exampleState, hideExample, resetExample,
+  EXAMPLE_HIDDEN_KEY, EXAMPLE_REFUSAL, EXAMPLE_SLUG, ensureExample, ensureExampleQuietly, exampleState, hideExample, isReservedExampleEmail,
+  listRealRuns, realCaseSlugs, resetExample,
 } from '../../src/example/example';
 import { exampleFixture } from '../../src/example/fixture';
+import { defaultRunConfig } from '../../src/pipeline/types';
+import { insertCase, insertIdea, insertRun } from '../helpers/db';
 
 const n = async (db: Awaited<ReturnType<typeof createTestDb>>, t: typeof cases | typeof runs) =>
   (await db.select({ n: count() }).from(t).where(eq(t.isExample, true)))[0]!.n;
@@ -104,5 +107,50 @@ describe('example case', () => {
   it('test DBs have no example', async () => {
     const db = await createTestDb();
     expect(await n(db, cases)).toBe(0);
+  });
+
+  it('deleting the example removes only reserved-domain suppressions, never a real unsubscribe (I2)', async () => {
+    const db = await createTestDb();
+    await ensureExample(db);
+    const [row] = await db.select({ email: prospects.email }).from(prospects).where(eq(prospects.domain, 'northwind-plumbing.example.com'));
+    expect(row!.email).toBeTruthy();
+    await db.insert(suppressions).values([{ email: row!.email!.toLowerCase(), reason: 'unsubscribed' }, { email: 'real@acme.com', reason: 'unsubscribed' }] as never);
+    await hideExample(db);
+    const left = (await db.select({ email: suppressions.email }).from(suppressions)).map((r) => r.email);
+    expect(left).toEqual(['real@acme.com']);
+  });
+
+  it('isReservedExampleEmail', () => {
+    for (const e of ['a@example.com', 'a@x.example.org', 'A@Foo.EXAMPLE.net', 'a@shop.example']) expect(isReservedExampleEmail(e), e).toBe(true);
+    for (const e of ['a@acme.com', 'a@notexample.com', 'a@example.com.evil.io', 'nope']) expect(isReservedExampleEmail(e), e).toBe(false);
+  });
+
+  it('ensureExample is safe when the example slug already exists as a non-flagged row (race)', async () => {
+    const db = await createTestDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { title: 'Other' });
+    await insertCase(db, idea.id, { slug: EXAMPLE_SLUG });
+    expect(await ensureExample(db)).toBe('present');
+    expect((await db.select({ n: count() }).from(runs))[0]!.n).toBe(1);
+    expect((await db.select({ n: count() }).from(ideas))[0]!.n).toBe(1);
+  });
+
+  it('ensureExampleQuietly warns once without details and does not throw (I3)', async () => {
+    const warn = vi.fn();
+    const broken = { transaction: async () => { throw Object.assign(new Error('postgres://u:secret@host/db failed'), { code: '23505' }); } };
+    await ensureExampleQuietly(broken as never, warn);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).not.toMatch(/secret|postgres:/);
+  });
+
+  it('listRealRuns and realCaseSlugs skip the example (M2)', async () => {
+    const db = await createTestDb();
+    await ensureExample(db);
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { title: 'Real' });
+    await insertCase(db, idea.id, { slug: 'real-case' });
+    expect((await listRealRuns(db, 20)).map((r) => r.id)).toEqual([run.id]);
+    expect(await realCaseSlugs(db)).toEqual(['real-case']);
+    expect(EXAMPLE_REFUSAL).toMatch(/built-in example case/);
   });
 });

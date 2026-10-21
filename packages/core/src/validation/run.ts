@@ -10,6 +10,7 @@ import { generateDrafts } from './outreach';
 import { generatePackDocs } from './pack-docs';
 import { pilotSiteDomain, placesSource, prospectDomain, upsertProspects, webResearchSource, type ProspectSource } from './prospects';
 import { priceUnitDropped } from './verified-claims';
+import { EXAMPLE_REFUSAL } from '../example/example';
 
 export type ValidationDeps = Pick<StageDeps, 'db' | 'router' | 'fetchPage' | 'log'> & {
   /** Root of the validation export; files go to `<outDir>/<slug>/`. */
@@ -67,6 +68,7 @@ export async function runValidation(deps: ValidationDeps, caseId: string, opts: 
 
   const [kase] = await db.select().from(cases).where(eq(cases.id, caseId));
   if (!kase) throw new Error(`runValidation: unknown case ${caseId}`);
+  if (kase.isExample) throw new Error(EXAMPLE_REFUSAL);
   // Once per run (drafts and landing both use the price): the owner should fix the unit in the case.
   if (priceUnitDropped(kase.sections)) {
     log('validate: the case price unit was dropped (it must be a short plain phrase such as "month" or "load processed"); ' +

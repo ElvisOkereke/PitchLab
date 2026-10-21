@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import {
   cases, claims, gateVerdicts, ideas, landingEvents, landingPages, outreachDrafts, outreachEvents, prospects, runs, scores,
@@ -8,6 +8,15 @@ import { EXAMPLE_SLUG, exampleFixture } from './fixture';
 
 export { EXAMPLE_SLUG };
 export const EXAMPLE_HIDDEN_KEY = 'example.hidden';
+export const EXAMPLE_REFUSAL = 'This is the built-in example case; its validation pack is already there.';
+
+/** True for an address on a reserved example domain (example.com / .org / .net, their subdomains, or *.example). */
+export function isReservedExampleEmail(email: string): boolean {
+  const at = email.lastIndexOf('@');
+  if (at < 0) return false;
+  const d = email.slice(at + 1).trim().toLowerCase();
+  return ['example.com', 'example.org', 'example.net'].some((r) => d === r || d.endsWith(`.${r}`)) || d.endsWith('.example') || d === 'example';
+}
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 type Exec = Db | Tx;
@@ -38,7 +47,8 @@ async function deleteExample(tx: Tx): Promise<void> {
   if (caseIds.length) {
     const prospectRows = await tx.select({ id: prospects.id, email: prospects.email }).from(prospects).where(inArray(prospects.caseId, caseIds));
     const prospectIds = prospectRows.map((p) => p.id);
-    const emails = prospectRows.flatMap((p) => (p.email ? [p.email.toLowerCase()] : []));
+    // Only reserved example addresses: a real unsubscribe must never be deleted with the example (CASL).
+    const emails = prospectRows.flatMap((p) => (p.email && isReservedExampleEmail(p.email) ? [p.email.toLowerCase()] : []));
     if (prospectIds.length) {
       await tx.delete(outreachEvents).where(inArray(outreachEvents.prospectId, prospectIds));
       await tx.delete(outreachDrafts).where(inArray(outreachDrafts.prospectId, prospectIds));
@@ -62,12 +72,13 @@ async function deleteExample(tx: Tx): Promise<void> {
   if (runIds.length) await tx.delete(runs).where(inArray(runs.id, runIds));
 }
 
-async function insertExample(tx: Tx): Promise<void> {
+async function insertExample(tx: Tx): Promise<boolean> {
   const f = exampleFixture();
   const [run] = await tx.insert(runs).values(f.run).returning({ id: runs.id });
   const [idea] = await tx.insert(ideas).values({ ...f.idea, runId: run!.id }).returning({ id: ideas.id });
-  const [c] = await tx.insert(cases).values({ ...f.case, ideaId: idea!.id }).returning({ id: cases.id });
-  const caseId = c!.id;
+  const [c] = await tx.insert(cases).values({ ...f.case, ideaId: idea!.id }).onConflictDoNothing({ target: cases.slug }).returning({ id: cases.id });
+  if (!c) return false; // another process inserted the example first
+  const caseId = c.id;
   await tx.insert(claims).values(f.claims.map((x) => ({ ...x, caseId })));
   await tx.insert(scores).values(f.scores.map((x) => ({ ...x, caseId })));
   await tx.insert(validationPacks).values({ ...f.pack, caseId });
@@ -80,16 +91,42 @@ async function insertExample(tx: Tx): Promise<void> {
   await tx.insert(outreachDrafts).values(f.drafts.map(({ domain, ...d }) => ({
     ...d, prospectId: byDomain.get(domain)!, model: f.draftModel, promptVersion: 'example',
   })));
+  return true;
 }
+
+class ExampleRaced extends Error {}
 
 /** Inserts the example once, unless the owner hid it. Never called from seedDefaults (test DBs stay empty). */
 export async function ensureExample(db: Db): Promise<'inserted' | 'present' | 'hidden'> {
   return db.transaction(async (tx) => {
     if (await isHidden(tx)) return 'hidden';
     if (await exampleSlug(tx)) return 'present';
-    await insertExample(tx);
+    if (!(await insertExample(tx))) throw new ExampleRaced();
     return 'inserted';
+  }).catch((err) => {
+    if (err instanceof ExampleRaced) return 'present' as const; // rolled back the run and idea inserted before the conflict
+    throw err;
   });
+}
+
+/** ensureExample for CLI start-up: never blocks a command; a failure becomes a one-line warning (no connection details). */
+export async function ensureExampleQuietly(db: Db, warn: (line: string) => void): Promise<void> {
+  try {
+    await ensureExample(db);
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? ` (${String((err as { code: unknown }).code).slice(0, 20)})` : '';
+    warn(`warning: could not add the built-in example case${code}; continuing without it.`);
+  }
+}
+
+/** Newest runs first, without the built-in example. */
+export async function listRealRuns(db: Db, limit: number) {
+  return db.select().from(runs).where(eq(runs.isExample, false)).orderBy(desc(runs.createdAt)).limit(limit);
+}
+
+/** Slugs of the owner's own cases, oldest first (the example is excluded). */
+export async function realCaseSlugs(db: Db): Promise<string[]> {
+  return (await db.select({ slug: cases.slug }).from(cases).where(and(eq(cases.isExample, false))).orderBy(cases.createdAt)).map((c) => c.slug);
 }
 
 /** Marks the example hidden and removes every example row. */

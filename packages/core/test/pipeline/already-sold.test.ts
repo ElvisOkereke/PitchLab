@@ -3,6 +3,7 @@ import type { Db } from '../../src/db/client';
 import { gateVerdicts } from '../../src/db/schema';
 import { loadAlreadySold } from '../../src/pipeline/already-sold';
 import { defaultRunConfig } from '../../src/pipeline/types';
+import { ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
 const verdict = (db: Db, ideaId: string, check: 'generic' | 'autonomy' | 'evidence', pass: boolean, reasoning: string) =>
@@ -56,6 +57,12 @@ describe('loadAlreadySold', () => {
     const out = await loadAlreadySold(db);
     expect(out.covered).toHaveLength(2);
     expect(out.covered).toEqual(expect.arrayContaining(['Owner case', 'Generated case']));
+  });
+
+  it('does not list the built-in example as covered (M1)', async () => {
+    const db = await testDb();
+    await ensureExample(db);
+    expect((await loadAlreadySold(db)).covered).toEqual([]);
   });
 
   it('caps each list at 15 by default (or the given limit), newest first', async () => {

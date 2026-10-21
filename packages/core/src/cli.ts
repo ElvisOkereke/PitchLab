@@ -12,7 +12,7 @@ import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
 import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settings } from './db/schema';
 import { seedDefaults } from './db/seed';
-import { ensureExample } from './example/example';
+import { EXAMPLE_REFUSAL, ensureExampleQuietly, listRealRuns, realCaseSlugs } from './example/example';
 import { buildRouter } from './llm/router';
 import { buildStageDeps } from './pipeline/deps';
 import { createRun, executeRunWithSetup } from './pipeline/run';
@@ -53,7 +53,7 @@ async function openDb(url: string): Promise<Db> {
   const db = await createDb(resolveDbUrl(url));
   await runMigrations(db);
   await seedDefaults(db);
-  await ensureExample(db);
+  await ensureExampleQuietly(db, (l) => console.error(l));
   return db;
 }
 
@@ -225,7 +225,7 @@ function configFrom(opts: RunOpts): RunConfig {
 
 async function listRuns(): Promise<number> {
   return withDb(async (db) => {
-    const rows = await db.select().from(runs).orderBy(desc(runs.createdAt)).limit(20);
+    const rows = await listRealRuns(db, 20);
     if (rows.length === 0) {
       out('No runs yet.');
       return 0;
@@ -251,7 +251,7 @@ async function exportCommand(slug: string | undefined, opts: { all?: boolean }):
   if (!slug && !opts.all) throw new CliError('Give a case slug or --all', 2);
   return withDb(async (db) => {
     const slugs = opts.all
-      ? (await db.select({ slug: cases.slug }).from(cases).orderBy(cases.createdAt)).map((c) => c.slug)
+      ? await realCaseSlugs(db)
       : [slug!];
     if (slugs.length === 0) out('No cases to export.');
     for (const s of slugs) out(`Exported ${await exportCase(db, s)}`);
@@ -294,6 +294,7 @@ async function validateCommand(slug: string, opts: ValidateCliOpts): Promise<num
   const db = await openDb(env.DATABASE_URL);
   try {
     const kase = await findCase(db, slug);
+    if (kase.isExample) throw new CliError(EXAMPLE_REFUSAL, 1);
     const started = new Date();
     const result = await runValidation(validationDeps(env, db), kase.id, opts);
     out('');
@@ -329,6 +330,7 @@ async function prospectsImportCommand(slug: string, opts: { file: string }): Pro
   }
   return withDb(async (db) => {
     const kase = await findCase(db, slug);
+    if (kase.isExample) throw new CliError(EXAMPLE_REFUSAL, 1);
     const r = await upsertProspects(db, kase.id, parsed.rows, 'csv');
     out(`Imported ${r.inserted} new prospect(s); ${r.existing} already listed (left unchanged); ${r.skipped + parsed.skipped.length} skipped.`);
     for (const s of parsed.skipped) out(`  line ${s.line}: skipped (${s.reason})`);
