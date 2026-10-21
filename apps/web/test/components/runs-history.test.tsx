@@ -14,7 +14,7 @@ const NOW = new Date('2026-10-20T15:00:00Z');
 function run(o: Partial<RunListRow> = {}): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded',
-    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, caseCount: 3,
+    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, caseCount: 3,
     stages: [{ stage: 'harvest', status: 'done', startedAt: NOW, finishedAt: NOW }, { stage: 'ideate', status: 'done', startedAt: NOW, finishedAt: null }],
     ...o,
   };

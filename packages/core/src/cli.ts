@@ -12,6 +12,7 @@ import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
 import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settings } from './db/schema';
 import { seedDefaults } from './db/seed';
+import { ensureExample } from './example/example';
 import { buildRouter } from './llm/router';
 import { buildStageDeps } from './pipeline/deps';
 import { createRun, executeRunWithSetup } from './pipeline/run';
@@ -51,6 +52,7 @@ async function openDb(url: string): Promise<Db> {
   const db = await createDb(resolveDbUrl(url));
   await runMigrations(db);
   await seedDefaults(db);
+  await ensureExample(db);
   return db;
 }
 

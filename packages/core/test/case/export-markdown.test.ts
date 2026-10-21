@@ -30,7 +30,7 @@ function caseFixture(opts: { gateFlags?: string[]; mutate?: (s: CaseSections) =>
   return {
     id: 'case-1', ideaId: 'idea-1', slug: 'lead-flow-verification', title: opts.title ?? title, stage: 'new',
     sections, killReason: null, gateAdvisory: (opts.gateFlags ?? []).length > 0, model: 'claude-x', promptVersion: 'case-write.v1',
-    createdAt: now, updatedAt: now,
+    isExample: false, createdAt: now, updatedAt: now,
   };
 }
 

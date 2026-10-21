@@ -19,9 +19,11 @@ export async function runMigrations(db: Db): Promise<void> {
 // CLI: `npm run db:migrate`
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const { seedDefaults } = await import('./seed');
+  const { ensureExample } = await import('../example/example');
   const db = await createDb(process.env.DATABASE_URL ?? 'pglite://.data/pglite');
   await runMigrations(db);
   await seedDefaults(db);
+  await ensureExample(db);
   console.log('migrations applied');
   process.exit(0);
 }

@@ -61,7 +61,7 @@ export function caseViewFixture(o: { sections?: CaseSections; claims?: ClaimRow[
     case: {
       id: CASE_ID, ideaId: 'idea', slug: 'lead-flow-verification', title: 'Lead-flow verification for web agencies', stage: o.stage ?? 'new',
       sections, killReason: o.killReason ?? null, gateAdvisory: sections.summary.gateFlags.length > 0, model: 'claude-x',
-      promptVersion: 'case-write.v1', createdAt: NOW, updatedAt: NOW,
+      promptVersion: 'case-write.v1', isExample: false, createdAt: NOW, updatedAt: NOW,
     },
     claims: o.claims ?? [],
     scores: [],

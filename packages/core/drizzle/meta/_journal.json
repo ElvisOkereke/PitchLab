@@ -50,6 +50,13 @@
       "when": 1792467808946,
       "tag": "0006_stage_events",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792554533469,
+      "tag": "0007_example_validation_jobs",
+      "breakpoints": true
     }
   ]
 }

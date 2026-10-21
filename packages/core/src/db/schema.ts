@@ -46,6 +46,8 @@ export const runs = pgTable('runs', {
   currentStage: text('current_stage'),
   error: text('error'),
   costUsd: numeric('cost_usd').notNull().default('0'),
+  /** True only for the built-in example case's run (hidden/reset by src/example). */
+  isExample: boolean('is_example').notNull().default(false),
   startedAt: timestamp('started_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: createdAt(),
@@ -133,6 +135,8 @@ export const cases = pgTable('cases', {
   gateAdvisory: boolean('gate_advisory').notNull(),
   model: text('model').notNull(),
   promptVersion: text('prompt_version').notNull(),
+  /** True only for the built-in example case (hidden/reset by src/example). */
+  isExample: boolean('is_example').notNull().default(false),
   createdAt: createdAt(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -313,6 +317,20 @@ export const stageEvents = pgTable('stage_events', {
   note: text('note'),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('stage_events_case_at_idx').on(t.caseId, t.at)]);
+
+/** Queued validation-pack jobs (the worker picks them up). `options` and `steps` are narrowed to real types later. */
+export const validationJobs = pgTable('validation_jobs', {
+  id: id(),
+  caseId: uuid('case_id').notNull().references(() => cases.id),
+  options: jsonb('options').$type<unknown>().notNull(),
+  status: runStatus('status').notNull().default('queued'),
+  steps: jsonb('steps').$type<unknown>(),
+  error: text('error'),
+  costUsd: numeric('cost_usd').notNull().default('0'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('validation_jobs_status_created_idx').on(t.status, t.createdAt)]);
 
 export const settings = pgTable('settings', {
   key: text('key').primaryKey(),
