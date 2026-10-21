@@ -69,7 +69,9 @@ Notes:
 - Free limits: 500 MB database.
 - Certificate error when connecting ("self-signed certificate in certificate chain", "unable to get local issuer
   certificate", "Hostname/IP does not match"): the CA file is missing or wrong, or the URL is not the session pooler.
-  Re-download the certificate from step 3 and check the path. Never disable verification.
+  Re-download the certificate from step 3 and check the path. If it still fails with the downloaded file, try leaving
+  `DATABASE_SSL_CA` empty: the connection is then still verified, against the public certificate authorities built
+  into Node. Never disable verification.
 - `DATABASE_SSL_CA could not be read`: the file is not at that path (the message never shows the path).
 
 ## Prerequisites (local Docker Postgres)
@@ -112,7 +114,10 @@ All variables go in the repo-root `.env` (there is no `apps/web/.env`). `.env.ex
      because of CRLF line endings on Windows. Re-checkout `packages/core/drizzle/*.sql` as LF
      (`git ls-files --eol` shows the endings; `git checkout -- packages/core/drizzle`), drop and recreate the target
      (`docker compose down -v`, then `docker compose up -d`), and copy again.
-   - Starting fresh instead (no old data)? Skip this step: `npm run db:migrate` applies the migrations to `DATABASE_URL`.
+   - Starting fresh instead (no old data)? Skip this step and run `npm run gen -- runs` once with nothing set in the
+     shell: it reads `.env` and migrates `DATABASE_URL` (any `gen` command migrates the database it opens; `runs` only
+     lists runs). Do not use `npm run db:migrate` for this: it does not read `.env`, and it runs inside `packages/core`,
+     so with no `DATABASE_URL` in the shell it migrates a new, empty `packages/core/.data/pglite` instead.
 4. Choose a password (at least 12 characters) and hash it. Interactive (input is hidden, asked twice):
    ```
    npm run hash-password -w apps/web
@@ -157,7 +162,7 @@ Web app variables are validated at startup by `apps/web/lib/env.ts`; the error n
 | Name | Required? | Default | Meaning and notes |
 |---|---|---|---|
 | `DATABASE_URL` | Web: yes. Worker/CLI: no | Core default `pglite://.data/pglite` | Web app: `postgres://` or `postgresql://` only. The worker and `gen` also accept `pglite://`, but then the dashboard cannot share it. |
-| `DATABASE_SSL` | No | `auto` | Web, worker and CLI. `auto`: plain TCP for `localhost`, `127.0.0.1`, `::1` and `*.railway.internal`, verified TLS for every other host. `verify`: always verified TLS. `disable`: plain TCP. Anything else (including `require`) is refused: there is no mode that skips certificate verification. `sslmode`/`ssl` parameters in `DATABASE_URL` are removed and have no effect. |
+| `DATABASE_SSL` | No | `auto` | Web, worker and CLI. `auto`: plain TCP for `localhost`, `127.0.0.1`, `::1` and `*.railway.internal`, verified TLS for every other host. `verify`: always verified TLS. `disable`: plain TCP. Anything else (including `require`) is refused: there is no mode that skips certificate verification. `*.railway.internal` hosts use plain TCP because they are reachable only inside Railway's private network. TLS parameters in `DATABASE_URL` (`sslmode`, `ssl`, `sslrootcert`, `sslcert`, `sslkey`, `sslpassword`, `uselibpqcompat`, `sslnegotiation`) are removed and have no effect. |
 | `DATABASE_SSL_CA` | No | unset | Absolute path to a PEM CA certificate that verifies the database server (Supabase: the downloaded SSL certificate). Used only when TLS is on. Keep the file outside the repo. |
 | `DATABASE_POOL_MAX` | No | web `5`, worker/CLI `4` | Integer 1 to 20: connections per process. Keep the total under the database's limit (Supabase free session pooler: about 15). |
 | `OWNER_PASSWORD_HASH` | Web: yes | none | `scrypt:N:r:p:salt:key` from `npm run hash-password -w apps/web`. Colons only, never `$`. |

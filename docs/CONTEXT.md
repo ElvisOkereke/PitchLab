@@ -322,11 +322,14 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
 - **2026-10-20 (Supabase):** owner chose a free Supabase database with web + worker on the PC (no Docker). Plan
   `docs/superpowers/plans/2026-10-20-supabase-local.md`, branch `supabase`, TDD. New web-safe
   `packages/core/src/db/pg-config.ts` (`@bcg/core/db/pg-config`) used by `createDb` and the web `getDb`: TLS from
-  `DATABASE_SSL` only (URL `sslmode`, `ssl`, `sslrootcert`, `sslcert`, `sslkey`, `sslpassword`, `uselibpqcompat`
-  removed, because pg 8.23 lets them override the `ssl` option), `ssl: false` set explicitly so `PGSSLMODE` cannot
+  `DATABASE_SSL` only (URL `sslmode`, `ssl`, `sslrootcert`, `sslcert`, `sslkey`, `sslpassword`, `uselibpqcompat`,
+  `sslnegotiation` removed, because pg 8.23 lets them override the `ssl` option), `ssl: false` set explicitly so `PGSSLMODE` cannot
   decide either, CA from `DATABASE_SSL_CA`, pool max 1–20, keep-alive and timeouts; the worker pool gained an
   idle-error listener. A test fails if `rejectUnauthorized: false` appears in `packages/core/src` or `apps/web`. Web
   env validates the three new variables. Guide: `docs/dashboard.md` "Free setup". Found while writing it:
   `npm run db:migrate` resolves `pglite://.data/pglite` inside `packages/core` (a new empty folder there, not the real DB), so the guide
   now uses `npm run gen -- runs` with the shell `DATABASE_URL` to migrate the local DB; `db:copy` migrates Supabase.
   Not verified live: the Supabase connection and its certificate chain.
+  Review fix round 1 (SB-R1): `auto` is plain only if the URL host AND every `host` query value are local (pg uses
+  the last `host`), `sslnegotiation` stripped too, `keepAliveInitialDelayMillis: 10000`, and the guard test also scans
+  `packages/core/scripts` and fails on `checkServerIdentity` and any `NODE_TLS_REJECT_UNAUTHORIZED` assignment.
