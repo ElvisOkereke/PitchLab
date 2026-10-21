@@ -5,6 +5,7 @@ import { HOSTILE, caseViewFixture } from '../helpers/case-fixture';
 import { landingCopyFixture, packFixture, prospectRow, validateViewFixture } from '../helpers/validate-fixture';
 
 vi.mock('@/actions/outreach', () => ({ markOutreachAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/validation', () => ({ queueValidationAction: vi.fn(async () => ({})) }));
 
 const { ValidateTab } = await import('@/components/tabs/validate');
 
@@ -18,7 +19,8 @@ const draft = (prospectId: string, kind: OutreachDraftRow['kind'], subject: stri
 describe('ValidateTab', () => {
   it('validate tab shows the not-generated state without a pack', () => {
     const { container } = render(<ValidateTab view={caseViewFixture()} validate={validateViewFixture({ pack: null, checklist: null })} page={1} />);
-    expect(container.textContent).toContain('Validation pack not generated yet. Run: npm run gen -- validate lead-flow-verification');
+    expect(container.textContent).toContain('Validation pack not generated yet.');
+    expect(container.textContent).not.toContain('npm run gen -- validate');
   });
 
   it('validate tab never renders landing html and badges CASL basis', () => {

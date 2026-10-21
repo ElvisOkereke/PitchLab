@@ -1,8 +1,11 @@
 import { linkFlags } from '@bcg/core/case/review';
 import { getCaseView } from '@bcg/core/dashboard/case-view';
 import { getValidateView } from '@bcg/core/dashboard/validate-view';
+import { latestValidationJob } from '@bcg/core/dashboard/validation-jobs';
+import { getSender } from '@bcg/core/validation/settings';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { AutoRefresh } from '@/components/auto-refresh';
 import { CaseHeader } from '@/components/case-header';
 import { CompetitorsTab } from '@/components/tabs/competitors';
 import { EvidenceTab } from '@/components/tabs/evidence';
@@ -47,9 +50,21 @@ export default async function CasePage({ params, searchParams }: Props) {
     case 'pitch':
       content = <PitchTab view={view} />;
       break;
-    case 'validate':
-      content = <ValidateTab view={view} validate={await getValidateView(db, view.case.id, { page: query.page })} page={query.page} />;
+    case 'validate': {
+      const [validate, job, sender] = await Promise.all([
+        getValidateView(db, view.case.id, { page: query.page }),
+        latestValidationJob(db, view.case.id),
+        getSender(db),
+      ]);
+      const busy = job?.status === 'queued' || job?.status === 'running';
+      content = (
+        <>
+          {busy ? <AutoRefresh everyMs={10_000} /> : null}
+          <ValidateTab view={view} validate={validate} page={query.page} job={job} senderMissing={sender.missing} />
+        </>
+      );
       break;
+    }
     case 'score':
       content = <ScoreTab view={view} />;
       break;

@@ -1,5 +1,6 @@
 import type { CaseView } from '@bcg/core/dashboard/case-view';
 import { PROSPECTS_PAGE_MAX, type ProspectRow, type ValidateView } from '@bcg/core/dashboard/validate-view';
+import type { ValidationJobView } from '@bcg/core/dashboard/validation-jobs';
 import { LandingCopySchema, PackSectionsSchema, type PackDocs } from '@bcg/core/validation/schema';
 import Link from 'next/link';
 import { caseHref } from '@/lib/case-query';
@@ -7,6 +8,8 @@ import { formatDateTime } from '@/lib/time';
 import { ExternalLink } from '../external-link';
 import { MarkOutreachForm } from '../mark-outreach-form';
 import { TextBlock } from '../text-block';
+import { ValidationJobForm } from '../validation-job-form';
+import { ValidationJobStatus } from '../validation-job-status';
 
 const CASL: Record<ProspectRow['caslBasis'], { cls: string; label: string }> = {
   self_published: { cls: 'badge-ok', label: 'self-published' },
@@ -168,12 +171,27 @@ function LandingSummary({ landing }: { landing: NonNullable<ValidateView['landin
 }
 
 /** The Validate tab: pack documents, checklist, outreach tracking, prospects (100 per page) and the landing summary. */
-export function ValidateTab({ view, validate, page }: { view: CaseView; validate: ValidateView; page: number }) {
+export function ValidateTab({
+  view, validate, page, job = null, senderMissing = [],
+}: { view: CaseView; validate: ValidateView; page: number; job?: ValidationJobView | null; senderMissing?: string[] }) {
   const slug = view.case.slug;
+  const generate = (
+    <>
+      <ValidationJobForm
+        caseId={view.case.id}
+        slug={slug}
+        hasPack={validate.pack !== null}
+        isExample={view.case.isExample}
+        senderMissing={senderMissing.length > 0}
+      />
+      {job ? <ValidationJobStatus job={job} /> : null}
+    </>
+  );
   if (!validate.pack) {
     return (
       <div className="tab tab-validate">
-        <p className="card">Validation pack not generated yet. Run: npm run gen -- validate {slug}</p>
+        <p className="card">Validation pack not generated yet.</p>
+        {generate}
       </div>
     );
   }
@@ -186,6 +204,7 @@ export function ValidateTab({ view, validate, page }: { view: CaseView; validate
   return (
     <div className="tab tab-validate">
       <h2>Validation pack</h2>
+      {generate}
       <p className="muted small">
         Generated {formatDateTime(validate.pack.updatedAt)} · {validate.pack.model}
       </p>

@@ -6,6 +6,7 @@
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Db } from '@bcg/core/db/client';
+import { setSetting } from '@bcg/core/validation/settings';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestDb, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
 import { TEST_SECRET, resetRequest, useTestEnv } from '../helpers/next-mocks';
@@ -55,6 +56,15 @@ const SPECS: Record<string, Spec> = {
   },
   'runs.ts#requeueRunAction': {
     seed: async (db) => ({ runId: (await seedFailedRun(db)).id }),
+  },
+  'validation.ts#queueValidationAction': {
+    seed: async (db) => {
+      const c = await seedCase(db);
+      await setSetting(db, 'sender.name', 'Al Owner');
+      await setSetting(db, 'sender.address', '1 Main St');
+      await setSetting(db, 'sender.contact', 'al@owner.example');
+      return { caseId: c.id, slug: c.slug, prospects: '5' };
+    },
   },
   'settings.ts#saveSettingsAction': {
     seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
