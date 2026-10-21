@@ -187,14 +187,20 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
         b.textContent = label;
         b.addEventListener('click', onClick);
         row.appendChild(b);
+        return b;
       };
+      let primary: HTMLElement = dom.nextButton;
       if (how.show === 'go-there' && how.href) {
         const href = how.href;
-        add('Take me there', false, () => routerRef.current.push(href));
+        primary = add('Take me there', false, () => routerRef.current.push(href));
       }
       if (step.wait) add('I’ll come back later', true, exit);
       add('Skip chapter', true, skipChapter);
       dom.wrapper.insertBefore(row, dom.footer);
+      // driver focuses the first focusable element, the close (Exit) button, so a reflexive Enter would end the tour.
+      // Move Exit last in tab order (CSS keeps it in the corner) and focus the primary action once driver is done.
+      dom.wrapper.appendChild(dom.closeButton);
+      queueMicrotask(() => primary.focus());
     };
 
     getDriver().highlight({
@@ -225,11 +231,11 @@ export function TourProvider({ initial, caseSlug, chapters = CHAPTERS, children 
     const appearsSel = step.kind === 'action' && step.advanceOn?.appears ? selector(step.advanceOn.appears) : undefined;
     const waitForTarget = how.show === 'centred' && targetSel !== undefined && targetEl === null;
     if (how.show !== 'go-there' && (appearsSel || waitForTarget)) {
-      const before = appearsSel ? document.querySelector(appearsSel) : null;
+      // Every match already on the page when the step starts; only a new one counts (e.g. a second "Queued.").
+      const before = new Set(appearsSel ? Array.from(document.querySelectorAll(appearsSel)) : []);
       const observer = new MutationObserver(() => {
         if (appearsSel) {
-          const el = document.querySelector(appearsSel);
-          if (el && el !== before) {
+          if (Array.from(document.querySelectorAll(appearsSel)).some((el) => !before.has(el))) {
             observer.disconnect();
             goNext();
             return;

@@ -8,7 +8,7 @@ import type { Chapters, TourStep } from '@/lib/tour/machine';
 type Popover = {
   title?: string; description?: string; showButtons?: string[]; disableButtons?: string[];
   onNextClick?: () => void; onPrevClick?: () => void; onCloseClick?: () => void;
-  onPopoverRender?: (dom: { wrapper: HTMLElement; footer: HTMLElement }, opts: unknown) => void;
+  onPopoverRender?: (dom: { wrapper: HTMLElement; footer: HTMLElement; closeButton: HTMLElement; nextButton: HTMLElement; previousButton: HTMLElement; title: HTMLElement }, opts: unknown) => void;
 };
 type HighlightArg = { element?: string; popover: Popover };
 
@@ -73,13 +73,24 @@ const lastHighlight = () => highlights().at(-1)!;
 const lastSaved = () => save.mock.calls.at(-1)?.[0] as TourState | undefined;
 const STATE: TourState = { version: TOUR_VERSION, completed: [], current: null, dismissed: false };
 
-/** Runs driver's onPopoverRender against a real popover-shaped DOM and returns that wrapper. */
+/** Runs driver's onPopoverRender against a popover-shaped DOM (driver's own order: close, title, description, footer). */
 function renderPopover(p: Popover): HTMLElement {
   const wrapper = document.createElement('div');
+  const closeButton = document.createElement('button');
+  closeButton.className = 'driver-popover-close-btn';
+  closeButton.setAttribute('aria-label', 'Exit tour');
+  const title = document.createElement('header');
   const footer = document.createElement('footer');
-  wrapper.appendChild(footer);
+  const previousButton = document.createElement('button');
+  previousButton.textContent = 'Back';
+  const nextButton = document.createElement('button');
+  nextButton.textContent = 'Next';
+  footer.append(previousButton, nextButton);
+  wrapper.append(closeButton, title, footer);
   document.body.appendChild(wrapper);
-  p.onPopoverRender?.({ wrapper, footer }, {});
+  // What driver does: focus the first focusable element, which is the close button.
+  closeButton.focus();
+  p.onPopoverRender?.({ wrapper, footer, closeButton, nextButton, previousButton, title }, {});
   return wrapper;
 }
 
@@ -201,6 +212,42 @@ describe('TourProvider', () => {
       container.appendChild(ok);
     });
     await waitFor(() => expect(lastHighlight().popover.title).toBe('After'));
+  });
+
+  it('an action step advances when a NEW matching element appears, even if an older one is already on the page', async () => {
+    const chapters = chaptersWith([step({ id: 'a', target: 'first', kind: 'action', advanceOn: { appears: 'queued' } }), step({ id: 'b', title: 'After' })]);
+    const old = document.createElement('p');
+    old.setAttribute('data-tour', 'queued');
+    document.body.appendChild(old);
+    const { container } = mount({ chapters });
+    await waitFor(() => expect(lastHighlight()?.element).toBe('[data-tour="first"]'));
+    // An unrelated change does not advance while only the old element is there.
+    act(() => {
+      container.appendChild(document.createElement('span'));
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(lastHighlight().popover.title).toBe('T');
+    const fresh = document.createElement('p');
+    fresh.setAttribute('data-tour', 'queued');
+    act(() => {
+      container.appendChild(fresh);
+    });
+    await waitFor(() => expect(lastHighlight().popover.title).toBe('After'));
+  });
+
+  it('focus goes to Next, not the Exit button, when a popover renders; the close button moves to the end', async () => {
+    mount();
+    await waitFor(() => expect(drv.instance.highlight).toHaveBeenCalled());
+    const popover = renderPopover(lastHighlight().popover);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Next'));
+    expect(popover.lastElementChild?.getAttribute('aria-label')).toBe('Exit tour');
+  });
+
+  it('on a step elsewhere, focus goes to "Take me there"', async () => {
+    mount({ chapters: chaptersWith([step({ id: 'runs', route: '/runs', target: 'first', title: 'Runs' })]) });
+    await waitFor(() => expect(drv.instance.highlight).toHaveBeenCalled());
+    renderPopover(lastHighlight().popover);
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Take me there'));
   });
 
   it('an action step advances when the route changes to the expected path', async () => {
