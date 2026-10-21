@@ -57,6 +57,10 @@ Open after tuning-4:
 
 ## Plan 3 (Validation pack)
 - CASL footer checks are substring-only. Tighten them when outreach drafting is built.
+- [x] **Generating the validation pack from the UI** (left out of Plan 2: "use `gen validate`"). Done 2026-10-20 on
+  branch `guided-tour`: the Validate tab's "Generate validation pack" button queues a `validation_jobs` row and
+  `gen worker` runs it after any queued runs. Still open: no leases (a job left `running` by a stopped worker only
+  stops blocking a new one after 2 hours), and `--source places`, `--include-weak` and `--pilot-site` remain CLI-only.
 
 ## Plan 4 (Continuous + deploy)
 - [x] **TLS for remote Postgres** (`sslmode` or the `ssl` option) on Railway. Done 2026-10-20 (branch `supabase`):

@@ -54,10 +54,15 @@
   skips verification), URL `sslmode`-style parameters removed, `DATABASE_POOL_MAX` (web 5, worker/CLI 4), 15 s
   connect timeout, idle-error listener on the worker pool. Owner steps: `docs/dashboard.md`, "Free setup". Not yet
   verified against a live Supabase project.
+  **Guided tour, in-app help and repo docs, branch `guided-tour`** (plan `docs/superpowers/plans/2026-10-20-guided-tour.md`):
+  built-in example case (hide/reset in Settings), validation packs queued from the Validate tab and run by the worker
+  (migration 0007), "?" help tips with `docs/glossary.md`, an 8-chapter tour ("Take the tour"), and the first public
+  docs: `README.md`, `docs/user-guide.md`, `docs/architecture.md` (`docs/dashboard.md` stays the setup guide). Product
+  name: PitchLab. Not merged yet.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
-- **Last updated:** 2026-10-20
+- **Last updated:** 2026-10-21
 
 ## The Goal (in the user's words, summarised)
 Build a repeatable **software-service business case generator**: something run consistently to research and produce
@@ -333,3 +338,12 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   Review fix round 1 (SB-R1): `auto` is plain only if the URL host AND every `host` query value are local (pg uses
   the last `host`), `sslnegotiation` stripped too, `keepAliveInitialDelayMillis: 10000`, and the guard test also scans
   `packages/core/scripts` and fails on `checkServerIdentity` and any `NODE_TLS_REJECT_UNAUTHORIZED` assignment.
+- **2026-10-21 (guided tour, Task 9):** repo documentation on `guided-tour`. New `README.md` (what PitchLab is, a
+  Mermaid flow, requirements, quick start, CLI in brief, costs, safety stance, doc links), `docs/user-guide.md` (the 8
+  tour chapters in prose, with what/why/what good looks like per step, "How to judge a case" and "When to kill") and
+  `docs/architecture.md` (layout, pipeline diagram and stage table, validation steps, worker loop, tables by purpose,
+  router and notional cost logging, security rules with reasons, merge gates, known limits). `docs/dashboard.md` now
+  links the README and covers the Generate validation pack button, the example case and the tour; the pilot site's
+  name was removed from it. New test `apps/web/test/docs-links.test.ts`: every relative link in the README and the
+  four user-facing docs must resolve. Facts checked against code, not memory. Noted for a public release: no licence
+  file yet, and the LLM setup assumes one gateway serving both the Anthropic and the OpenAI formats with one key.

@@ -1,8 +1,12 @@
-# Dashboard: owner guide
+# PitchLab dashboard: setup and operations
 
-A private, single-owner web app for the business-case generator. It shows the pipeline board, the cases and their
-evidence, lets you move cases between stages, score them, log outreach you sent yourself, and queue generator runs.
-Queued runs are executed by a separate worker process (`npm run worker`). The dashboard never calls an LLM itself.
+The setup and operations guide for PitchLab's private, single-owner dashboard. Start with the [README](../README.md)
+for what PitchLab is and a quick start; the [user guide](user-guide.md) explains the workflow and the
+[architecture](architecture.md) how it works inside.
+
+The dashboard shows the pipeline board, the cases and their evidence, lets you move cases between stages, score them,
+queue generator runs and validation packs, and log outreach you sent yourself. Queued work is executed by a separate
+worker process (`npm run worker`). The dashboard never calls an LLM itself.
 
 The dashboard and the worker must share one Postgres database (PGlite, the Plan 1 default, is single-process and
 cannot be shared). Two ways to get one: a free Supabase database (next section, no Docker), or the local Docker
@@ -196,10 +200,15 @@ Empty values in `.env` count as unset. There are no `NEXT_PUBLIC_*` variables: n
   - **Numbers**: the ROI inputs and formulas.
   - **Competitors**: competitors and what was confirmed about them.
   - **Pitch**: the pitch text.
-  - **Validate**: the validation pack, prospects, drafted emails, and a form to log outreach outcomes and interview notes.
+  - **Validate**: the **Generate validation pack** button (with Prospects to find, Skip new prospect search, Refresh
+    the pack documents and Write the emails again; it reads "Run validation again" once a pack exists), the job's
+    status, the validation pack, prospects, drafted emails, and a form to log outreach outcomes and interview notes.
   - **Score**: your scores for the 8 criteria.
 - **Runs**: queue a run (open, sector, lens or owner idea) and follow the history; failed runs can be re-queued.
-- **Settings**: sender and landing settings (editable), worker heartbeat, database status, models, lenses, market, criteria.
+- **Settings**: sender and landing settings (editable), the example case (Hide example case, Reset example case),
+  worker heartbeat, database status, models, lenses, market, criteria.
+- **Take the tour** (top bar, every page): replays the guided tour, continues it, or runs one chapter. It starts by
+  itself on your first login. Progress is saved in the database, so it follows you between devices.
 
 How things work:
 - **Stage moves:** from the header. Moving to Killed requires a note (stored as the kill reason). Leaving Killed is
@@ -211,6 +220,18 @@ How things work:
   for the validation checklist. This only records what you did; the system sends nothing.
 - **Queueing a run:** Runs screen. Needs `npm run worker` running, otherwise the run stays queued. At most 3 runs
   can be queued at once. The page refreshes every 10 s while something is queued or running.
+- **Generating a validation pack:** Validate tab, **Generate validation pack**. It costs about $0.60–1.50 (the
+  prospect search is about $0.45–0.60 of that; tick "Skip new prospect search" to avoid it). It needs the sender name,
+  mailing address and contact set in Settings, and `npm run worker` running. The worker takes queued runs first, then
+  validation jobs. One job per case can be queued or running at a time, and at most 3 can wait in total. A job still
+  "running" after 2 hours (the worker was stopped) no longer blocks a new one: start the worker and press "Run
+  validation again". The worker also writes the files to `output/validation/<slug>/` on its own computer. Same as
+  `npm run gen -- validate <slug>`.
+- **The example case:** a built-in, invented case (marked Example) for practice and for the tour. It is created by
+  any `gen` command, never spends money, is left out of spend, counts and "Needs you", and cannot be validated (it
+  ships with a pack). Settings → **Hide example case** removes it from the board, and later `gen` commands keep it
+  hidden. **Reset example case** restores it as shipped and shows it again, removing your practice scores and notes on
+  it. Neither touches real cases.
 
 ## Security, in plain words
 - Single owner: one password, checked against a scrypt hash. A signed session cookie (7 days) keeps you in.
@@ -220,8 +241,8 @@ How things work:
   as the build, searches `.next/static` for the secrets, the LLM key and server-only markers). All case text is rendered as text, never HTML.
 - Log out everywhere by changing `SESSION_SECRET`.
 - Never expose the app to the internet without TLS (HTTPS). Over plain http the password and cookie travel readable.
-- What the system never does: send email (it drafts; you send), or touch the pilot site gamersgetaway.ca
-  (passive inspection only, no forms, no contact; there is no permission yet).
+- What the system never does: send email (it drafts; you send), or fetch, list or contact a pilot site you name with
+  `--pilot-site` or that is on the never-fetch list in code (there is no permission to contact it).
 
 ## Deploying later (Plan 4, short)
 Railway: a Postgres service, a web service (`next start`) and a worker service (`npm run worker`) sharing the same
@@ -256,5 +277,9 @@ can execute it (live LLM, about $1). The last check trips the login rate limiter
 - **Queued runs never start**: the worker is not running (Command center shows worker status). Start `npm run worker`;
   it needs `LLM_API_KEY` and the same `DATABASE_URL`.
 - **A run stays "running" after the worker was killed**: `npm run gen -- resume <runId>`.
+- **A validation job stays "Waiting for the worker"**: start `npm run worker`. It takes queued runs first, so a
+  validation job waits until no run is queued.
+- **No "Generate validation pack" button**: the case is the example (it ships with a pack), or the sender details are
+  missing (the tab links to Settings).
 - **Migration hash mismatch during `db:copy`**: see setup step 3 (LF line endings in `packages/core/drizzle/*.sql`).
 - **`npm run build -w apps/web` fails on env**: set the web variables (dummy values are fine to build).
