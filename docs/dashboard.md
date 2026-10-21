@@ -135,6 +135,11 @@ All variables go in the repo-root `.env` (there is no `apps/web/.env`). `.env.ex
    ```
 6. Worker keys: the worker (and `gen`) also need `LLM_API_KEY` in `.env` (see the table). The web app never reads it.
 
+## Updating PitchLab
+After pulling a new version: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database
+is migrated, then start the web app again. Only `gen` and the worker migrate; a web app on an older database shows
+errors on every signed-in page.
+
 ## Daily use
 ```
 npm run web        # the dashboard, http://localhost:3000 (next dev)
@@ -201,7 +206,7 @@ Empty values in `.env` count as unset. There are no `NEXT_PUBLIC_*` variables: n
   - **Competitors**: competitors and what was confirmed about them.
   - **Pitch**: the pitch text.
   - **Validate**: the **Generate validation pack** button (with Prospects to find, Skip new prospect search, Refresh
-    the pack documents and Write the emails again; it reads "Run validation again" once a pack exists), the job's
+    the pack documents and Write the emails again; it reads "Run validation again" once a pack exists; if the worker stopped, start it and press that button again), the job's
     status, the validation pack, prospects, drafted emails, and a form to log outreach outcomes and interview notes.
   - **Score**: your scores for the 8 criteria.
 - **Runs**: queue a run (open, sector, lens or owner idea) and follow the history; failed runs can be re-queued.

@@ -59,9 +59,12 @@ Fill in `.env` (every variable is described in `.env.example` and in the [setup 
   `DATABASE_SSL_CA` ([steps](docs/dashboard.md#free-setup-supabase-database-app-on-your-pc-no-docker)).
 - `LLM_API_KEY`, plus the two `LLM_*_BASE_URL` values for your gateway.
 - `OWNER_PASSWORD_HASH`: run `npm run hash-password -w apps/web`, type a password of 12 or more characters, and
-  paste the printed line.
+  paste it into `.env` as `OWNER_PASSWORD_HASH=<printed hash>`.
 - `SESSION_SECRET`: paste the output of
   `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
+
+Updating PitchLab: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database is migrated,
+then start the web app again. A web app on an older database shows errors on every page.
 
 Then:
 

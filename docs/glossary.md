@@ -38,7 +38,7 @@ The targets that decide whether an idea is worth pursuing, such as 50 emails sen
 Moves a killed case back to New so you can work on it again. Use it when you killed an idea too early or the facts changed.
 
 ### Worker
-The background program that does the work in your queued runs. Run it with npm run worker. It checks in regularly, and it shows as not seen after 60 seconds of silence.
+The background program that does the work in your queued runs and validation packs. Run it with npm run worker. It checks in regularly, and it shows as not seen after 60 seconds of silence.
 
 ### Notional spend
 An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.

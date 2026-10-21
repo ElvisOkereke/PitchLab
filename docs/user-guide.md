@@ -222,8 +222,8 @@ Validation means testing the idea with real businesses before you build anything
 - **Cost:** about $0.60–1.50. The prospect search is about $0.45–0.60 of that. Tick **Skip new prospect search** when
   you only want new documents or drafts.
 - **Good to know:** Only one job per case can be queued or running at a time. If the worker stopped mid-job, the job stays
-  "Running". After two hours the tab says so, and you can start the worker again and press **Run validation
-  again**. The worker also saves
+  "Running". After two hours the tab says so, and you can start the worker again and press the validation button
+  again. The worker also saves
   the files to `output/validation/<case-slug>/` on its computer: `pack.md`, `prospects.csv`, `outreach.csv`,
   `outreach-drafts.md` and `landing/index.html`.
 
