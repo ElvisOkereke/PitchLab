@@ -850,3 +850,9 @@ blockquote {
     display: block;
   }
 }
+
+.example-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

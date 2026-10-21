@@ -57,4 +57,14 @@ describe('CaseHeader', () => {
     const { container } = render(<CaseHeader view={view} tab="summary" />);
     expect(container.querySelector('h1')?.textContent).toBe(view.case.title);
   });
+
+  it('shows the Example badge and note only on the example', () => {
+    const view = caseViewFixture();
+    const { queryByText, getByText, rerender } = render(<CaseHeader view={view} tab="summary" />);
+    expect(queryByText('Example')).toBeNull();
+    expect(queryByText(/built-in example with made-up businesses/)).toBeNull();
+    rerender(<CaseHeader view={{ ...view, case: { ...view.case, isExample: true } }} tab="summary" />);
+    expect(getByText('Example')).toBeTruthy();
+    expect(getByText('This is a built-in example with made-up businesses. Practise freely; Settings can reset or hide it.')).toBeTruthy();
+  });
 });

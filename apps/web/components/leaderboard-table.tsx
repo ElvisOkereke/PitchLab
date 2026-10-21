@@ -3,6 +3,7 @@ import type { LeaderRow, LeaderSort } from '@bcg/core/dashboard/leaderboard';
 import Link from 'next/link';
 import { leaderHref } from '@/lib/leaderboard-query';
 import { formatScore, STAGE_LABEL } from '@/lib/stages';
+import { ExampleBadge } from './example-badge';
 
 type Key = LeaderSort['key'];
 
@@ -75,6 +76,7 @@ export function LeaderboardTable({ rows, sort }: { rows: LeaderRow[]; sort: Lead
             <tr key={r.slug} data-slug={r.slug}>
               <th scope="row">
                 <Link href={`/cases/${encodeURIComponent(r.slug)}`}>{r.title}</Link>
+                {r.isExample ? <> <ExampleBadge /></> : null}
               </th>
               <td>{STAGE_LABEL[r.stage]}</td>
               <td data-col="ai">{formatScore(r.aiTotal)}</td>

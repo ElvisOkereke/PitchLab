@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsData } from '@/components/settings-view';
 
 vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/example', () => ({ hideExampleAction: vi.fn(async () => {}), resetExampleAction: vi.fn(async () => {}) }));
 
 const { SettingsView } = await import('@/components/settings-view');
 
@@ -17,6 +18,7 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
     },
     worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
     database: true,
+    example: { hidden: false },
     lenses: [{ id: 'aggregator', name: 'Sell to the aggregator' }, { id: 'review-gap', name: 'Incumbent review gap' }],
     market: { id: 'ca-us', name: 'Canada + US', sectors: ['HVAC'] },
     ...o,
@@ -64,5 +66,25 @@ describe('SettingsView', () => {
     expect(getByTestId('lenses').textContent).toContain('Canada + US');
     const criteria = [...getByTestId('criteria').querySelectorAll('li')].map((li) => li.textContent);
     expect(criteria).toEqual(['Pain severity', 'Buyer ROI clarity', 'Evidence strength', 'Speed to market', 'Autonomy', 'Novelty/non-generic', 'Reachability', 'Your gut']);
+  });
+
+  it('example section: Hide and Reset when shown, only Reset when hidden', () => {
+    const shown = render(<SettingsView data={data()} />);
+    const sec = shown.container.querySelector('[data-tour="settings-example"]') as HTMLElement;
+    expect(sec.textContent).toContain('Shown');
+    expect(within(sec).getByRole('button', { name: 'Hide example case' })).toBeTruthy();
+    expect(within(sec).getByRole('button', { name: 'Reset example case' })).toBeTruthy();
+    expect(sec.textContent).toContain('your practice scores and notes on it are removed');
+    cleanup();
+    const hidden = render(<SettingsView data={data({ example: { hidden: true } })} />);
+    const sec2 = hidden.container.querySelector('[data-tour="settings-example"]') as HTMLElement;
+    expect(sec2.textContent).toContain('Hidden');
+    expect(within(sec2).queryByRole('button', { name: 'Hide example case' })).toBeNull();
+    expect(within(sec2).getByRole('button', { name: 'Reset example case' })).toBeTruthy();
+  });
+
+  it('renders an allow-listed notice', () => {
+    const { getByRole } = render(<SettingsView data={data()} notice="example_hidden" />);
+    expect(getByRole('status').textContent).toContain('hidden');
   });
 });

@@ -6,6 +6,7 @@
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Db } from '@bcg/core/db/client';
+import { ensureExample, hideExample } from '@bcg/core/example/example';
 import { setSetting } from '@bcg/core/validation/settings';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTestDb, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
@@ -53,6 +54,19 @@ const SPECS: Record<string, Spec> = {
   },
   'runs.ts#queueRunAction': {
     seed: async () => ({ seedType: 'open', ideaCount: '1', advanceCount: '1' }),
+  },
+  'example.ts#hideExampleAction': {
+    seed: async (db) => {
+      await ensureExample(db);
+      return {};
+    },
+  },
+  'example.ts#resetExampleAction': {
+    seed: async (db) => {
+      await ensureExample(db);
+      await hideExample(db);
+      return {};
+    },
   },
   'runs.ts#requeueRunAction': {
     seed: async (db) => ({ runId: (await seedFailedRun(db)).id }),

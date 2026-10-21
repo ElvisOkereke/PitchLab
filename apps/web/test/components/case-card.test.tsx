@@ -59,4 +59,11 @@ describe('CaseCard', () => {
     expect(container.querySelector('img, script')).toBeNull();
     expect(container.textContent).toContain(evil);
   });
+
+  it('shows the Example badge only on the example', () => {
+    const { rerender } = render(<CaseCard card={card} />);
+    expect(screen.queryByText('Example')).toBeNull();
+    rerender(<CaseCard card={{ ...card, isExample: true }} />);
+    expect(screen.getByText('Example').getAttribute('title')).toBe('Built-in example with made-up data');
+  });
 });

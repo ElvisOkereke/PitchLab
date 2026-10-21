@@ -71,4 +71,10 @@ describe('leaderboard query', () => {
     expect(parseLeaderSort({ key: 'gut', by: 'owner', dir: 'asc' })).toEqual({ key: 'gut', by: 'owner', dir: 'asc' });
     expect(leaderHref({ key: 'title', by: 'ai', dir: 'asc' })).toBe('/leaderboard?key=title&by=ai&dir=asc');
   });
+
+  it('badges the example row only', () => {
+    const { container } = render(<LeaderboardTable rows={[row('alpha'), row('ex', { isExample: true })]} sort={{ key: 'ai', by: 'ai', dir: 'desc' }} />);
+    expect(container.querySelector('tr[data-slug="alpha"] .badge')).toBeNull();
+    expect(container.querySelector('tr[data-slug="ex"] .badge')?.textContent).toBe('Example');
+  });
 });

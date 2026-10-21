@@ -4,6 +4,8 @@ import type { MarketSummary } from '@bcg/core/dashboard/markets';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
 import { formatDateTime } from '@/lib/time';
+import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
+import { ExampleSettings } from './example-settings';
 import { SettingsForm } from './settings-form';
 
 export type SettingsData = {
@@ -12,6 +14,7 @@ export type SettingsData = {
   database: boolean;
   lenses: { id: string; name: string }[];
   market: MarketSummary | null;
+  example: { hidden: boolean };
 };
 
 const PROVIDERS: [keyof WorkerStatus['providers'], string][] = [
@@ -30,17 +33,24 @@ function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string })
  * Settings: the editable sender/landing form, then read-only connections (booleans only, never values or URLs),
  * models per stage, lenses and market names, and the scoring criteria.
  */
-export function SettingsView({ data }: { data: SettingsData }) {
+export function SettingsView({ data, notice }: { data: SettingsData; notice?: SettingsNotice }) {
   const fields = EDITABLE_SETTING_KEYS.map((k) => ({ key: k, ...SETTING_FIELDS[k], value: data.values[k] ?? '' }));
   const models = data.worker?.models ?? DEFAULT_MODELS;
   return (
     <main className="settings-page">
       <h1>Settings</h1>
+      {notice ? (
+        <p className="notice card" role="status">
+          {SETTINGS_NOTICES[notice]}
+        </p>
+      ) : null}
 
       <section aria-labelledby="sender-title" className="card">
         <h2 id="sender-title">Sender and landing page</h2>
         <SettingsForm fields={fields} />
       </section>
+
+      <ExampleSettings hidden={data.example.hidden} />
 
       <section aria-labelledby="connections-title" className="card" data-testid="connections">
         <h2 id="connections-title">Connections</h2>

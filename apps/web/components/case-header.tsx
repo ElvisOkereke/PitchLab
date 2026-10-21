@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { CASE_NOTICES, CASE_TABS, CASE_TAB_LABEL, caseHref, type CaseNotice, type CaseTab } from '@/lib/case-query';
 import { checkLabel } from '@/lib/gate';
 import { STAGE_LABEL } from '@/lib/stages';
+import { ExampleBadge } from './example-badge';
 import { StageMoveForm } from './stage-move-form';
 
 /**
@@ -18,7 +19,13 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
       <p className="crumbs">
         <Link href="/">← Board</Link>
       </p>
-      <h1>{c.title}</h1>
+      <h1>
+        {c.title}
+        {c.isExample ? <> <ExampleBadge /></> : null}
+      </h1>
+      {c.isExample ? (
+        <p className="muted">This is a built-in example with made-up businesses. Practise freely; Settings can reset or hide it.</p>
+      ) : null}
       {notice ? (
         <p className="notice card" role="status">
           {CASE_NOTICES[notice]}
