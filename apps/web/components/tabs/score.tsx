@@ -18,9 +18,10 @@ export function ScoreTab({ view }: { view: CaseView }) {
   });
   return (
     <div className="tab tab-score">
-      <h2>
-        AI scores <HelpTip term="aiScore" />
-      </h2>
+      <div className="label-row">
+        <h2>AI scores</h2>
+        <HelpTip term="aiScore" />
+      </div>
       <p>
         AI mean: {formatScore(summary.ai)} · Your mean: {formatScore(summary.owner)}
       </p>

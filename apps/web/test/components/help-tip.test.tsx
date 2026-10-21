@@ -15,6 +15,7 @@ describe('HelpTip', () => {
     expect(summary.tagName).toBe('SUMMARY');
     expect(summary.textContent).toBe('?');
     fireEvent.click(summary);
+    expect(details.open).toBe(true);
     expect(getByText(GLOSSARY.seed.text)).toBeTruthy();
   });
 

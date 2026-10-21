@@ -23,13 +23,13 @@ How many of the surviving ideas get a full business case with sources and number
 The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it. For other seeds, an idea that fails can be killed at the gate before it gets a case.
 
 ### Stage
-Where a case is in your own process: New, Validating, Pilot, Live or Killed. You move it by hand; PitchLab never changes it for you.
+Where this case is in your own process: New, Validating, Pilot, Live or Killed. You move it by hand; PitchLab never changes it for you.
 
 ### AI scores
-The AI rates the case on each criterion from the sources it found. They are a starting opinion, separate from your own scores, which you enter on the same tab.
+The AI rates the case on each criterion from the sources it found. They are a starting opinion, separate from your own scores, which you enter below.
 
 ### CASL basis
-CASL is Canada's anti-spam law. This says how a prospect's email address was found: published by the business itself (self-published), on a third-party site (third-party), or unknown. If it says "unknown — do not email", do not email that address. PitchLab never sends email itself.
+CASL is Canada’s anti-spam law. This says how the prospect’s email address was found: published by the business itself, on a third-party site, or unknown. If it says unknown, do not email; PitchLab never sends email itself. The three values are self-published, third-party and "unknown — do not email".
 
 ### Checklist
 The targets that decide whether an idea is worth pursuing, such as 50 emails sent, 3 positive replies and 5 buyer interviews. Each one passes when your tracked numbers reach its target.
@@ -38,10 +38,10 @@ The targets that decide whether an idea is worth pursuing, such as 50 emails sen
 Moves a killed case back to New so you can work on it again. Use it when you killed an idea too early or the facts changed.
 
 ### Worker
-The background program that does the work in your queued runs. Start it with `npm run worker`. It checks in regularly, and the dashboard shows "not seen" after 60 seconds of silence.
+The background program that does the work in your queued runs. Run it with npm run worker. It checks in regularly, and it shows as not seen after 60 seconds of silence.
 
 ### Notional spend
-An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider's invoice is the real figure.
+An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.
 
 ## How a run works
 

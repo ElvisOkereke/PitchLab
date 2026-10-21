@@ -33,9 +33,8 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
   return (
     <form key={f.formKey} action={formAction} className="queue-form" data-testid="queue-run">
       <fieldset className="seed-choice">
-        <legend>
-          Seed <HelpTip term="seed" />
-        </legend>
+        <legend>Seed</legend>
+        <HelpTip term="seed" />
         {SEEDS.map((s) => (
           <div key={s.value} className="choice">
             <input
@@ -53,9 +52,8 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       </fieldset>
 
       <fieldset hidden={!shown('sector')} disabled={!shown('sector')} data-seed="sector">
-        <legend>
-          Sectors (for “Sectors”) <HelpTip term="sector" />
-        </legend>
+        <legend>Sectors (for “Sectors”)</legend>
+        <HelpTip term="sector" />
         <div className="checks">
           {sectors.map((s, i) => (
             <div key={s} className="choice">
@@ -74,9 +72,8 @@ export function QueueRunForm({ sectors, lenses }: { sectors: string[]; lenses: {
       </fieldset>
 
       <fieldset hidden={!shown('lens')} disabled={!shown('lens')} data-seed="lens">
-        <legend>
-          Lenses (for “Lenses”) <HelpTip term="lens" />
-        </legend>
+        <legend>Lenses (for “Lenses”)</legend>
+        <HelpTip term="lens" />
         <div className="checks">
           {lenses.map((l) => (
             <div key={l.id} className="choice">

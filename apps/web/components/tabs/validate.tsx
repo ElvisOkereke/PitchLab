@@ -211,9 +211,10 @@ export function ValidateTab({
       </p>
       {docs.success ? <PackDocuments docs={docs.data} /> : <p className="muted">The pack documents could not be read.</p>}
 
-      <h2>
-        Checklist <HelpTip term="checklist" />
-      </h2>
+      <div className="label-row">
+        <h2>Checklist</h2>
+        <HelpTip term="checklist" />
+      </div>
       {validate.checklist && validate.checklist.length > 0 ? (
         <ul className="plain stack" data-testid="checklist">
           {validate.checklist.map((g) => (
@@ -243,6 +244,12 @@ export function ValidateTab({
       <h2>Prospects</h2>
       {rows.length === 0 ? <p className="muted">No prospects on this page.</p> : null}
       {rows.length > 0 ? (
+        <div className="label-row">
+          <span className="muted small">About the CASL basis column</span>
+          <HelpTip term="caslBasis" />
+        </div>
+      ) : null}
+      {rows.length > 0 ? (
         <div className="scroll-x">
           <table className="stacked" data-testid="prospects">
             <thead>
@@ -251,9 +258,7 @@ export function ValidateTab({
                 <th scope="col">Website</th>
                 <th scope="col">Location</th>
                 <th scope="col">Email</th>
-                <th scope="col">
-                  CASL basis <HelpTip term="caslBasis" />
-                </th>
+                <th scope="col">CASL basis</th>
                 <th scope="col">Status</th>
                 <th scope="col">Fit</th>
               </tr>

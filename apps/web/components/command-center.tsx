@@ -59,9 +59,10 @@ export function CommandCenter({ data }: { data: CommandData }) {
       </section>
 
       <section data-testid="spend" aria-labelledby="spend-title" className="card">
-        <h2 id="spend-title">
-          Spend <HelpTip term="notionalSpend" />
-        </h2>
+        <div className="label-row">
+          <h2 id="spend-title">Spend</h2>
+          <HelpTip term="notionalSpend" />
+        </div>
         <dl className="fields">
           <div>
             <dt>Today</dt>
