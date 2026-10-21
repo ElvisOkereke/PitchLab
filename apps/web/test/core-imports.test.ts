@@ -105,6 +105,12 @@ describe('web-safe core imports', () => {
     }
   });
 
+  it('lib/db uses the web-safe pg-config at runtime (never the PGlite-capable db/client)', () => {
+    const file = join(webRoot, 'lib', 'db.ts');
+    expect(runtimeImports(readFileSync(file, 'utf8'))).toContain('@bcg/core/db/pg-config');
+    expect(scan([file]).problems).toEqual([]);
+  });
+
   it('the scanner sees through type-only imports but catches runtime ones', () => {
     expect(runtimeImports("import type { Db } from '@bcg/core/db/client';\nimport { type A } from 'x';")).toEqual([]);
     expect(runtimeImports("import { a, type B } from 'y';\nimport 'z';\nexport { c } from 'w';")).toEqual(['y', 'z', 'w']);

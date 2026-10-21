@@ -71,6 +71,33 @@ describe('parseWebEnv', () => {
     for (const hops of ['4', '-1', '1.5', 'abc']) expect(() => parseWebEnv({ ...ok, TRUST_PROXY_HOPS: hops })).toThrow(/TRUST_PROXY_HOPS/);
   });
 
+  it('accepts the optional database TLS and pool variables (blank = unset)', () => {
+    const abs = process.platform === 'win32' ? 'C:\\certs\\supabase-ca.pem' : '/certs/supabase-ca.pem';
+    expect(parseWebEnv(ok)).toMatchObject({ DATABASE_SSL: undefined, DATABASE_SSL_CA: undefined, DATABASE_POOL_MAX: undefined });
+    expect(parseWebEnv({ ...ok, DATABASE_SSL: ' ', DATABASE_SSL_CA: '', DATABASE_POOL_MAX: '' }))
+      .toMatchObject({ DATABASE_SSL: undefined, DATABASE_SSL_CA: undefined, DATABASE_POOL_MAX: undefined });
+    for (const mode of ['auto', 'verify', 'disable']) expect(parseWebEnv({ ...ok, DATABASE_SSL: mode }).DATABASE_SSL).toBe(mode);
+    expect(parseWebEnv({ ...ok, DATABASE_SSL_CA: abs }).DATABASE_SSL_CA).toBe(abs);
+    for (const n of ['1', '5', '20', ' 4 ']) expect(parseWebEnv({ ...ok, DATABASE_POOL_MAX: n }).DATABASE_POOL_MAX).toBe(n.trim());
+  });
+
+  it('rejects bad database TLS and pool values with the core messages, never echoing the value', () => {
+    for (const bad of ['require', 'no-verify', 'true', 'hunter2']) {
+      const msg = messageOf(() => parseWebEnv({ ...ok, DATABASE_SSL: bad }));
+      expect(msg, bad).toContain('DATABASE_SSL (must be one of auto, verify, disable)');
+      expect(msg).not.toContain(bad);
+    }
+    const ca = messageOf(() => parseWebEnv({ ...ok, DATABASE_SSL_CA: 'secret-dir/ca.pem' }));
+    expect(ca).toContain('DATABASE_SSL_CA (must be an absolute path)');
+    expect(ca).not.toContain('secret-dir');
+    for (const bad of ['0', '21', '2.5', 'abc', '-1']) {
+      const msg = messageOf(() => parseWebEnv({ ...ok, DATABASE_POOL_MAX: bad }));
+      // The whole message is fixed text, so no value can be in it.
+      expect(msg, bad).toBe('Error: Invalid web environment: DATABASE_POOL_MAX (must be an integer from 1 to 20)');
+    }
+    expect(messageOf(() => parseWebEnv({ ...ok, DATABASE_SSL: 'x' }))).not.toContain('pw-value-123');
+  });
+
   it('never puts any value in the error message', () => {
     const msg = messageOf(() => parseWebEnv({ DATABASE_URL: 'mysql://u:hunter2@h/d', OWNER_PASSWORD_HASH: 'hunter2', SESSION_SECRET: 'hunter2' }));
     expect(msg).not.toContain('hunter2');
