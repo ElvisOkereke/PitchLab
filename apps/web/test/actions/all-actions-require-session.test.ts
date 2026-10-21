@@ -20,9 +20,10 @@ vi.mock('next/navigation', () => import('../helpers/next-mocks').then((m) => m.n
 vi.mock('next/cache', () => import('../helpers/next-mocks').then((m) => m.nextCacheMock));
 
 type Action = (...args: unknown[]) => Promise<unknown>;
-type Spec = { seed: (db: Db) => Promise<Record<string, string>> };
+/** `args` replaces the FormData built from the seeded fields, for actions called from client code with a plain object. */
+type Spec = { seed: (db: Db) => Promise<Record<string, string>>; args?: () => unknown[] };
 
-/** Per action: seed what it needs and return form fields that make it write when authorised. */
+/** Per action: seed what it needs and return form fields (or `args`) that make it write when authorised. */
 const SPECS: Record<string, Spec> = {
   'stage.ts#moveStageAction': {
     seed: async (db) => {
@@ -83,6 +84,10 @@ const SPECS: Record<string, Spec> = {
   'settings.ts#saveSettingsAction': {
     seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
   },
+  'tour.ts#saveTourStateAction': {
+    seed: async () => ({}),
+    args: () => [{ version: 1, completed: ['setup'], current: { chapter: 'generate', step: 0 }, dismissed: false }],
+  },
 };
 
 const actionsDir = fileURLToPath(new URL('../../actions/', import.meta.url));
@@ -97,7 +102,8 @@ async function allActionExports(): Promise<[string, Action][]> {
   return out;
 }
 
-function argsFor(fn: Action, fields: Record<string, string>): unknown[] {
+function argsFor(fn: Action, fields: Record<string, string>, spec?: Spec): unknown[] {
+  if (spec?.args) return spec.args();
   const fd = new FormData();
   for (const [k, v] of Object.entries(fields)) fd.set(k, v);
   // (prev, fd) actions for useActionState, (fd) actions for plain forms, () for buttons without fields.
@@ -127,7 +133,7 @@ describe('every Server Action requires a session and a same-origin request', () 
     expect(names).toEqual(expect.arrayContaining([
       'stage.ts#moveStageAction', 'stage.ts#overturnKillAction', 'stage.ts#rerunGateKillAction',
       'scores.ts#saveOwnerScoresAction', 'outreach.ts#markOutreachAction',
-      'runs.ts#queueRunAction', 'runs.ts#requeueRunAction', 'settings.ts#saveSettingsAction',
+      'runs.ts#queueRunAction', 'runs.ts#requeueRunAction', 'settings.ts#saveSettingsAction', 'tour.ts#saveTourStateAction',
     ]));
     expect(names.filter((n) => !SPECS[n])).toEqual([]);
   });
@@ -140,17 +146,17 @@ describe('every Server Action requires a session and a same-origin request', () 
 
       for (const cookies of forgedCookies) {
         resetRequest({ cookies });
-        await expect(fn(...argsFor(fn, fields)), `${name} without a valid session`).rejects.toThrow(LOGIN_REDIRECT);
+        await expect(fn(...argsFor(fn, fields, SPECS[name])), `${name} without a valid session`).rejects.toThrow(LOGIN_REDIRECT);
       }
       for (const origin of ['https://evil.com', null, 'null']) {
         resetRequest({ origin, cookies: goodCookie });
-        await expect(fn(...argsFor(fn, fields)), `${name} origin=${origin}`).rejects.toThrow('Forbidden');
+        await expect(fn(...argsFor(fn, fields, SPECS[name])), `${name} origin=${origin}`).rejects.toThrow('Forbidden');
       }
       expect(await snapshotDb(state.db), `${name} wrote while unauthorised`).toEqual(before);
 
       // Control: the same call, authorised, does write (so the refusals above are meaningful for this action).
       resetRequest({ cookies: goodCookie });
-      await fn(...argsFor(fn, fields)).catch((e: unknown) => {
+      await fn(...argsFor(fn, fields, SPECS[name])).catch((e: unknown) => {
         if (!(e instanceof Error && e.message.startsWith('NEXT_REDIRECT'))) throw e;
       });
       expect(await snapshotDb(state.db), `${name} did not write when authorised`).not.toEqual(before);
