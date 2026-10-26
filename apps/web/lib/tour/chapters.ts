@@ -83,6 +83,14 @@ export const CHAPTERS: Record<TourChapterId, { title: string; steps: TourStep[] 
     title: 'Generate cases',
     steps: [
       {
+        id: 'generate-library',
+        route: '/library',
+        target: 'library-missions',
+        kind: 'info',
+        title: 'The research library',
+        body: 'The library is where research builds up between runs. You can start a research mission on any topic here, and the most it can cost shows before you start. Runs then draw on what the library holds.',
+      },
+      {
         id: 'generate-seed',
         route: '/runs',
         target: 'queue-seed',

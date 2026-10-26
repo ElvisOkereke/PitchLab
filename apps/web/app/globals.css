@@ -718,11 +718,13 @@ blockquote {
   gap: var(--gap);
 }
 
+.library-page h1,
 .runs-page h1,
 .settings-page h1 {
   margin-bottom: 0;
 }
 
+.library-page .card h2,
 .runs-page .card h2,
 .settings-page .card h2 {
   margin-top: 0;
@@ -1097,4 +1099,65 @@ blockquote {
 
 .tour-popover .driver-popover-arrow-side-bottom {
   border-bottom-color: var(--card);
+}
+
+/* ---- Library ------------------------------------------------------------------------------ */
+
+.library-page {
+  display: grid;
+  gap: var(--gap);
+}
+
+.library-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 8px 12px;
+  align-items: end;
+}
+
+.library-filters input,
+.library-filters select {
+  width: 100%;
+}
+
+.library-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-list {
+  display: grid;
+  gap: 8px;
+}
+
+.library-row p {
+  margin: 4px 0;
+}
+
+.library-detail blockquote {
+  margin: 8px 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--border);
+}
+
+.facts {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.facts dt {
+  font-weight: 600;
+}
+
+.facts dd {
+  margin: 0 0 4px;
+}
+
+.reject-form {
+  display: grid;
+  gap: 6px;
+  max-width: 28rem;
 }

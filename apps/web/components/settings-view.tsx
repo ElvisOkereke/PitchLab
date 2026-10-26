@@ -1,11 +1,14 @@
 import { DEFAULT_MODELS, MODEL_STAGES } from '@bcg/core/config/models';
 import { CRITERION_LABEL, OWNER_CRITERIA } from '@bcg/core/dashboard/criteria';
 import type { MarketSummary } from '@bcg/core/dashboard/markets';
+import type { ResearchSettings } from '@bcg/core/dashboard/missions';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
 import { formatDateTime } from '@/lib/time';
 import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
 import { ExampleSettings } from './example-settings';
+import { HelpTip } from './help-tip';
+import { ResearchSettingsForm } from './research-settings-form';
 import { SettingsForm } from './settings-form';
 
 export type SettingsData = {
@@ -15,6 +18,7 @@ export type SettingsData = {
   lenses: { id: string; name: string }[];
   market: MarketSummary | null;
   example: { hidden: boolean };
+  research: ResearchSettings;
 };
 
 const PROVIDERS: [keyof WorkerStatus['providers'], string][] = [
@@ -22,6 +26,7 @@ const PROVIDERS: [keyof WorkerStatus['providers'], string][] = [
   ['github', 'GitHub'],
   ['stackexchange', 'Stack Exchange'],
   ['places', 'Google Places'],
+  ['producthunt', 'Product Hunt'],
 ];
 
 function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string }) {
@@ -48,6 +53,15 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
       <section aria-labelledby="sender-title" className="card" data-tour="settings-sender">
         <h2 id="sender-title">Sender and landing page</h2>
         <SettingsForm fields={fields} />
+      </section>
+
+      <section aria-labelledby="research-title" className="card">
+        <h2 id="research-title">Research</h2>
+        <p className="muted small">
+          Background research starts about one small research mission at a time while the worker is running, until the daily cap is spent
+          (the day ends at midnight in Toronto). It is off until you turn it on. Missions you start yourself on the Library page are not limited by it. <HelpTip term="library" />
+        </p>
+        <ResearchSettingsForm background={data.research.background} dailyCapUsd={data.research.dailyCapUsd} />
       </section>
 
       <ExampleSettings hidden={data.example.hidden} />

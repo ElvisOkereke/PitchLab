@@ -12,7 +12,9 @@ export type GlossaryTerm =
   | 'overturnKill'
   | 'worker'
   | 'notionalSpend'
-  | 'benchmark';
+  | 'benchmark'
+  | 'library'
+  | 'researchMission';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -71,5 +73,13 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   benchmark: {
     label: 'Benchmark',
     text: 'A fixed set of 4 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too.',
+  },
+  library: {
+    label: 'Library',
+    text: 'The research PitchLab keeps between runs: problems people describe, what products charge and how startups fared. Each entry links to its sources, and runs draw on entries whose quotes were checked against the source text.',
+  },
+  researchMission: {
+    label: 'Research mission',
+    text: 'A research job on a topic you choose. The worker searches public sources, adds what it finds to the library and shows the cost first. You set the budget, and a mission stops starting new steps once it is spent.',
   },
 };

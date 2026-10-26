@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsData } from '@/components/settings-view';
 
 vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/library', () => ({ saveResearchSettingsAction: vi.fn(async () => ({})) }));
 vi.mock('@/actions/example', () => ({ hideExampleAction: vi.fn(async () => {}), resetExampleAction: vi.fn(async () => {}) }));
 
 const { SettingsView } = await import('@/components/settings-view');
@@ -19,11 +20,32 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
     worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false, producthunt: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
     database: true,
     example: { hidden: false },
+    research: { background: false, dailyCapUsd: 5 },
     lenses: [{ id: 'aggregator', name: 'Sell to the aggregator' }, { id: 'review-gap', name: 'Incumbent review gap' }],
     market: { id: 'ca-us', name: 'Canada + US', sectors: ['HVAC'] },
     ...o,
   };
 }
+
+describe('SettingsView research card', () => {
+  it('shows the Background research checkbox and the daily cap as saved, with a save button', () => {
+    const { getByTestId } = render(<SettingsView data={data({ research: { background: true, dailyCapUsd: 7.5 } })} />);
+    const f = getByTestId('research-settings');
+    const box = f.querySelector<HTMLInputElement>('input[name="background"]')!;
+    const cap = f.querySelector<HTMLInputElement>('input[name="dailyCapUsd"]')!;
+    expect(box.type).toBe('checkbox');
+    expect(box.checked).toBe(true);
+    expect(cap.value).toBe('7.5');
+    expect(f.querySelector(`label[for="${box.id}"]`)!.textContent).toBe('Background research');
+    expect(f.querySelector(`label[for="${cap.id}"]`)).toBeTruthy();
+    expect(within(f).getByRole('button', { name: 'Save research settings' })).toBeTruthy();
+  });
+
+  it('is unchecked by default', () => {
+    const { getByTestId } = render(<SettingsView data={data()} />);
+    expect(getByTestId('research-settings').querySelector<HTMLInputElement>('input[name="background"]')!.checked).toBe(false);
+  });
+});
 
 describe('SettingsView', () => {
   it('shows the editable sender and landing settings with labels and current values', () => {
@@ -43,7 +65,8 @@ describe('SettingsView', () => {
     const { getByTestId } = render(<SettingsView data={data()} />);
     const c = getByTestId('connections');
     const items = Object.fromEntries([...c.querySelectorAll('li')].map((li) => [li.querySelector('.name')!.textContent, li.querySelector('.badge')!.textContent]));
-    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', Database: 'connected' });
+    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', Database: 'connected' });
+    expect(c.textContent).not.toMatch(/reddit/i);
     expect(c.textContent).not.toMatch(/postgres|key|secret|:\/\//i);
   });
 

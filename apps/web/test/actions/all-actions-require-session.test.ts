@@ -10,7 +10,8 @@ import { benchmarkPasses } from '@bcg/core/db/schema';
 import { ensureExample, hideExample } from '@bcg/core/example/example';
 import { setSetting } from '@bcg/core/validation/settings';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { createTestDb, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
+import { rejectItem } from '@bcg/core/library/store';
+import { createTestDb, seedLibraryItem, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
 import { TEST_SECRET, resetRequest, useTestEnv } from '../helpers/next-mocks';
 
 const state = vi.hoisted(() => ({ db: undefined as unknown as Db }));
@@ -96,6 +97,22 @@ const SPECS: Record<string, Spec> = {
   'settings.ts#saveSettingsAction': {
     seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
   },
+  'library.ts#queueMissionAction': {
+    seed: async () => ({ topic: 'late invoices', kinds: 'problem' }),
+  },
+  'library.ts#rejectItemAction': {
+    seed: async (db) => ({ id: await seedLibraryItem(db), returnTo: '/library' }),
+  },
+  'library.ts#restoreItemAction': {
+    seed: async (db) => {
+      const id = await seedLibraryItem(db);
+      await rejectItem(db, id);
+      return { id, returnTo: '/library' };
+    },
+  },
+  'library.ts#saveResearchSettingsAction': {
+    seed: async () => ({ background: 'on', dailyCapUsd: '4' }),
+  },
   'tour.ts#saveTourStateAction': {
     seed: async () => ({}),
     args: () => [{ version: 1, completed: ['setup'], current: { chapter: 'generate', step: 0 }, dismissed: false }],
@@ -173,5 +190,5 @@ describe('every Server Action requires a session and a same-origin request', () 
       });
       expect(await snapshotDb(state.db), `${name} did not write when authorised`).not.toEqual(before);
     }
-  });
+  }, 120_000);
 });

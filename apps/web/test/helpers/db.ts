@@ -79,3 +79,19 @@ export async function snapshotDb(db: Db): Promise<Record<string, string[]>> {
   }
   return out;
 }
+
+/** A library entry with one source (a distinct embedding each, so seeded entries never merge). Returns its id. */
+export async function seedLibraryItem(
+  db: Db,
+  o: { title?: string; kind?: 'problem' | 'pricing' | 'startup'; voice?: 'operator' | 'neutral' | 'vendor'; countries?: string[]; quote?: string; verified?: boolean; url?: string; sourceType?: string } = {},
+): Promise<string> {
+  n += 1;
+  const { upsertKnowledgeItem } = await import('@bcg/core/library/store');
+  const embedding = Array.from({ length: 1536 }, (_, i) => (i === n ? 1 : 0));
+  const r = await upsertKnowledgeItem(db, {
+    kind: o.kind ?? 'problem', title: o.title ?? `Library item ${n}`, summary: `Summary ${n}`, quote: o.quote ?? `quote ${n}`, audience: 'business',
+    countries: o.countries ?? ['US'], industries: ['retail'], voice: o.voice ?? 'neutral', facts: { persona: 'owner', frequencyOrCost: 'weekly' },
+    source: { url: o.url ?? `https://src${n}.example/post`, domain: `src${n}.example`, sourceType: o.sourceType ?? 'hn', quote: o.quote ?? `quote ${n}`, quoteVerified: o.verified ?? true },
+  }, embedding, {});
+  return r.itemId;
+}

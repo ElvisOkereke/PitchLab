@@ -1,6 +1,7 @@
 import { listActiveLenses } from '@bcg/core/dashboard/lenses';
 import { getMarket } from '@bcg/core/dashboard/markets';
 import { QUEUE_MARKET_ID } from '@bcg/core/dashboard/runs';
+import { getResearchSettings } from '@bcg/core/dashboard/missions';
 import { databaseReachable, readEditableSettings, readWorkerStatus } from '@bcg/core/dashboard/settings';
 import { exampleState } from '@bcg/core/example/example';
 import { SettingsView } from '@/components/settings-view';
@@ -13,13 +14,14 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   await requireOwner();
   const notice = parseSettingsNotice(await searchParams);
   const db = getDb();
-  const [values, worker, database, lenses, market, example] = await Promise.all([
+  const [values, worker, database, lenses, market, example, research] = await Promise.all([
     readEditableSettings(db),
     readWorkerStatus(db),
     databaseReachable(db),
     listActiveLenses(db),
     getMarket(db, QUEUE_MARKET_ID),
     exampleState(db),
+    getResearchSettings(db),
   ]);
-  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden } }} notice={notice} />;
+  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden }, research }} notice={notice} />;
 }

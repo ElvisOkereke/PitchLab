@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 // `data-tour` marks the tabs the guided tour points at.
 const TABS: readonly { href: string; label: string; 'data-tour'?: string }[] = [
   { href: '/', label: 'Board' },
+  { href: '/library', label: 'Library' },
   { href: '/leaderboard', label: 'Leaderboard' },
   { href: '/progress', label: 'Progress' },
   { href: '/command', label: 'Command center', 'data-tour': 'nav-command' },
