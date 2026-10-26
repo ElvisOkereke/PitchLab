@@ -30,7 +30,7 @@ async function getToken(id: string, secret: string, opts: RedditOpts): Promise<s
     {
       method: 'POST',
       headers: {
-        Authorization: `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`,
+        Authorization: `Basic ${btoa(`${id}:${secret}`)}`,
         'Content-Type': 'application/x-www-form-urlencoded',
         'User-Agent': UA,
       },
@@ -60,12 +60,17 @@ export async function redditSearch(q: string, opts: RedditOpts = {}): Promise<Ra
   const limit = opts.limit ?? 10;
   const tk = await getToken(opts.clientId, opts.clientSecret, opts);
   const headers = { Authorization: `Bearer ${tk}`, 'User-Agent': UA };
-  await throttle('oauth.reddit.com', MIN_INTERVAL_MS, opts);
-  const search = await request(
-    'reddit',
+  const call = async (url: string) => {
+    await throttle('oauth.reddit.com', MIN_INTERVAL_MS, opts);
+    try {
+      return await request('reddit', url, { headers }, opts);
+    } catch (e) {
+      if (e instanceof SourceError && e.code === 'auth') token = null; // expired or revoked: re-authenticate next time
+      throw e;
+    }
+  };
+  const search = await call(
     `https://oauth.reddit.com/search?q=${encodeURIComponent(q)}&sort=relevance&limit=${limit}&type=link&raw_json=1`,
-    { headers },
-    opts,
   );
   const out: RawItem[] = [];
   const posts: string[] = [];
@@ -82,12 +87,8 @@ export async function redditSearch(q: string, opts: RedditOpts = {}): Promise<Ra
     if (d.id) posts.push(d.id);
   }
   for (const id of posts.slice(0, COMMENT_POSTS)) {
-    await throttle('oauth.reddit.com', MIN_INTERVAL_MS, opts);
-    const j = await request(
-      'reddit',
+    const j = await call(
       `https://oauth.reddit.com/comments/${encodeURIComponent(id)}?limit=${COMMENTS_PER_POST}&depth=1&sort=top&raw_json=1`,
-      { headers },
-      opts,
     );
     const parent = out.find((o) => o.url.includes(`/comments/${id}/`));
     for (const c of children(Array.isArray(j) ? j[1] : null).slice(0, COMMENTS_PER_POST)) {

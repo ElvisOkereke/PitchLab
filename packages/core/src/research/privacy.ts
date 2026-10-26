@@ -1,15 +1,23 @@
-const PROFILE_URL =
-  /https?:\/\/(?:www\.|old\.|np\.|mobile\.)?(?:reddit\.com\/(?:u|user)\/|twitter\.com\/|x\.com\/|(?:[a-z]{2,3}\.)?linkedin\.com\/(?:in|pub|company)\/)[^\s)\]>"]*/gi;
+const PROFILE_URL = new RegExp(
+  '(?<![\\w.@/-])(?:https?:\\/\\/)?(?:www\\.|old\\.|np\\.|m\\.|mobile\\.)?' +
+    '(?:reddit\\.com\\/(?:u|user)\\/|twitter\\.com\\/|x\\.com\\/|facebook\\.com\\/|instagram\\.com\\/|github\\.com\\/|' +
+    'tiktok\\.com\\/@?|medium\\.com\\/@?|youtube\\.com\\/@?|(?:[a-z]{2,3}\\.)?linkedin\\.com\\/(?:in|pub|company)\\/)' +
+    '[A-Za-z0-9_.-]+[^\\s)\\]>"]*',
+  'gi',
+);
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
+const REDDIT_USER = /(?<![\w/.-])\/?u\/[A-Za-z0-9_-]{3,20}(?![\w-])/g;
+const AT_HANDLE = /(?<![\w@./])@[A-Za-z_][A-Za-z0-9_]{1,29}(?!\w)/g;
+const POSTED_BY = /\b(posted by)\s+(?=[A-Za-z0-9_-]*[0-9_])[A-Za-z0-9_-]{3,20}(?![\w-])/gi;
 
 /** Remove usernames, handles, emails and profile links from public text before it is stored. */
 export function scrubPersonal(s: string): string {
   return s
     .replace(PROFILE_URL, '[profile removed]')
     .replace(EMAIL, '[email removed]')
-    .replace(/(^|[^\w])\/?u\/[A-Za-z0-9_-]+/g, '$1[user]')
-    .replace(/(^|[^\w@])@[A-Za-z0-9_]{2,}/g, '$1[user]')
-    .replace(/\bposted by\s+\S+/gi, 'posted by [user]')
+    .replace(REDDIT_USER, '[user]')
+    .replace(AT_HANDLE, '[user]')
+    .replace(POSTED_BY, '$1 [user]')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
 }

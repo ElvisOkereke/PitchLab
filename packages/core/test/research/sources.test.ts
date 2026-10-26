@@ -3,6 +3,7 @@ import { resetThrottle, SourceError } from '../../src/research/http';
 import { redditSearch, resetRedditState } from '../../src/research/sources/reddit';
 import { productHuntSearch, productHuntToDraft } from '../../src/research/sources/producthunt';
 import { appReviews } from '../../src/research/sources/appreviews';
+import { parseFacts } from '../../src/library/kinds';
 import { resetYcCache, ycCompanies, ycToDraft, type YcCompany } from '../../src/research/sources/yc';
 
 const sleep = async () => {};
@@ -129,6 +130,20 @@ describe('productHuntSearch', () => {
     await expect(productHuntSearch('x', { fetch: router(() => ({ body: {}, status: 429 })).impl, sleep, token: 'T' })).rejects.toMatchObject({ code: 'rate_limited' });
     await expect(productHuntSearch('x', { fetch: router(() => ({ body: {}, status: 401 })).impl, sleep, token: 'bad' })).rejects.toMatchObject({ code: 'auth' });
   });
+  it('slugifies the topic, falls back to a topic search, graphql errors are bad_response', async () => {
+    const bodies: string[] = [];
+    const { impl } = router((_u, init) => {
+      const b = String(init?.body);
+      bodies.push(b);
+      if (b.includes('topics(')) return { body: { data: { topics: { edges: [{ node: { slug: 'saas-tools' } }] } } } };
+      if (b.includes('"topic":"saas-tools"')) return { body };
+      return { body: { data: { posts: { edges: [] } } } };
+    });
+    const r = await productHuntSearch('Invoicing Tools!', { fetch: impl, sleep, token: 'T' });
+    expect(r).toHaveLength(1);
+    expect(bodies[0]).toContain('"topic":"invoicing-tools"');
+    await expect(productHuntSearch('x', { fetch: router(() => ({ body: { errors: [{ message: 'bad' }] } })).impl, sleep, token: 'T' })).rejects.toMatchObject({ code: 'bad_response' });
+  });
   it('maps to a startup draft with active outcome', () => {
     const d = productHuntToDraft({ name: 'Billy', tagline: 'Invoices', url: 'https://billy.test/x', launchedAt: null, votes: 3 });
     expect(d.kind).toBe('startup');
@@ -154,6 +169,10 @@ describe('appReviews', () => {
     expect(JSON.stringify(r)).not.toMatch(/someone|author/);
     expect(calls[0]!.url).toContain('/us/rss/customerreviews/id=12345');
   });
+  it('rejects non-English storefronts and surfaces HTTP failures', async () => {
+    await expect(appReviews('1', { fetch: router(() => ({ body: feed })).impl, sleep, country: 'de' })).rejects.toMatchObject({ code: 'bad_response' });
+    await expect(appReviews('1', { fetch: router(() => ({ body: {}, status: 429 })).impl, sleep })).rejects.toMatchObject({ code: 'rate_limited' });
+  });
   it('resolves a text query to an app id first', async () => {
     const { impl, calls } = router((u) => (u.includes('/search') ? { body: { results: [{ trackId: 999 }] } } : { body: feed }));
     const r = await appReviews('invoice app', { fetch: impl, sleep, country: 'ca' });
@@ -178,6 +197,57 @@ describe('ycCompanies', () => {
     expect((await ycCompanies({ industries: ['consumer'] }, { fetch: impl })).map((c) => c.name)).toEqual(['Beta']);
     expect(await ycCompanies({ limit: 1 }, { fetch: impl })).toHaveLength(1);
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe('ycCompanies failures', () => {
+  it('surfaces 429 as SourceError and does not cache it', async () => {
+    await expect(ycCompanies({}, { fetch: router(() => ({ body: {}, status: 429 })).impl })).rejects.toMatchObject({ code: 'rate_limited' });
+    const ok = router(() => ({ body: yc }));
+    expect(await ycCompanies({}, { fetch: ok.impl })).toHaveLength(2);
+  });
+});
+
+describe('secrets and mapper facts', () => {
+  it('SourceError messages never contain the client secret or token', async () => {
+    for (const status of [401, 429, 500]) {
+      const { impl } = router((url) => (url.includes('access_token') ? { body: {}, status } : { body: {}, status }));
+      const err = await redditSearch('a', { fetch: impl, sleep, clientId: 'cid-xyz', clientSecret: 'SECRET-123' }).catch((e) => e);
+      expect(String(err.message)).not.toMatch(/SECRET-123|cid-xyz|Basic /);
+    }
+    const err = await productHuntSearch('a', { fetch: router(() => ({ body: {}, status: 401 })).impl, sleep, token: 'TOKEN-ABC' }).catch((e) => e);
+    expect(String(err.message)).not.toContain('TOKEN-ABC');
+  });
+  it('clears the cached reddit token on auth failure', async () => {
+    let searches = 0;
+    const { impl, calls } = router((url) => {
+      if (url.includes('access_token')) return { body: { access_token: 't', expires_in: 3600 } };
+      searches++;
+      return searches === 1 ? { body: {}, status: 401 } : { body: { data: { children: [] } } };
+    });
+    const o = { fetch: impl, sleep, clientId: 'id', clientSecret: 's' };
+    await expect(redditSearch('a', o)).rejects.toMatchObject({ code: 'auth' });
+    await redditSearch('a', o);
+    expect(calls.filter((c) => c.url.includes('access_token'))).toHaveLength(2);
+  });
+  it('serialises concurrent calls per host and survives a throwing onCall', async () => {
+    const starts: number[] = [];
+    let t = 0;
+    const { impl } = router(() => ({ body: { data: { posts: { edges: [] } } } }));
+    const sl = async (ms: number) => void (t += ms);
+    const onCall = () => {
+      throw new Error('logger down');
+    };
+    await Promise.all([
+      productHuntSearch('a', { fetch: impl, sleep: sl, now: () => { starts.push(t); return t; }, token: 'T', onCall }),
+      productHuntSearch('b', { fetch: impl, sleep: sl, now: () => t, token: 'T', onCall }),
+    ]);
+    expect(t).toBeGreaterThanOrEqual(1000);
+  });
+  it('mapper output passes parseFacts', () => {
+    const base: YcCompany = { name: 'A', oneLiner: 'o', url: 'https://a.test', status: 'Active', batch: 'W20', industries: [], regions: [] };
+    for (const status of ['Active', 'Inactive', 'Acquired', 'Public'] as const) expect(() => parseFacts('startup', ycToDraft({ ...base, status }).facts)).not.toThrow();
+    expect(() => parseFacts('startup', productHuntToDraft({ name: 'B', tagline: 't', url: 'https://b.test', launchedAt: null, votes: 1 }).facts)).not.toThrow();
   });
 });
 

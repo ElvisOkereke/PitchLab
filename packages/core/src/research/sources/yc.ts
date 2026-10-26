@@ -1,4 +1,4 @@
-import { getJson } from '../../tools/sources/types';
+import { request } from '../http';
 import type { KnowledgeDraft } from '../../library/kinds';
 
 export const sourceType = 'yc';
@@ -24,7 +24,7 @@ export function resetYcCache(): void {
 const STATUSES = ['Active', 'Inactive', 'Acquired', 'Public'];
 
 async function load(f?: typeof fetch): Promise<YcCompany[]> {
-  const json = await getJson('yc', URL_ALL, f, {}, { maxBytes: 30_000_000, timeoutMs: 30_000 });
+  const json = await request('yc', URL_ALL, { maxBytes: 30_000_000, timeoutMs: 30_000 }, { fetch: f });
   if (!Array.isArray(json)) return [];
   const out: YcCompany[] = [];
   for (const c of json as Record<string, unknown>[]) {
@@ -50,10 +50,15 @@ export async function ycCompanies(
   if (!cache) {
     const p = load(opts.fetch);
     cache = p;
-    // Do not cache a failed or empty load.
-    void p.then((r) => {
-      if (r.length === 0 && cache === p) cache = null;
-    });
+    // Do not cache a failed or empty load; the error still reaches this caller.
+    p.then(
+      (r) => {
+        if (r.length === 0 && cache === p) cache = null;
+      },
+      () => {
+        if (cache === p) cache = null;
+      },
+    );
   }
   const all = await cache;
   const q = filter.query?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];

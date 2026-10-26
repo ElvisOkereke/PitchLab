@@ -23,20 +23,48 @@ function pricingHint(tagline: string): string | undefined {
   return m ? m[0] : undefined;
 }
 
+const TOPIC_QUERY = `query($q: String) { topics(query: $q, first: 1) { edges { node { slug } } } }`;
+
+type Gql = {
+  data?: { posts?: { edges?: { node?: Record<string, unknown> }[] }; topics?: { edges?: { node?: { slug?: string } }[] } };
+  errors?: unknown[];
+};
+
+export const slugify = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+/** `topic` is a topic slug or a keyword; a keyword that is not a slug is resolved through the topics search. */
 export async function productHuntSearch(topic: string, opts: ProductHuntOpts = {}): Promise<ProductHuntItem[]> {
   if (!opts.token) return [];
-  await throttle('api.producthunt.com', MIN_INTERVAL_MS, opts);
-  const json = (await request(
-    'producthunt',
-    'https://api.producthunt.com/v2/api/graphql',
-    {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${opts.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: QUERY, variables: { topic, first: opts.limit ?? 10 } }),
-    },
-    opts,
-  )) as { data?: { posts?: { edges?: { node?: Record<string, unknown> }[] } }; errors?: unknown[] };
-  if (json?.errors?.length && !json.data) throw new SourceError('auth', 'producthunt');
+  const gql = async (query: string, variables: Record<string, unknown>): Promise<Gql> => {
+    await throttle('api.producthunt.com', MIN_INTERVAL_MS, opts);
+    const json = (await request(
+      'producthunt',
+      'https://api.producthunt.com/v2/api/graphql',
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${opts.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables }),
+      },
+      opts,
+    )) as Gql;
+    if (json?.errors?.length && !json.data) throw new SourceError('bad_response', 'producthunt');
+    return json;
+  };
+  const first = opts.limit ?? 10;
+  let slug = slugify(topic);
+  let json = await gql(QUERY, { topic: slug, first });
+  if (!json?.data?.posts?.edges?.length) {
+    const found = (await gql(TOPIC_QUERY, { q: topic }))?.data?.topics?.edges?.[0]?.node?.slug;
+    if (found && found !== slug) {
+      slug = found;
+      json = await gql(QUERY, { topic: slug, first });
+    }
+  }
   const out: ProductHuntItem[] = [];
   for (const e of json?.data?.posts?.edges ?? []) {
     const n = e.node;
