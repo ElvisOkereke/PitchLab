@@ -24,6 +24,8 @@ packages/core/          @bcg/core: the library, the gen CLI and the worker
   src/case/             case schema, review status, Markdown export
   src/dashboard/        web-safe queries the dashboard imports (board, runs, validation jobs, tour state)
   src/db/               Drizzle schema, client (PGlite or pg), migrations, TLS config, seed
+  src/library/          the research library: kinds and facts schemas, store (upsert, search, coverage, retrieval for runs)
+  src/research/         research missions: mission engine, topics, privacy scrub, robots.txt, HTTP helper, sources/
   src/bench/            idea-quality benchmark: definitions, scorecard metrics, passes, Markdown report
   src/example/          the built-in example case (fixture, ensure, hide, reset)
   src/config/           env schema, model per stage, price table
@@ -122,9 +124,9 @@ positive threshold.
 
 ## Worker and job queue
 
-The worker (`packages/core/src/worker.ts`, started by `npm run worker`) is a loop over two queues in the database:
-`runs` with status `queued` (from the Runs screen or "Re-run as owner idea") and `validation_jobs` with status
-`queued` (from the Validate tab).
+The worker (`packages/core/src/worker.ts`, started by `npm run worker`) is a loop over three queues in the database:
+`runs` with status `queued` (from the Runs screen or "Re-run as owner idea"), `validation_jobs` with status
+`queued` (from the Validate tab) and `research_missions` with status `queued` (from the Library page or `gen research`).
 
 ```mermaid
 flowchart TD
@@ -138,7 +140,7 @@ flowchart TD
     F --> A
 ```
 
-- **Runs first, then validation jobs.** A validation job is claimed only when no run is queued.
+- **Order: runs, then validation jobs, then research missions.** A validation job is claimed only when no run is queued, and a mission only when neither is. When all three are empty the worker tops up the background queue (`maybeQueueBackgroundMission`), which does nothing unless Background research is on.
 - **Claiming** is one `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` statement, so two workers never take
   the same item.
 - **Heartbeat:** the worker writes its status (which keys are set, as booleans, and the resolved model per stage)
@@ -153,6 +155,21 @@ flowchart TD
   `running` until the 2-hour stale rule allows a new one. Leases are planned with hosting.
 - `gen run` and `gen validate` run in the foreground without the queue. `gen run` creates its run as `running`, so a
   worker never claims it.
+
+## Research library
+
+`packages/core/src/library/` stores entries (problem, startup and pricing in this release; trend, rule change and market are reserved) and `packages/core/src/research/` fills it.
+
+- **Mission engine** (`research/mission.ts`, worker side): plan the queries, collect, extract entries with the model, verify quotes, embed, store, all under a soft budget. The budget is checked between steps and between source batches, and one batch in flight may overshoot. A source that fails (a 429, a bad token, a timeout) becomes a mission warning, the other sources continue, and the mission still ends `done` with warnings.
+- **Sources:** Hacker News, GitHub, Stack Exchange, app store reviews (English-language storefronts), Product Hunt (needs `PRODUCTHUNT_TOKEN`; non-commercial use unless Product Hunt agrees otherwise), the Y Combinator company list (fetched once per process) and web pages found by model web search. Reddit is not used: its terms need a commercial-use contract and its public API is closing.
+- **Source rules:** robots.txt is checked before any page fetch (disallowed means skip), each source has its own rate limit, only English-language sources are used, and domains in `tools/banned-sources.ts` are refused. Pages go through the SSRF-guarded `fetchPage`.
+- **Public data:** quotes are 500 characters or fewer. No usernames, profile URLs or author handles are stored, and `u/…`, `@handle` and "posted by" patterns are stripped from quotes and summaries. Invisible characters are stripped before storage.
+- **Untrusted text:** fetched text reaches prompts only through `wrapUntrusted` and `capField` (`llm/untrusted.ts`).
+- **Verified quotes:** a quote is verified only when, after `normalize()` from `pipeline/verify.ts`, it appears verbatim in the text the collector fetched. A quote the model wrote alone is never verified. Only verified `problem` and `pricing` entries become signals for a run.
+- **Duplicates:** the same content hash adds a source to the existing entry. A near-duplicate (cosine similarity 0.90 or more, same kind) is merged, and the voice only moves toward more independent. A rejected entry stays rejected.
+- **Background research:** `research.background` (default off) and `research.dailyCapUsd` (default 5, counted on the America/Toronto day) live in `settings`. At most one background mission is queued or running at a time, each has a $1 budget, and none starts once the day's cap would be passed. Topics rotate through a list, with every 4th pick aimed at a country or industry the library lacks.
+- **Limits:** the Library page and `searchLibrary` return at most 50 per page, retrieval for runs at most 30; at most 3 missions can be queued.
+- **Web:** `apps/web/app/(app)/library/page.tsx` reads through `dashboard/missions.ts` and `library/store.ts` (web-safe). The mission form is a small client component that imports only the action; core's mission schema, which pulls in drizzle, stays out of the browser.
 
 ## Benchmark
 
@@ -186,6 +203,7 @@ Drizzle schema in `packages/core/src/db/schema.ts`; migrations in `packages/core
 | Owner decisions | `stage_events` (every stage move: move, kill or overturn, with note) |
 | Validation | `validation_packs`, `validation_jobs` (queue: options, status, steps, cost), `landing_pages`, `landing_events` (visits and submits, for the future hosted form) |
 | Outreach | `prospects` (website, domain, email and where it was found, CASL basis, status), `outreach_drafts` (cold, followup1, followup2), `outreach_events` (sent, replied, positive, meeting, not interested, unsubscribe, note), `suppressions` (unsubscribed addresses, lowercased) |
+| Research library | `knowledge_items` (kind, title, summary, quote and whether it was verified, audience, countries, industries, voice, facts JSON, embedding, content hash, status `active` or `rejected`), `knowledge_sources` (one row per source of an entry: URL, domain, source type, dates, quote), `research_missions` (topic, kinds, countries, budget, origin `owner` or `background`, status, entries added and merged, cost, warnings, error) |
 | Benchmark | `benchmark_passes` (version, label, kind, status, run ids, frozen scorecard JSON, source pass); `runs.benchmark_pass_id` links a run to its pass |
 | Cost logging | `llm_calls` (every model attempt: stage, model, tokens, searches, notional cost, latency, prompt version, error), `data_calls` (calls to data sources such as the free forums and Google Places, with cost) |
 

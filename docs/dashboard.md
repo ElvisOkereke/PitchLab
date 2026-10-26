@@ -190,6 +190,7 @@ Web app variables are validated at startup by `apps/web/lib/env.ts`; the error n
 | `GITHUB_TOKEN` | No | unset | Worker/CLI only. GitHub API verification and signals. |
 | `STACKEXCHANGE_KEY` | No | unset | Worker/CLI only. |
 | `GOOGLE_PLACES_API_KEY` | No | unset | Worker/CLI only. Enables the Places prospect source. |
+| `PRODUCTHUNT_TOKEN` | No | unset | Worker/CLI only. A free Product Hunt developer token for research missions (non-commercial use; email hello@producthunt.com for commercial permission). Without it Product Hunt is skipped. |
 
 Empty values in `.env` count as unset. There are no `NEXT_PUBLIC_*` variables: no setting reaches the browser bundle.
 
@@ -209,8 +210,12 @@ Empty values in `.env` count as unset. There are no `NEXT_PUBLIC_*` variables: n
     the pack documents and Write the emails again; it reads "Run validation again" once a pack exists; if the worker stopped, start it and press that button again), the job's
     status, the validation pack, prospects, drafted emails, and a form to log outreach outcomes and interview notes.
   - **Score**: your scores for the 8 criteria.
+- **Library** (`/library`): search and filter the stored research (kind, audience, country, voice, source, age,
+  status), open an entry to see its quote, sources and facts and to reject or restore it, check coverage against the
+  health targets, and start research missions. The mission list shows status, entries added and merged, cost,
+  warnings and errors, and refreshes every 10 s while a mission is queued or running.
 - **Runs**: queue a run (open, sector, lens or owner idea) and follow the history; failed runs can be re-queued.
-- **Settings**: sender and landing settings (editable), the example case (Hide example case, Reset example case),
+- **Settings**: sender and landing settings (editable), research settings (Background research and its daily cap), the example case (Hide example case, Reset example case),
   worker heartbeat, database status, models, lenses, market, criteria.
 - **Take the tour** (top bar, every page): replays the guided tour, continues it, or runs one chapter. It starts by
   itself on your first login. Progress is saved in the database, so it follows you between devices.
@@ -223,6 +228,9 @@ How things work:
 - **Outreach log:** on the Validate tab pick an outcome per prospect (sent, replied, positive, meeting, not interested,
   unsubscribe) with an optional note. "Interview note" requires a note (what you learned) and counts as an interview
   for the validation checklist. This only records what you did; the system sends nothing.
+- **Research missions:** Library page. They need `npm run worker` running; at most 3 can wait at once. A mission
+  costs up to the budget you set (0.50 to 10 US dollars, default 2), checked between steps. Background research is off
+  until you tick it in Settings; it uses $1 missions, one at a time, up to the daily cap (default 5, Toronto day).
 - **Queueing a run:** Runs screen. Needs `npm run worker` running, otherwise the run stays queued. At most 3 runs
   can be queued at once. The page refreshes every 10 s while something is queued or running.
 - **Generating a validation pack:** Validate tab, **Generate validation pack**. It costs about $0.60–1.50 (the

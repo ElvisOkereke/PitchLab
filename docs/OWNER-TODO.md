@@ -2,19 +2,16 @@
 
 A running list of what is waiting on you. It is kept up to date as work lands; tick items off or tell Claude when they're done.
 
-## Set up accounts and keys (for the research library, Phase 2)
+## Set up the research library (Phase 2)
 
-- [ ] **Reddit app (free, about 5 minutes).** This is the best free source of people describing their own problems.
-  1. Sign in to Reddit and open https://www.reddit.com/prefs/apps
-  2. Click **create another app…**
-  3. Choose type **script**. Name it e.g. `pitchlab-research`, and set the redirect uri to `http://localhost:8080` (it isn't used).
-  4. If Reddit asks you to accept its Data API terms or request API access, describe it as personal, non-commercial research.
-  5. Copy the id shown under the app name and the **secret**. Add them to the repo-root `.env` as `REDDIT_CLIENT_ID=…` and `REDDIT_CLIENT_SECRET=…`. Never paste them into chat.
 - [ ] **Product Hunt developer token (free).** Used for new products, what they charge, and how they did.
   1. Sign in and open https://www.producthunt.com/v2/oauth/applications
-  2. Create an application. The redirect URL can be `http://localhost:8080`.
-  3. Use **Create Token** (developer token) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
-- [ ] After adding keys, restart `npm run worker`. Settings → Connections shows them as connected.
+  2. Create an application. The redirect URL can be `https://localhost:3000/callback`.
+  3. Use the **Developer Token** (not the API key or secret) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
+- [ ] After adding the token, restart `npm run worker`. Settings → Connections shows Product Hunt as connected.
+- [ ] If PitchLab starts earning money, email hello@producthunt.com for commercial API permission (the developer token is for non-commercial use).
+- [ ] Turn on **Background research** in Settings when ready.
+- [ ] After a few missions, run a benchmark pass on the Progress page and compare real-need evidence with baseline-0.
 
 ## Use the app
 

@@ -86,6 +86,7 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 |---|---|
 | `gen run --seed open` | One full run across every sector. `--seed sector --sectors "A,B"`, `--seed lens --lenses id1,id2` or `--seed idea --file idea.txt` narrow it. `--ideas` (default 12) and `--advance` (default 3) set the counts. |
 | `gen validate <case-slug>` | Builds the validation pack and writes it to `output/validation/<slug>/`. `--skip-prospects` skips the paid prospect search; `--refresh` regenerates the pack and landing page; `--redraft` rewrites drafts for prospects you have not contacted. |
+| `gen research "<topic>"` | Queues a research mission that adds to the library (the worker runs it). `gen research status` lists recent missions. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then queued validation packs. |
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |

@@ -97,3 +97,9 @@ A ready-to-edit outreach email for a prospect (a first email and two follow-ups)
 
 ### Landing page
 A simple page that describes the offer and asks visitors to leave their email, so you can measure interest. Its conversion rate feeds the checklist.
+
+### Library
+The research PitchLab keeps between runs: problems people describe, what products charge and how startups fared. Each entry links to its sources, and runs draw on entries whose quotes were checked against the source text.
+
+### Research mission
+A research job on a topic you choose. The worker searches public sources, adds what it finds to the library and shows the cost first. You set the budget, and a mission stops starting new steps once it is spent.

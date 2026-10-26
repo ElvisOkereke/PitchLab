@@ -54,7 +54,7 @@ It already has one.
 ### Check your connections
 
 - **What:** Open **Settings** and look at Connections. **LLM API** must say connected. GitHub, Stack Exchange and
-  Google Places are optional extra data sources.
+  Google Places and Product Hunt are optional extra data sources.
 - **Why:** Every step of a run needs the LLM key. The worker reports which keys it has, never their values, so these
   say unknown until the worker has run once.
 - **Good:** LLM API connected. If it says not set, put your key in `LLM_API_KEY` in `.env` and restart the worker.
@@ -69,6 +69,25 @@ It already has one.
 - **Good:** All three required fields filled in, with an address you can receive mail at.
 
 ## 2. Generate cases
+
+### Build the research library
+
+- **What:** Open **Library** (next to Board). It holds the research PitchLab keeps between runs: problems people
+  describe in their own words, what products charge, and how startups fared. Search it, filter it by kind, country,
+  voice, source and age, and open an entry to read its quote and sources. To add to it, fill in **Research missions**
+  with a topic, tick what to collect, and press **Start research mission**.
+- **Why:** Runs draw on the library, so a fuller and more varied library gives your ideas more real evidence to start from.
+  Only problem and pricing entries whose quote was checked against the source text count as evidence. Those show a
+  "verified quote" badge; anything else shows "unverified".
+- **Cost:** The form shows the most a mission can cost ("up to $X"), and a typical cost once a mission has finished.
+  The budget is a soft limit: a mission stops starting new steps once it is spent, and the step in progress can run a little over.
+  Missions need `npm run worker` running, and at most 3 can wait at once. Or run `npm run gen -- research "your topic"`.
+- **Background research:** Off until you turn it on in **Settings → Research**. When on, the worker starts one small
+  $1 mission at a time, until the daily cap is spent (the day ends at midnight in Toronto).
+- **Good:** The Coverage card shows two health targets: at least 60% of problem entries in operator or neutral voice
+  (people who run the business, or neutral sources, rather than vendors), and entries from 10 or more countries.
+- **Fix mistakes:** Open an entry and press **Reject** to take it out of search and out of runs. It stays rejected if it
+  is collected again. Show rejected entries with Status, then press **Restore** to bring one back.
 
 ### Pick a seed
 
