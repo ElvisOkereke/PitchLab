@@ -152,6 +152,10 @@ describe('gen research', () => {
     expect(h.research).not.toHaveBeenCalled();
   });
 
+  it('status refuses options', async () => {
+    await expect(parse(['research', 'status', '--budget', '3'])).rejects.toThrow(/no options/);
+  });
+
   it('rejects bad kinds, audience, countries and budget', async () => {
     await expect(parse(['research', 'x topic', '--kinds', 'trend'])).rejects.toThrow(/kinds/);
     await expect(parse(['research', 'x topic', '--audience', 'everyone'])).rejects.toThrow();

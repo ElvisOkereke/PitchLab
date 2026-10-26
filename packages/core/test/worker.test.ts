@@ -129,23 +129,32 @@ describe('runWorker with missions', () => {
 
   it('runs and jobs go first; a mission runs only when they are empty', async () => {
     const db = await testDb();
-    const runId = (await insertRun(db, cfg)).id;
     const jobId = await insertJob(db);
+    // insertJob made its own queued run (its idea needs one); that run is the first thing to execute.
+    const [queuedRun] = await db.select().from(runs).where(eq(runs.status, 'queued'));
     const missionId = await insertMissionRow(db);
-    const execute = vi.fn(async () => 'succeeded' as const);
-    const executeValidation = vi.fn(async () => 'succeeded' as const);
-    const executeMission = vi.fn(async () => 'succeeded' as const);
-    const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute, executeValidation, executeMission };
-    await db.update(runs).set({ status: 'succeeded' }).where(eq(runs.id, runId));
-    // insertJob made its own queued run too; the first pass takes that one
+    const order: string[] = [];
+    const base = {
+      db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {},
+      execute: vi.fn(async (id: string) => { order.push(`run:${id}`); return 'succeeded' as const; }),
+      executeValidation: vi.fn(async (id: string) => { order.push(`job:${id}`); return 'succeeded' as const; }),
+      executeMission: vi.fn(async (id: string) => { order.push(`mission:${id}`); return 'succeeded' as const; }),
+    };
     await runWorker(base);
-    expect(executeMission).not.toHaveBeenCalled();
     await db.update(runs).set({ status: 'succeeded' });
     await runWorker(base);
-    expect(executeValidation).toHaveBeenCalledWith(jobId);
-    expect(executeMission).not.toHaveBeenCalled();
     await runWorker(base);
-    expect(executeMission).toHaveBeenCalledWith(missionId);
+    expect(order).toEqual([`run:${queuedRun!.id}`, `job:${jobId}`, `mission:${missionId}`]);
+  });
+
+  it('fails a stale running mission when it next claims, and leaves a fresh one', async () => {
+    const db = await testDb();
+    const [stale] = await db.insert(researchMissions).values({ topic: 'old', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date(Date.now() - 3 * 3600 * 1000) }).returning({ id: researchMissions.id });
+    const [fresh] = await db.insert(researchMissions).values({ topic: 'new', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date() }).returning({ id: researchMissions.id });
+    expect(await claimNextMission(db)).toBeNull();
+    const rows = Object.fromEntries((await db.select().from(researchMissions)).map((m) => [m.id, m]));
+    expect(rows[stale!.id]).toMatchObject({ status: 'failed', error: 'worker stopped mid-mission' });
+    expect(rows[fresh!.id]!.status).toBe('running');
   });
 
   it('marks a mission failed when execute throws', async () => {

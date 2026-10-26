@@ -1,8 +1,8 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, lt, sql } from 'drizzle-orm';
 import type { Env } from './config/env';
 import { DEFAULT_MODELS, MODEL_STAGES, isModelStage, type ModelStage } from './config/models';
 import type { Db } from './db/client';
-import { maybeQueueBackgroundMission } from './dashboard/missions';
+import { maybeQueueBackgroundMission, STALE_MISSION_MS } from './dashboard/missions';
 import { researchMissions, runs, validationJobs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
@@ -44,6 +44,10 @@ export async function claimNextValidationJob(db: Db): Promise<string | null> {
 
 /** Same as claimNextRun, for the oldest queued research mission (FOR UPDATE SKIP LOCKED). */
 export async function claimNextMission(db: Db): Promise<string | null> {
+  // A mission left running by a stopped worker would otherwise stay running forever.
+  await db.update(researchMissions)
+    .set({ status: 'failed', error: 'worker stopped mid-mission', finishedAt: new Date() })
+    .where(and(eq(researchMissions.status, 'running'), lt(researchMissions.startedAt, new Date(Date.now() - STALE_MISSION_MS))));
   const next = db.select({ id: researchMissions.id }).from(researchMissions)
     .where(eq(researchMissions.status, 'queued'))
     .orderBy(asc(researchMissions.createdAt), asc(researchMissions.id))

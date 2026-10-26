@@ -54,6 +54,7 @@ describe('queueMission and claimNextMission', () => {
     expect(await claimNextMission(db)).toBeNull();
   });
 
+  // PGlite serialises transactions, so the advisory lock itself is exercised only on real Postgres.
   it('refuses a queue deeper than the cap, even when requests race', async () => {
     const rs = await Promise.all(Array.from({ length: MAX_QUEUED_MISSIONS + 2 }, (_, i) => queueMission(db, { topic: `topic ${i}` })));
     expect(rs.filter((r) => r.ok)).toHaveLength(MAX_QUEUED_MISSIONS);
@@ -70,6 +71,15 @@ describe('listMissions and typicalMissionCost', () => {
     await db.insert(researchMissions).values({ topic: 'f', kinds: ['problem'], countries: [], budgetUsd: '2', origin: 'owner', status: 'failed', costUsd: '9' });
     expect(await typicalMissionCost(db)).toBe(2);
     expect(await listMissions(db, 2)).toHaveLength(2);
+  });
+});
+
+describe('listMissions stalled flag', () => {
+  it('flags a mission running for over 2 hours', async () => {
+    await db.insert(researchMissions).values({ topic: 'a', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date(Date.now() - 3 * 3600 * 1000) });
+    await db.insert(researchMissions).values({ topic: 'b', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date() });
+    const byTopic = Object.fromEntries((await listMissions(db)).map((m) => [m.topic, m.stalled]));
+    expect(byTopic).toEqual({ a: true, b: false });
   });
 });
 
@@ -97,7 +107,7 @@ describe('maybeQueueBackgroundMission', () => {
     const [m] = await db.select().from(researchMissions);
     expect(m).toMatchObject({ origin: 'background', status: 'queued', topic: BACKGROUND_TOPICS[0]!.topic, budgetUsd: String(BACKGROUND_BUDGET_USD) });
     expect(await maybeQueueBackgroundMission(db, now)).toBe('busy');
-    await db.update(researchMissions).set({ status: 'running' });
+    await db.update(researchMissions).set({ status: 'running', startedAt: now });
     expect(await maybeQueueBackgroundMission(db, now)).toBe('busy');
     await finishAll();
     expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
@@ -108,6 +118,7 @@ describe('maybeQueueBackgroundMission', () => {
     return (await db.select().from(researchMissions)).map((r) => r.topic);
   }
 
+  // PGlite serialises transactions, so this exercises the logic; the advisory lock itself only matters on real Postgres.
   it('concurrent calls queue only one', async () => {
     await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
     const rs = await Promise.all([maybeQueueBackgroundMission(db, now), maybeQueueBackgroundMission(db, now), maybeQueueBackgroundMission(db, now)]);
@@ -115,17 +126,58 @@ describe('maybeQueueBackgroundMission', () => {
     expect(await db.select().from(researchMissions)).toHaveLength(1);
   });
 
-  it('every 4th pick is a gap topic, not from the list', async () => {
-    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
-    const picked: string[] = [];
-    for (let i = 0; i < 4; i++) {
+  async function pickN(n: number): Promise<string[]> {
+    const out: string[] = [];
+    for (let i = 0; i < n; i++) {
       expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+      const [m] = await db.select().from(researchMissions).where(eq(researchMissions.status, 'queued'));
+      out.push(m!.topic);
       await finishAll();
     }
-    for (const m of await db.select().from(researchMissions).orderBy(researchMissions.createdAt)) picked.push(m.topic);
-    expect(picked.filter((t) => topics().includes(t))).toHaveLength(3);
-    expect(picked.filter((t) => !topics().includes(t))).toHaveLength(1);
-    expect(await db.select().from(researchMissions)).toHaveLength(4);
+    return out;
+  }
+
+  it('the gap is exactly the 4th pick, then every 4th', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const picked = await pickN(8);
+    picked.forEach((t, i) => expect(topics().includes(t)).toBe((i + 1) % 4 !== 0));
+  });
+
+  it('an unfilled gap is not repeated back to back', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const picked = await pickN(12);
+    const gaps = picked.filter((t) => !topics().includes(t));
+    expect(gaps).toHaveLength(3);
+    expect(new Set(gaps).size).toBe(3);
+  });
+
+  it('40 list picks visit all 40 topics', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const picked = await pickN(Math.ceil(40 / 3 * 4));
+    const listPicks = picked.filter((t) => topics().includes(t));
+    expect(new Set(listPicks.slice(0, 40)).size).toBe(40);
+  });
+
+  it('cap_reached when one more $1 mission would pass the cap', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    const [m] = await db.insert(researchMissions).values({
+      topic: 'old', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'background', status: 'succeeded',
+    }).returning({ id: researchMissions.id });
+    await spend(m!.id, 4.01);
+    expect(await maybeQueueBackgroundMission(db, new Date())).toBe('cap_reached');
+    await db.update(dataCalls).set({ costUsd: '3.99' });
+    expect(await maybeQueueBackgroundMission(db, new Date())).toBe('queued');
+  });
+
+  it('a stale running background mission does not block; a fresh one does', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const [m] = await db.insert(researchMissions).values({
+      topic: 'stuck', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'background', status: 'running', startedAt: new Date(Date.now() - 3 * 3600 * 1000),
+    }).returning({ id: researchMissions.id });
+    expect(await maybeQueueBackgroundMission(db, new Date())).toBe('queued');
+    await db.delete(researchMissions).where(eq(researchMissions.status, 'queued'));
+    await db.update(researchMissions).set({ startedAt: new Date() }).where(eq(researchMissions.id, m!.id));
+    expect(await maybeQueueBackgroundMission(db, new Date())).toBe('busy');
   });
 
   it('stops at the daily cap and the Toronto day boundary resets it', async () => {

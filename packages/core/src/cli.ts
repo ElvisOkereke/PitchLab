@@ -257,7 +257,7 @@ async function researchStatusCommand(): Promise<number> {
       return 0;
     }
     for (const m of rows) {
-      out(`${m.id}  ${m.status.padEnd(9)} ${m.origin.padEnd(10)} $${m.costUsd.toFixed(2)}/$${m.budgetUsd.toFixed(2)}  +${m.itemsAdded} new, ${m.itemsMerged} merged  ${m.topic}`);
+      out(`${m.id}  ${(m.stalled ? 'stalled' : m.status).padEnd(9)} ${m.origin.padEnd(10)} $${m.costUsd.toFixed(2)}/$${m.budgetUsd.toFixed(2)}  +${m.itemsAdded} new, ${m.itemsMerged} merged  ${m.topic}`);
     }
     return 0;
   });

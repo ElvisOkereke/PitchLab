@@ -180,6 +180,7 @@ export function buildProgram(h: CliHandlers): Command {
     .addOption(new Option('--audience <who>', 'who the topic is about').choices(['business', 'consumer', 'both']))
     .option('--budget <usd>', 'most to spend, 0.5 to 10 (default 2)', budgetArg)
     .action(async (topic: string, opts: ResearchCliOpts) => {
+      if (topic === 'status' && Object.keys(opts).length > 0) throw new CliError('gen research status takes no options.', 2);
       process.exitCode = topic === 'status' ? await h.researchStatus() : await h.research(topic, opts);
     });
 
