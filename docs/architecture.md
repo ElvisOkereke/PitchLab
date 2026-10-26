@@ -143,7 +143,7 @@ flowchart TD
     F --> A
 ```
 
-- **Order: runs, then validation jobs, then research missions.** A validation job is claimed only when no run is queued, and a mission only when neither is. When all three are empty the worker tops up the background queue (`maybeQueueBackgroundMission`), which does nothing unless Background research is on.
+- **Order: runs, then validation jobs, then research missions.** A validation job is claimed only when no run is queued, and a mission only when neither is. When all three are empty the worker tops up the background queue (`maybeQueueBackgroundMission`), which does nothing unless Background research is on. `gen worker --once` never tops up, because the mission it queued would not run in that pass. Each source also stores its own voice: a signal quotes one source and takes that source's voice, while the entry's voice (the most independent seen) is for display and ranking.
 - **Claiming** is one `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED)` statement, so two workers never take
   the same item.
 - **Heartbeat:** the worker writes its status (which keys are set, as booleans, and the resolved model per stage)
@@ -166,7 +166,7 @@ flowchart TD
 - **Mission engine** (`research/mission.ts`, worker side): plan the queries, collect, extract entries with the model, verify quotes, embed, store, all under a soft budget. The budget is checked between steps and between source batches, and one batch in flight may overshoot. A source that fails (a 429, a bad token, a timeout) becomes a mission warning, the other sources continue, and the mission still ends `succeeded` with warnings.
 - **Sources:** Hacker News, GitHub, Stack Exchange, app store reviews (English-language storefronts), Product Hunt (needs `PRODUCTHUNT_TOKEN`; non-commercial use unless Product Hunt agrees otherwise), the Y Combinator company list (fetched once per process) and web pages found by model web search. Reddit is not used: its terms need a commercial-use contract and its public API is closing.
 - **Source rules:** robots.txt is checked before any page fetch (disallowed means skip), each source has its own rate limit, only English-language sources are used, and domains in `tools/banned-sources.ts` are refused. Pages go through the SSRF-guarded `fetchPage`.
-- **Public data:** quotes are 500 characters or fewer. No usernames, profile URLs or author handles are stored, and `u/…`, `@handle` and "posted by" patterns are stripped from quotes and summaries. Invisible characters are stripped before storage.
+- **Public data:** quotes are 500 characters or fewer. No usernames or author handles are stored, and `u/…`, `@handle` and "posted by" patterns are stripped from quotes, titles and summaries. Source URLs are kept verbatim so each entry can be cited, so a URL may itself include a profile path (for example `medium.com/@name`). Invisible characters are stripped before storage.
 - **Untrusted text:** fetched text reaches prompts only through `wrapUntrusted` and `capField` (`llm/untrusted.ts`).
 - **Verified quotes:** a quote is verified only when, after `normalize()` from `pipeline/verify.ts`, it appears verbatim in the text the collector fetched. A quote the model wrote alone is never verified. Only verified `problem` and `pricing` entries become signals for a run.
 - **Duplicates:** the same content hash adds a source to the existing entry. A near-duplicate (cosine similarity 0.90 or more, same kind) is merged, and the voice only moves toward more independent. A rejected entry stays rejected.

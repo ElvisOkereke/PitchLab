@@ -8,6 +8,7 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
   1. Sign in and open https://www.producthunt.com/v2/oauth/applications
   2. Create an application. The redirect URL can be `https://localhost:3000/callback`.
   3. Use the **Developer Token** (not the API key or secret) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
+- [ ] After merging, restart `npm run worker`. It applies the database update, which missions and the heartbeat need.
 - [ ] After adding the token, restart `npm run worker`. Settings → Connections shows Product Hunt as connected.
 - [ ] If PitchLab starts earning money, email hello@producthunt.com for commercial API permission (the developer token is for non-commercial use).
 - [ ] Turn on **Background research** in Settings when ready.
