@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
+import { knowledgeItems, lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
+import type { Db } from '../db/client';
+import { getLibraryItem, retrieveForRun } from '../library/store';
 import { loadPrompt } from '../llm/prompts';
 import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
@@ -12,6 +14,11 @@ import { logDataCall } from '../tools/data-calls';
 import { phrasesFor } from './pain-phrases';
 import type { RunConfig, StageDeps } from './types';
 
+/** Most library entries retrieved for a run. */
+export const LIBRARY_SIGNAL_MAX = 15;
+/** At or above this many eligible entries the library supplies at most half of LIBRARY_SIGNAL_MAX. */
+export const LIBRARY_MIN_ENTRIES = 50;
+const OPEN_LIBRARY_QUERY = 'small business and consumer problems';
 const BATCH = 25;
 const QUERIES_PER_SOURCE = 2;
 const PHRASE_SOURCES = new Set(['hn', 'stackexchange', 'github']);
@@ -69,6 +76,59 @@ function pick<T>(arr: T[], n: number, random: () => number): T[] {
   return copy.slice(0, n);
 }
 
+/**
+ * Library-backed signals: verified problem/pricing entries (one signal per entry, from its best verified source), linked via
+ * knowledge_item_id. Returns the signal ids in rank order. Never throws: any failure logs and returns [].
+ */
+async function librarySignals(
+  { db, router, log }: Pick<StageDeps, 'db' | 'router' | 'log'>,
+  runId: string, marketId: string, countries: string[], queryText: string,
+): Promise<string[]> {
+  try {
+    const [vector] = await router.embed([queryText], { runId });
+    if (!vector) return [];
+    let rows = await retrieveForRun(db, vector, { limit: LIBRARY_SIGNAL_MAX, kinds: ['problem', 'pricing'], countries });
+    if (rows.length === 0) return [];
+    const [{ n } = { n: 0 }] = await db.select({ n: count() }).from(knowledgeItems)
+      .where(and(eq(knowledgeItems.status, 'active'), eq(knowledgeItems.quoteVerified, true), inArray(knowledgeItems.kind, ['problem', 'pricing'])));
+    if (Number(n) >= LIBRARY_MIN_ENTRIES) rows = rows.slice(0, Math.floor(LIBRARY_SIGNAL_MAX / 2));
+
+    const picked: { id: string; url: string; source: string; title: string; quote: string; hash: string; voice: SignalVoice | null; sector: string | null; publishedAt: Date | null }[] = [];
+    for (const row of rows) {
+      const quote = row.quote ? collapse(row.quote) : '';
+      if (!quote) continue;
+      const item = await getLibraryItem(db, row.id);
+      const verified = (item?.sources ?? []).filter((s) => s.quoteVerified && !isBannedSource(s.url));
+      const best = verified.find((s) => s.quote && collapse(s.quote) === quote) ?? verified[0];
+      if (!best) continue;
+      picked.push({
+        id: row.id, url: best.url, source: best.sourceType, title: row.title, quote, hash: md5(normalizeQuote(quote)),
+        voice: row.voice, sector: row.industries[0] ?? null, publishedAt: best.publishedAt,
+      });
+    }
+    if (picked.length === 0) return [];
+    await db.insert(signals).values(picked.map((p) => ({
+      runId, marketId, source: p.source, url: p.url, title: p.title, quote: p.quote, quoteHash: p.hash,
+      sector: p.sector, painType: null, voice: p.voice, publishedAt: p.publishedAt, knowledgeItemId: p.id,
+    }))).onConflictDoUpdate({
+      target: [signals.url, signals.quoteHash],
+      set: {
+        voice: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('voice')}, excluded.${sql.identifier('voice')})`,
+        knowledgeItemId: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('knowledge_item_id')}, excluded.${sql.identifier('knowledge_item_id')})`,
+      },
+    });
+    const ids: string[] = [];
+    for (const p of picked) {
+      const [r] = await db.select({ id: signals.id }).from(signals).where(and(eq(signals.url, p.url), eq(signals.quoteHash, p.hash)));
+      if (r) ids.push(r.id);
+    }
+    return ids;
+  } catch (err) {
+    log(`harvest: library unavailable (${err instanceof Error ? err.message : String(err)}), using per-run harvest only`);
+    return [];
+  }
+}
+
 export async function harvest(
   { db, router, sources, log }: StageDeps,
   run: { id: string; config: RunConfig },
@@ -84,6 +144,7 @@ export async function harvest(
   let phraseQueries: string[] = [];
   let research: { focus: string; maxSearches: number }[];
   let useTechForums = cfg.seedType !== 'idea';
+  let libraryHints: string[] = [];
   if (cfg.seedType === 'open' || cfg.seedType === 'sector') {
     const sectors = cfg.seedType === 'open' ? pick(market.sectors, 6, random) : (cfg.sectors ?? []);
     const phrases = sectors.map((s) => phrasesFor(s, random));
@@ -100,6 +161,7 @@ export async function harvest(
   } else if (cfg.seedType === 'lens') {
     const rows = await db.select().from(lenses).where(inArray(lenses.id, cfg.lensIds ?? []));
     const hints = rows.map((l) => l.promptHint);
+    libraryHints = hints;
     phraseQueries = hints.flatMap((h) => pick(market.sectors, 4, random).map((s) => `${s} ${h}`));
     research = [{ focus: `Pain relevant to: ${hints.join(' ')}`, maxSearches: cfg.maxSearchesPerCall }];
   } else {
@@ -110,6 +172,13 @@ ${wrapUntrusted('idea', idea)}`,
       maxSearches: 2 * cfg.maxSearchesPerCall,
     }];
   }
+
+  // Library evidence first; the per-run harvest below fills the rest.
+  const libraryQuery = cfg.seedType === 'idea' ? clean(cfg.ideaText ?? '', 500)
+    : cfg.seedType === 'sector' ? (cfg.sectors ?? []).join(', ')
+    : cfg.seedType === 'lens' ? libraryHints.join(' ')
+    : OPEN_LIBRARY_QUERY;
+  const libraryIds = await librarySignals({ db, router, log }, run.id, cfg.marketId, market.countries, clean(libraryQuery, 1000) || OPEN_LIBRARY_QUERY);
 
   const items: RawItem[] = [];
 
@@ -177,8 +246,8 @@ ${wrapUntrusted('idea', idea)}`,
     }
   }
   if (kept.length === 0) {
-    log('harvest: no signals extracted');
-    return { signalIds: [] };
+    log(libraryIds.length ? `harvest: ${libraryIds.length} signals (${libraryIds.length} from library)` : 'harvest: no signals extracted');
+    return { signalIds: libraryIds };
   }
 
   // One row per url + quote hash (first extraction wins): ON CONFLICT DO UPDATE may not touch a row twice in one insert.
@@ -206,12 +275,12 @@ ${wrapUntrusted('idea', idea)}`,
     set: { voice: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('voice')}, excluded.${sql.identifier('voice')})` },
   });
 
-  const ids = new Set<string>();
+  const ids = new Set<string>(libraryIds);
   for (const k of kept) {
     const [row] = await db.select({ id: signals.id }).from(signals)
       .where(and(eq(signals.url, k.item.url), eq(signals.quoteHash, k.hash)));
     if (row) ids.add(row.id);
   }
-  log(`harvest: ${ids.size} signals`);
+  log(`harvest: ${ids.size} signals (${libraryIds.length} from library)`);
   return { signalIds: [...ids] };
 }

@@ -7,7 +7,9 @@ import { defaultRunConfig } from '../../src/pipeline/types';
 import { DEFAULT_WP_SLUGS } from '../../src/tools/sources/wordpress';
 import { fetchPage } from '../../src/tools/fetch-page';
 import type { SignalSource } from '../../src/tools/sources/types';
-import { insertRun, testDb } from '../helpers/db';
+import { eq } from 'drizzle-orm';
+import { rejectItem, upsertKnowledgeItem } from '../../src/library/store';
+import { insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
 const URL1 = 'https://news.ycombinator.com/item?id=1';
@@ -307,7 +309,7 @@ describe('harvest', () => {
       const long = `${'x'.repeat(100)}`;
       const router2 = fakeRouter({ research: { harvest: [researchOf(0)] }, structured: { extract: [{ signals: [] }] } });
       await harvest({ db, router: router2, sources: [], fetchPage, log: () => {} }, await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: [long] })));
-      expect(router2.calls[0]!.prompt).toContain(`<sector>\n${'x'.repeat(80)}\n</sector>`);
+      expect(router2.calls.find((c) => c.kind === 'research')!.prompt).toContain(`<sector>\n${'x'.repeat(80)}\n</sector>`);
       expect(router.systems.every((s) => s?.includes('<sector>'))).toBe(true);
     });
 
@@ -396,5 +398,73 @@ describe('harvest', () => {
     await harvest({ db, router: router(), sources: [wp()], fetchPage, log: () => {} }, run);
     expect(seen).toHaveLength(2);
     for (const s of seen) expect(DEFAULT_WP_SLUGS).toContain(s);
+  });
+});
+
+describe('harvest library signals', () => {
+  const lib = async (db: Awaited<ReturnType<typeof testDb>>, o: { url: string; quote?: string; verified?: boolean; voice?: 'operator' | 'neutral' | 'vendor'; kind?: 'problem' | 'pricing'; vec?: number[]; domain?: string; title?: string }) => {
+    const quote = o.quote ?? `library quote for ${o.url}`;
+    const r = await upsertKnowledgeItem(db, {
+      kind: o.kind ?? 'problem', title: o.title ?? `T ${o.url}`, summary: 'S', quote, audience: 'business',
+      countries: ['US'], industries: ['retail'], voice: o.voice ?? 'operator', facts: o.kind === 'pricing' ? {} : { persona: 'p' },
+      source: { url: o.url, domain: o.domain ?? new URL(o.url).hostname, sourceType: 'hn', quote, quoteVerified: o.verified ?? true },
+    } as never, o.vec ?? unit(0), {});
+    return r.itemId;
+  };
+  const setup = async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying' }));
+    return { db, run };
+  };
+  const mk = (db: Awaited<ReturnType<typeof testDb>>, embed?: (t: string[]) => number[][]) =>
+    fakeRouter({ research: { harvest: [{ text: '', sources: [] }, { text: '', sources: [] }] }, structured: { extract: [{ signals: [] }, { signals: [] }] }, embed });
+  const logs: string[] = [];
+  const deps = (db: Awaited<ReturnType<typeof testDb>>, router: ReturnType<typeof fakeRouter>) => ({ db, router, sources: [], fetchPage, log: (m: string) => { logs.push(m); } });
+
+  it('returns library-linked signals with voice and knowledge_item_id, before per-run signals', async () => {
+    const { db, run } = await setup();
+    const id1 = await lib(db, { url: 'https://l.test/1', voice: 'operator', vec: unit(0) });
+    const router = mk(db, () => [unit(0)]);
+    const out = await harvest(deps(db, router), run);
+    expect(out.signalIds).toHaveLength(1);
+    const [row] = await db.select().from(signals).where(eq(signals.id, out.signalIds[0]!));
+    expect(row).toMatchObject({ knowledgeItemId: id1, voice: 'operator', url: 'https://l.test/1', source: 'hn', marketId: run.config.marketId });
+    expect(logs.some((l) => l === 'harvest: 1 signals (1 from library)')).toBe(true);
+  });
+
+  it('never uses unverified or rejected entries, or banned sources', async () => {
+    const { db, run } = await setup();
+    await lib(db, { url: 'https://l.test/unv', verified: false });
+    const rej = await lib(db, { url: 'https://l.test/rej' });
+    await rejectItem(db, rej);
+    await lib(db, { url: 'https://gamersgetaway.ca/x' });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toEqual([]);
+  });
+
+  it('caps library at half of the limit once the library holds 50 or more entries', async () => {
+    const { db, run } = await setup();
+    for (let i = 0; i < 50; i++) await lib(db, { url: `https://d${i % 20}.test/${i}`, domain: `d${i}.test`, vec: unit(i) });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toHaveLength(7);
+  });
+
+  it('under 50 entries supplies everything returned (up to 15)', async () => {
+    const { db, run } = await setup();
+    for (let i = 0; i < 20; i++) await lib(db, { url: `https://e${i}.test/${i}`, vec: unit(i) });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toHaveLength(15);
+  });
+
+  it('falls back when embed fails, and does not duplicate on re-run', async () => {
+    const { db, run } = await setup();
+    await lib(db, { url: 'https://l.test/1' });
+    const bad = await harvest(deps(db, mk(db)), run);
+    expect(bad.signalIds).toEqual([]);
+    expect(logs.some((l) => l.startsWith('harvest: library unavailable'))).toBe(true);
+    const a = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    const b = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(b.signalIds).toEqual(a.signalIds);
+    expect(await db.select().from(signals)).toHaveLength(1);
   });
 });
