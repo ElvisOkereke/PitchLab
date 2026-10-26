@@ -1,9 +1,9 @@
 import { cleanText, toDate, type RawItem } from '../../tools/sources/types';
-import { request, SourceError, throttle, type HttpOpts } from '../http';
+import { request, SourceError, throttle, USER_AGENT, type HttpOpts } from '../http';
 
 export const sourceType = 'reddit';
 export const MIN_INTERVAL_MS = 1000;
-const UA = 'pitchlab-research/0.1';
+const UA = USER_AGENT;
 const COMMENT_POSTS = 3;
 const COMMENTS_PER_POST = 3;
 

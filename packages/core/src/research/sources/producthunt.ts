@@ -57,6 +57,7 @@ export async function productHuntSearch(topic: string, opts: ProductHuntOpts = {
   };
   const first = opts.limit ?? 10;
   let slug = slugify(topic);
+  if (!slug) return []; // never fall through to global top posts
   let json = await gql(QUERY, { topic: slug, first });
   if (!json?.data?.posts?.edges?.length) {
     const found = (await gql(TOPIC_QUERY, { q: topic }))?.data?.topics?.edges?.[0]?.node?.slug;

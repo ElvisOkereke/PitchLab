@@ -15,6 +15,12 @@ describe('scrubPersonal', () => {
     ['https://facebook.com/fbuser/posts/1', 'fbuser'],
     ['https://www.instagram.com/instauser/', 'instauser'],
     ['https://github.com/ghuser', 'ghuser'],
+    ['github.com/ghuser/ is me', 'ghuser'],
+    ['Posted by jsmith', 'jsmith'],
+    ['posted by dang', 'dang'],
+    ['Posted by: jsmith', 'jsmith'],
+    ['Posted by Sarah Johnson', 'Johnson'],
+    ['Posted by randomuser on Monday', 'randomuser'],
     ['https://www.tiktok.com/@tikuser/video/1', 'tikuser'],
     ['https://medium.com/@medusr', 'medusr'],
     ['https://youtube.com/@ytuser', 'ytuser'],
@@ -29,7 +35,7 @@ describe('scrubPersonal', () => {
     expect(out).toContain('Monday');
     expect(scrubPersonal('posted by u/abcd')).toBe('posted by [user]');
   });
-  it.each(['meet @ 5pm', 'at @5pm sharp', 'use u/s here', 'see example.com/u/123 ok', 'posted by the team', 'visit box.com/files'])('keeps %s', (s) => {
+  it.each(['meet @ 5pm', 'at @5pm sharp', 'use u/s here', 'see example.com/u/123 ok', 'posted by the team', 'Posted by someone else', 'https://github.com/org/repo/issues/12', 'github.com/org/repo', 'visit box.com/files'])('keeps %s', (s) => {
     expect(scrubPersonal(s)).toBe(s);
   });
   it('leaves ordinary text alone', () => {

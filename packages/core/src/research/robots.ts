@@ -87,7 +87,7 @@ async function load(origin: string, token: string, opts: RobotsOpts): Promise<{ 
     case 'too_large':
       return { rules: 'none', ttl: FAIL_TTL_MS };
     case 'http_error':
-      return r.status >= 500 ? { rules: 'none', ttl: FAIL_TTL_MS } : { rules: 'all', ttl: OK_TTL_MS };
+      return r.status >= 500 || r.status === 429 ? { rules: 'none', ttl: FAIL_TTL_MS } : { rules: 'all', ttl: OK_TTL_MS };
     default: // network, not_html: robots.txt is effectively absent
       return { rules: 'all', ttl: FAIL_TTL_MS };
   }

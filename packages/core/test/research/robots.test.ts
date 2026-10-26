@@ -61,6 +61,15 @@ describe('robotsAllows', () => {
     await robotsAllows('https://fc.test/a', { ...o, now });
     expect(o.calls).toHaveLength(2);
   });
+  it('429 denies and is cached briefly', async () => {
+    const o = mk('slow down', 429);
+    let t = 0;
+    const now = () => t;
+    expect(await robotsAllows('https://rl.test/a', { ...o, now })).toBe(false);
+    t += 11 * 60 * 1000;
+    await robotsAllows('https://rl.test/a', { ...o, now });
+    expect(o.calls).toHaveLength(2);
+  });
   it('404 allows', async () => {
     expect(await robotsAllows('https://e.test/x', mk('nope', 404))).toBe(true);
   });

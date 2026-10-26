@@ -208,6 +208,8 @@ describe('ycCompanies failures', () => {
   });
 });
 
+const body = { data: { posts: { edges: [{ node: { name: 'N', tagline: 't', url: 'https://n.test', createdAt: '2024-01-01T00:00:00Z', votesCount: 1 } }] } } };
+
 describe('secrets and mapper facts', () => {
   it('SourceError messages never contain the client secret or token', async () => {
     for (const status of [401, 429, 500]) {
@@ -230,19 +232,22 @@ describe('secrets and mapper facts', () => {
     await redditSearch('a', o);
     expect(calls.filter((c) => c.url.includes('access_token'))).toHaveLength(2);
   });
-  it('serialises concurrent calls per host and survives a throwing onCall', async () => {
-    const starts: number[] = [];
+  it('serialises concurrent calls per host (gaps >= interval) and survives a throwing onCall', async () => {
     let t = 0;
-    const { impl } = router(() => ({ body: { data: { posts: { edges: [] } } } }));
-    const sl = async (ms: number) => void (t += ms);
-    const onCall = () => {
-      throw new Error('logger down');
-    };
-    await Promise.all([
-      productHuntSearch('a', { fetch: impl, sleep: sl, now: () => { starts.push(t); return t; }, token: 'T', onCall }),
-      productHuntSearch('b', { fetch: impl, sleep: sl, now: () => t, token: 'T', onCall }),
-    ]);
-    expect(t).toBeGreaterThanOrEqual(1000);
+    const starts: number[] = [];
+    const impl = (async () => {
+      starts.push(t);
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as typeof fetch;
+    const o = { fetch: impl, sleep: async (ms: number) => void (t += ms), now: () => t, token: 'T', onCall: () => { throw new Error('logger down'); } };
+    await Promise.all([1, 2, 3, 4].map((i) => productHuntSearch(`t${i}`, o)));
+    expect(starts).toHaveLength(4);
+    for (let i = 1; i < starts.length; i++) expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(1000);
+  });
+  it('returns [] for an unslugifiable topic without any request', async () => {
+    const { impl, calls } = router(() => ({ body }));
+    expect(await productHuntSearch('!!!', { fetch: impl, sleep, token: 'T' })).toEqual([]);
+    expect(calls).toHaveLength(0);
   });
   it('mapper output passes parseFacts', () => {
     const base: YcCompany = { name: 'A', oneLiner: 'o', url: 'https://a.test', status: 'Active', batch: 'W20', industries: [], regions: [] };
