@@ -88,7 +88,6 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen validate <case-slug>` | Builds the validation pack and writes it to `output/validation/<slug>/`. `--skip-prospects` skips the paid prospect search; `--refresh` regenerates the pack and landing page; `--redraft` rewrites drafts for prospects you have not contacted. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then queued validation packs. |
-
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another. |
 | `gen bench run` | Queues the 4 benchmark runs (about $12–28 in model calls); the worker executes them. |
 | `gen bench report [passId]` | Prints the scorecard and writes it to `output/bench/`. `--recompute` freezes a new snapshot of a pass with today's data first. |

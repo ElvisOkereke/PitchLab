@@ -54,6 +54,14 @@ describe('ProgressView', () => {
     expect(container.textContent).toContain('2026-10-20');
   });
 
+  it('lists a pass\'s notes as text under the table', () => {
+    const m = { ...card(), notes: ['1 of 4 runs failed', '<b>x</b>'] } as Scorecard;
+    const { container } = render(<ProgressView {...base} passes={[pass({ status: 'incomplete', metrics: m })]} />);
+    const li = [...container.querySelectorAll('section[aria-label="Notes on each column"] li')].map((e) => e.textContent);
+    expect(li).toEqual(['1 of 4 runs failed', '<b>x</b>']);
+    expect(container.querySelector('section b')).toBeNull();
+  });
+
   it('shows at most 5 passes after the baseline', () => {
     const passes = [pass({ id: 'b', kind: 'baseline', label: 'baseline-0' }),
       ...Array.from({ length: 7 }, (_, i) => pass({ id: `x${i}`, label: `bench-v1 #${7 - i}` }))];

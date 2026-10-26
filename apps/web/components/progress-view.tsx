@@ -82,6 +82,22 @@ export function ProgressView({
           </tbody>
         </table>
       </div>
+      {columns.some((p) => (p.metrics?.notes.length ?? 0) > 0) ? (
+        <section aria-label="Notes on each column" className="small">
+          {columns
+            .filter((p) => (p.metrics?.notes.length ?? 0) > 0)
+            .map((p) => (
+              <div key={p.id}>
+                <strong>{p.label}</strong>
+                <ul>
+                  {p.metrics!.notes.map((n, i) => (
+                    <li key={i}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+        </section>
+      ) : null}
       <p className="muted small">Small sample: differences under about 0.05 similarity or one case may be noise.</p>
       {scoreCases ? (
         <section aria-labelledby="bench-score-title" className="card">
