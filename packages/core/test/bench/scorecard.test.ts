@@ -76,18 +76,42 @@ describe('computeScorecard: similarity', () => {
     expect(metric(sc2, 'nearDuplicates').status).toBe('no_data');
   });
 
-  it('newVsHistory compares only with generated ideas in real runs outside the set', async () => {
+  it('newVsHistory compares only with generated ideas in real runs created before the set', async () => {
     const db = await testDb();
-    const s = await newRun(db);
-    await insertIdea(db, s, { embedding: unit(1) });
-    await insertIdea(db, s, { embedding: unit(2) });
-    const h = await newRun(db);
+    const h = await newRun(db, new Date('2026-01-01T00:00:00Z'));
     await insertIdea(db, h, { embedding: unit(1) });
     await insertIdea(db, h, { origin: 'owner', embedding: unit(2) }); // owner: not history
+    const s = await newRun(db, new Date('2026-02-01T00:00:00Z'));
+    await insertIdea(db, s, { embedding: unit(1) });
+    await insertIdea(db, s, { embedding: unit(2) });
     const sc = await computeScorecard(db, [s]);
     expect(sc.extra.newVsHistory).toBeCloseTo(0.5, 6);
-    // With h inside the set there is no history left.
+    // With h inside the set there is no earlier history left.
     expect((await computeScorecard(db, [s, h])).extra.newVsHistory).toBeNull();
+  });
+
+  it('newVsHistory ignores runs created after the set and example runs', async () => {
+    const db = await testDb();
+    const s = await newRun(db, new Date('2026-02-01T00:00:00Z'));
+    await insertIdea(db, s, { embedding: unit(1) });
+    await insertIdea(db, s, { embedding: unit(2) });
+    const later = await newRun(db, new Date('2026-03-01T00:00:00Z'));
+    await insertIdea(db, later, { embedding: unit(1) });
+    const ex = await newRun(db, new Date('2026-01-01T00:00:00Z'));
+    await db.update(runs).set({ isExample: true }).where(eq(runs.id, ex));
+    await insertIdea(db, ex, { embedding: unit(1) });
+    expect((await computeScorecard(db, [s])).extra.newVsHistory).toBeNull();
+  });
+
+  it('display never rounds across a target or up to 100%', async () => {
+    const { pctText } = await import('../../src/bench/scorecard');
+    expect(pctText(199, 200, (v) => v === 1)).toBe('99.5%');
+    expect(pctText(200, 200, (v) => v === 1)).toBe('100%');
+    expect(pctText(1999, 2000, (v) => v === 1)).toBe('99.9%');
+    expect(pctText(296, 1000, (v) => v < 0.3)).toBe('29.6%');
+    expect(pctText(1, 1000, () => null as unknown as boolean)).toBe('0.1%');
+    expect(pctText(2, 4, (v) => v >= 0.5)).toBe('50%');
+    expect(pctText(1, 3, (v) => v < 0.3)).toBe('33%');
   });
 
   it('bounds runs and similarity ideas to the newest and says so', async () => {
@@ -213,6 +237,16 @@ describe('computeScorecard: cases', () => {
 
     await db.insert(scores).values(s(c3.id, 'gut', 4, 'owner', '2026-10-04T00:00:00Z'));
     expect(metric(await computeScorecard(db, [r]), 'ownerVerdict')).toMatchObject({ value: 4, display: '4.0 (3 of 3 scored)', meets: true });
+  });
+
+  it('owner verdict breaks a created_at tie by the larger score id', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const c = await caseWith(db, r, 1, 1);
+    const at = new Date('2026-10-01T00:00:00Z');
+    const rows = await db.insert(scores).values([1, 5].map((value) => ({ caseId: c.id, criterion: 'gut' as const, value, note: '', by: 'owner' as const, createdAt: at }))).returning();
+    const winner = rows.reduce((a, b) => (a.id > b.id ? a : b));
+    expect(metric(await computeScorecard(db, [r]), 'ownerVerdict').value).toBe(winner.value);
   });
 
   it('owner verdict with no gut scores is no_data "no scores yet"', async () => {

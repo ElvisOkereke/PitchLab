@@ -1,6 +1,6 @@
 // Idea-quality scorecard over a set of runs, computed from stored rows only (no model calls). Web-safe: drizzle,
 // db/schema and a type-only Db. Example runs and cases are always left out; every query is bounded.
-import { and, count, countDistinct, desc, eq, inArray, isNotNull, ne, notInArray, sql, type SQL } from 'drizzle-orm';
+import { and, count, countDistinct, desc, eq, inArray, isNotNull, lt, min, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client';
 import { cases, dataCalls, gateVerdicts, ideas, llmCalls, runs, scores, signals } from '../db/schema';
@@ -48,7 +48,18 @@ type Row = Omit<MetricResult, 'id'>;
 
 const measured = (value: number, display: string, meets: boolean | null): Row => ({ value, display, meets, status: 'measured' });
 const noData = (note: string, display = 'no data'): Row => ({ value: null, display, meets: null, status: 'no_data', note });
-const pct = (v: number) => `${Math.round(v * 100)}%`;
+/**
+ * Whole-percent text that never rounds across a target or up to 100% (or down to 0%) when not all (none) qualify:
+ * in those cases it shows one decimal, floored.
+ */
+export function pctText(k: number, n: number, meets: (v: number) => boolean): string {
+  const v = k / n;
+  const whole = Math.round(v * 100);
+  const crosses = meets(whole / 100) !== meets(v) || (whole === 100 && k < n) || (whole === 0 && k > 0);
+  if (!crosses) return `${whole}%`;
+  const floored = Math.floor(v * 1000 + 1e-9) / 10;
+  return `${floored.toFixed(1)}%`;
+}
 const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
 
 function median(xs: number[]): number | null {
@@ -148,11 +159,12 @@ function extraOf(d: Data, runCount: number): Scorecard['extra'] {
 /** One query per metric family over the (non-empty) run set. */
 async function gather(db: Db, set: string[], simMax: number, notes: string[]): Promise<Data> {
   const generated = and(inArray(ideas.runId, set), eq(ideas.origin, 'generated'));
+  const [{ first } = { first: null }] = await db.select({ first: min(runs.createdAt) }).from(runs).where(inArray(runs.id, set));
 
-  // Similarity: within the set, and against generated ideas of real runs outside it.
+  // Similarity: within the set, and against generated ideas of real runs created before the set's earliest run.
   const [embedded, historyIds] = await Promise.all([
     newestIdeaIds(db, and(generated, isNotNull(ideas.embedding)), simMax),
-    newestIdeaIds(db, and(notInArray(ideas.runId, set), eq(runs.isExample, false), eq(ideas.origin, 'generated'), isNotNull(ideas.embedding)), simMax, true),
+    newestIdeaIds(db, and(first ? lt(runs.createdAt, first) : sql`false`, eq(runs.isExample, false), eq(ideas.origin, 'generated'), isNotNull(ideas.embedding)), simMax, true),
   ]);
   if (embedded.total > simMax) notes.push(`Similarity used the newest ${simMax} of ${embedded.total} ideas with embeddings.`);
   if (historyIds.total > simMax) notes.push(`New versus history used the newest ${simMax} of ${historyIds.total} earlier ideas.`);
@@ -192,7 +204,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     .selectDistinctOn([scores.caseId], { caseId: scores.caseId, value: scores.value })
     .from(scores)
     .where(and(inArray(scores.caseId, caseIds), eq(scores.by, 'owner'), eq(scores.criterion, 'gut')))
-    .orderBy(scores.caseId, desc(scores.createdAt));
+    .orderBy(scores.caseId, desc(scores.createdAt), desc(scores.id));
 
   const perRun = new Map<string, Set<string>>();
   for (const r of buyerRows) {
@@ -221,7 +233,7 @@ function buildMetrics(d: Data): MetricResult[] {
   const NEED_EMBEDDINGS = 'Needs at least 2 generated ideas with embeddings.';
   const NO_CASES = 'No cases in this set.';
   const share = (k: number, n: number, meets: (v: number) => boolean, suffix = ''): Row =>
-    measured(k / n, `${pct(k / n)} (${k} of ${n})${suffix}`, meets(k / n));
+    measured(k / n, `${pctText(k, n, meets)} (${k} of ${n})${suffix}`, meets(k / n));
   const nCases = d.caseRows.length;
   const rois = d.caseRows.flatMap((c) => (c.roi === null ? [] : [c.roi]));
   const medianRoi = median(rois);
