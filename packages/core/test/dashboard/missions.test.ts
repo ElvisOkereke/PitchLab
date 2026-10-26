@@ -62,6 +62,17 @@ describe('queueMission and claimNextMission', () => {
   });
 });
 
+describe('owner-only counts', () => {
+  it('queued background missions do not use the owner queue cap, and typical cost ignores them', async () => {
+    for (let i = 0; i < MAX_QUEUED_MISSIONS; i++) {
+      await db.insert(researchMissions).values({ topic: `bg ${i}`, kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'background', status: 'queued' });
+    }
+    expect((await queueMission(db, { topic: 'owner topic' })).ok).toBe(true);
+    await db.insert(researchMissions).values({ topic: 'bg done', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'background', status: 'succeeded', costUsd: '0.9', finishedAt: new Date() });
+    expect(await typicalMissionCost(db)).toBeNull();
+  });
+});
+
 describe('listMissions and typicalMissionCost', () => {
   it('lists newest first and averages the last succeeded costs', async () => {
     expect(await typicalMissionCost(db)).toBeNull();

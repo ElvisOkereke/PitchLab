@@ -84,7 +84,7 @@ function kindsArg(v: string): string[] {
   return kinds;
 }
 function countriesArg(v: string): string[] {
-  const list = v.split(',').map((s) => s.trim()).filter(Boolean);
+  const list = v.split(',').map((s) => s.trim()).filter(Boolean).map((s) => (s.toLowerCase() === 'global' ? 'global' : s.toUpperCase()));
   if (list.length === 0 || list.length > 10 || list.some((c) => !/^([A-Z]{2}|global)$/.test(c))) {
     throw new CliError(`--countries takes up to 10 two-letter codes such as CA,US (or global), got: ${v}`, 2);
   }

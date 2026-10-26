@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, sql, type AnyColumn } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
 import { dataCalls, llmCalls, researchMissions } from '../db/schema';
@@ -157,7 +157,7 @@ const hostOf = (url: string): string => {
 };
 
 /** The mission's recorded spend: its llm_calls plus its data_calls (exact numeric, computed in SQL). */
-const spendSql = (id: string) => sql<string>`(coalesce((select sum(${llmCalls.costUsd}) from ${llmCalls} where ${llmCalls.missionId} = ${id}), 0)
+export const spendSql = (id: string | AnyColumn) => sql<string>`(coalesce((select sum(${llmCalls.costUsd}) from ${llmCalls} where ${llmCalls.missionId} = ${id}), 0)
   + coalesce((select sum(${dataCalls.costUsd}) from ${dataCalls} where ${dataCalls.missionId} = ${id}), 0))`;
 
 async function missionSpend(db: Db, id: string): Promise<number> {
@@ -555,6 +555,7 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Sl
       publishedAt: src.publishedAt ?? undefined,
       quote,
       quoteVerified,
+      voice: e.kind === 'startup' ? undefined : (e.voice ?? undefined),
     },
   };
 }

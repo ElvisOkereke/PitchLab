@@ -1,5 +1,5 @@
 {
-  "id": "ebb50279-d2af-461c-a249-c9e4a85e1241",
+  "id": "0490e71c-faed-4f68-b11b-471d306ce112",
   "prevId": "5fe49728-242d-4ded-b507-adda32c9cc43",
   "version": "7",
   "dialect": "postgresql",
@@ -374,7 +374,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "data_calls_mission_idx": {
+          "name": "data_calls_mission_idx",
+          "columns": [
+            {
+              "expression": "mission_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "data_calls_run_id_runs_id_fk": {
           "name": "data_calls_run_id_runs_id_fk",
@@ -911,6 +927,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "voice": {
+          "name": "voice",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1316,7 +1338,23 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "llm_calls_mission_idx": {
+          "name": "llm_calls_mission_idx",
+          "columns": [
+            {
+              "expression": "mission_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "llm_calls_run_id_runs_id_fk": {
           "name": "llm_calls_run_id_runs_id_fk",

@@ -97,11 +97,12 @@ async function librarySignals(
       if (!quote) continue;
       const item = await getLibraryItem(db, row.id);
       const verified = (item?.sources ?? []).filter((s) => s.quoteVerified && !isBannedSource(s.url));
-      const best = verified.find((s) => s.quote && collapse(s.quote) === quote) ?? verified[0];
+      // The signal must quote a source that really contains this quote, and carries that source's voice (not the entry's).
+      const best = verified.find((s) => s.quote && collapse(s.quote) === quote);
       if (!best) continue;
       picked.push({
         id: row.id, url: best.url, source: best.sourceType, title: row.title, quote, hash: md5(normalizeQuote(quote)),
-        voice: row.voice, sector: row.industries[0] ?? null, publishedAt: best.publishedAt,
+        voice: best.voice, sector: row.industries[0] ?? null, publishedAt: best.publishedAt,
       });
     }
     if (picked.length === 0) { log('harvest: library has no matching entries'); return []; }
@@ -146,8 +147,10 @@ export async function harvest(
   let research: { focus: string; maxSearches: number }[];
   let useTechForums = cfg.seedType !== 'idea';
   let libraryHints: string[] = [];
+  let openSectors: string[] = [];
   if (cfg.seedType === 'open' || cfg.seedType === 'sector') {
     const sectors = cfg.seedType === 'open' ? pick(market.sectors, 6, random) : (cfg.sectors ?? []);
+    if (cfg.seedType === 'open') openSectors = sectors;
     const phrases = sectors.map((s) => phrasesFor(s, random));
     phraseQueries = sectors.flatMap((s, i) => phrases[i]!.map((p) => `${s} ${p}`));
     // One research call per sector (at most 8), so non-tech sectors are researched directly.
@@ -178,7 +181,7 @@ ${wrapUntrusted('idea', idea)}`,
   const libraryQuery = cfg.seedType === 'idea' ? clean(cfg.ideaText ?? '', 500)
     : cfg.seedType === 'sector' ? (cfg.sectors ?? []).join(', ')
     : cfg.seedType === 'lens' ? libraryHints.join(' ')
-    : OPEN_LIBRARY_QUERY;
+    : openSectors.join(', ');
   const libraryIds = await librarySignals({ db, router, log }, run.id, cfg.marketId, market.countries, clean(libraryQuery, 1000) || OPEN_LIBRARY_QUERY);
 
   const items: RawItem[] = [];

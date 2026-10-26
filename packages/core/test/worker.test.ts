@@ -4,7 +4,7 @@ import { loadEnv } from '../src/config/env';
 import { DEFAULT_MODELS } from '../src/config/models';
 import { createDb, type Db } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
-import { researchMissions, runs, validationJobs } from '../src/db/schema';
+import { dataCalls, llmCalls, researchMissions, runs, validationJobs } from '../src/db/schema';
 import { ValidationJobOptionsSchema } from '../src/dashboard/validation-jobs';
 import { WORKER_STATUS_KEY, readWorkerStatus } from '../src/dashboard/settings';
 import { createRun } from '../src/pipeline/run';
@@ -151,9 +151,12 @@ describe('runWorker with missions', () => {
     const db = await testDb();
     const [stale] = await db.insert(researchMissions).values({ topic: 'old', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date(Date.now() - 3 * 3600 * 1000) }).returning({ id: researchMissions.id });
     const [fresh] = await db.insert(researchMissions).values({ topic: 'new', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'running', startedAt: new Date() }).returning({ id: researchMissions.id });
+    await db.insert(llmCalls).values({ missionId: stale!.id, stage: 'extract', provider: 'p', model: 'm', inputTokens: 1, outputTokens: 1, searchRequests: 0, costUsd: '0.25', latencyMs: 1, promptVersion: 'v', ok: true });
+    await db.insert(dataCalls).values({ missionId: stale!.id, provider: 'hn', endpoint: 'q', costUsd: '0.12', ok: true });
     expect(await claimNextMission(db)).toBeNull();
     const rows = Object.fromEntries((await db.select().from(researchMissions)).map((m) => [m.id, m]));
     expect(rows[stale!.id]).toMatchObject({ status: 'failed', error: 'worker stopped mid-mission' });
+    expect(Number(rows[stale!.id]!.costUsd)).toBeCloseTo(0.37, 5);
     expect(rows[fresh!.id]!.status).toBe('running');
   });
 
@@ -173,6 +176,10 @@ describe('runWorker with missions', () => {
     const executeMission = vi.fn(async () => 'succeeded' as const);
     const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded' as const, executeValidation: noValidation, executeMission };
     await runWorker(base);
+    // --once never tops up: the mission it queued would not run in this pass.
+    expect(await db.select().from(researchMissions)).toHaveLength(0);
+    const stop = new AbortController();
+    await runWorker({ ...base, once: false, signal: stop.signal, log: (m) => { if (m.includes('background research mission queued')) stop.abort(); } });
     const rows = await db.select().from(researchMissions);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ origin: 'background', status: 'queued' });

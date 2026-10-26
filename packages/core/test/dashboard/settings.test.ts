@@ -63,5 +63,9 @@ describe('dashboard settings', () => {
     };
     await setSetting(db, WORKER_STATUS_KEY, status);
     expect(await readWorkerStatus(db)).toEqual(status);
+    // An older worker's heartbeat lacks newer model keys: they default instead of hiding the heartbeat.
+    const { score: _drop, ...oldModels } = DEFAULT_MODELS;
+    await setSetting(db, WORKER_STATUS_KEY, { ...status, models: oldModels });
+    expect(await readWorkerStatus(db)).toEqual(status);
   });
 });

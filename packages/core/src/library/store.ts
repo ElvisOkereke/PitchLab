@@ -42,6 +42,7 @@ export type SourceRow = {
   fetchedAt: Date;
   quote: string | null;
   quoteVerified: boolean;
+  voice: KnowledgeVoice | null;
 };
 
 /** Lowercase, runs of non-letter/non-digit become one space (same rule as pipeline/verify normalize, kept local to stay web-safe). */
@@ -73,7 +74,16 @@ export async function upsertKnowledgeItem(
       tx.insert(knowledgeSources).values({
         itemId, url: d.source.url, domain: d.source.domain, sourceType: d.source.sourceType,
         publishedAt: d.source.publishedAt ?? null, quote: d.source.quote ?? null, quoteVerified: d.source.quoteVerified,
-      }).onConflictDoNothing();
+        voice: d.source.voice ?? d.voice ?? null,
+      }).onConflictDoUpdate({
+        target: [knowledgeSources.itemId, knowledgeSources.url],
+        // A later verified quote for the same url replaces an unverified one (with its voice); a verified row is never downgraded.
+        set: {
+          quote: sql`excluded.quote`, quoteVerified: sql`excluded.quote_verified`,
+          voice: sql`coalesce(excluded.voice, ${knowledgeSources.voice})`,
+        },
+        setWhere: sql`excluded.quote_verified and not ${knowledgeSources.quoteVerified}`,
+      });
 
     /** Shared by the duplicate and merge paths: add the source, upgrade voice, adopt a verified quote. */
     const absorb = async (existing: { id: string; voice: KnowledgeVoice | null; quoteVerified: boolean }) => {
@@ -194,7 +204,7 @@ export async function getLibraryItem(db: Db, id: string): Promise<(LibraryRow & 
   const sources = await db.select({
     id: knowledgeSources.id, url: knowledgeSources.url, domain: knowledgeSources.domain, sourceType: knowledgeSources.sourceType,
     publishedAt: knowledgeSources.publishedAt, fetchedAt: knowledgeSources.fetchedAt, quote: knowledgeSources.quote,
-    quoteVerified: knowledgeSources.quoteVerified,
+    quoteVerified: knowledgeSources.quoteVerified, voice: knowledgeSources.voice,
   }).from(knowledgeSources).where(eq(knowledgeSources.itemId, id)).orderBy(asc(knowledgeSources.fetchedAt), asc(knowledgeSources.id));
   return { ...(row as LibraryRow & { facts: unknown }), sources };
 }

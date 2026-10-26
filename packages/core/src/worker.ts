@@ -6,6 +6,7 @@ import { maybeQueueBackgroundMission, STALE_MISSION_MS } from './dashboard/missi
 import { researchMissions, runs, validationJobs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
+import { spendSql } from './research/mission';
 import { errorMessage, scrubError } from './tools/scrub';
 
 // A minimal executor for runs queued from the dashboard. No leases: a worker killed mid-run leaves the run `running`
@@ -46,7 +47,7 @@ export async function claimNextValidationJob(db: Db): Promise<string | null> {
 export async function claimNextMission(db: Db): Promise<string | null> {
   // A mission left running by a stopped worker would otherwise stay running forever.
   await db.update(researchMissions)
-    .set({ status: 'failed', error: 'worker stopped mid-mission', finishedAt: new Date() })
+    .set({ status: 'failed', error: 'worker stopped mid-mission', finishedAt: new Date(), costUsd: spendSql(researchMissions.id) })
     .where(and(eq(researchMissions.status, 'running'), lt(researchMissions.startedAt, new Date(Date.now() - STALE_MISSION_MS))));
   const next = db.select({ id: researchMissions.id }).from(researchMissions)
     .where(eq(researchMissions.status, 'queued'))
@@ -182,8 +183,8 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
           if (o.once) return;
           continue;
         }
-        // Idle: top up the background queue (a failure here must never stop the worker).
-        try {
+        // Idle: top up the background queue (a failure here must never stop the worker). Not with --once: it would queue a mission that never runs.
+        if (!o.once) try {
           const queued = await maybeQueueBackgroundMission(o.db, new Date());
           if (queued === 'queued') o.log('background research mission queued');
         } catch (err) {

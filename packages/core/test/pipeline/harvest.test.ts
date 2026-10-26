@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { signals, dataCalls } from '../../src/db/schema';
+import { signals, dataCalls, knowledgeItems, knowledgeSources } from '../../src/db/schema';
 import { CA_US } from '../../src/db/seed';
 import { harvest, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -494,6 +494,65 @@ describe('harvest library signals', () => {
     const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
     expect(out.signalIds).toHaveLength(2);
     expect(logs.some((l) => l.startsWith('harvest: library unavailable'))).toBe(false);
+  });
+
+  it('signal voice comes from the quoted source, not the entry (vendor entry absorbs an operator source)', async () => {
+    const { db, run } = await setup();
+    const base = {
+      kind: 'problem', title: 'Invoice pain', summary: 'S', quote: 'vendor says invoices are hard', audience: 'business',
+      countries: ['US'], industries: ['retail'], voice: 'vendor', facts: { persona: 'p' },
+      source: { url: 'https://vendor.test/a', domain: 'vendor.test', sourceType: 'web', quote: 'vendor says invoices are hard', quoteVerified: true, voice: 'vendor' },
+    };
+    const a = await upsertKnowledgeItem(db, base as never, unit(0), {});
+    const m = await upsertKnowledgeItem(db, {
+      ...base, title: 'Invoice pain, second take', quote: 'an operator says invoices eat my week', voice: 'operator',
+      source: { url: 'https://forum.test/b', domain: 'forum.test', sourceType: 'hn', quote: 'an operator says invoices eat my week', quoteVerified: true, voice: 'operator' },
+    } as never, unit(0), {});
+    expect(m.outcome).toBe('merged');
+    expect(m.itemId).toBe(a.itemId);
+    const [item] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, a.itemId));
+    expect(item).toMatchObject({ voice: 'operator', quote: 'vendor says invoices are hard' });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    const [row] = await db.select().from(signals).where(eq(signals.id, out.signalIds[0]!));
+    expect(row).toMatchObject({ url: 'https://vendor.test/a', quote: 'vendor says invoices are hard', voice: 'vendor' });
+  });
+
+  it('a later verified quote for the same url upgrades the source row; the signal pairs the entry quote with that url', async () => {
+    const { db, run } = await setup();
+    const d = {
+      kind: 'problem', title: 'Late fees', summary: 'S', quote: 'late fees pile up', audience: 'business', countries: ['US'],
+      industries: ['retail'], voice: 'operator', facts: { persona: 'p' },
+      source: { url: 'https://l.test/late', domain: 'l.test', sourceType: 'hn', quote: 'late fees pile up', quoteVerified: false },
+    };
+    const a = await upsertKnowledgeItem(db, d as never, unit(0), {});
+    await upsertKnowledgeItem(db, { ...d, source: { ...d.source, quote: 'late fees pile up', quoteVerified: true, voice: 'operator' } } as never, unit(0), {});
+    const srcs = await db.select().from(knowledgeSources).where(eq(knowledgeSources.itemId, a.itemId));
+    expect(srcs).toHaveLength(1);
+    expect(srcs[0]).toMatchObject({ quoteVerified: true, voice: 'operator' });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toHaveLength(1);
+  });
+
+  it('skips an entry when no verified source holds the entry quote', async () => {
+    const { db, run } = await setup();
+    const id = await lib(db, { url: 'https://l.test/x', quote: 'the entry quote' });
+    await db.update(knowledgeSources).set({ quote: 'some other quote' }).where(eq(knowledgeSources.itemId, id));
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toEqual([]);
+  });
+
+  it('open seeds query the library with the picked sectors, so two open runs differ', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const queries: string[] = [];
+    const embed = (t: string[]) => { queries.push(t[0]!); return [unit(0)]; };
+    const seq = (start: number) => { let i = start; return () => { i = (i * 9301 + 49297) % 233280; return i / 233280; }; };
+    const router = () => fakeRouter({ research: { harvest: Array.from({ length: 6 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
+    await harvest(deps(db, router()), run, { random: seq(1) });
+    await harvest(deps(db, router()), run, { random: seq(2) });
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).not.toBe(queries[1]);
+    expect(queries[0]).not.toBe('small business and consumer problems');
   });
 
   it('logs when the library has no matching entries', async () => {

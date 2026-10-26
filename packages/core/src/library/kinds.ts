@@ -45,7 +45,7 @@ export type KnowledgeDraft = {
   industries: string[];
   voice?: KnowledgeVoice;
   facts: unknown;
-  source: { url: string; domain: string; sourceType: string; publishedAt?: Date; quote?: string; quoteVerified: boolean };
+  source: { url: string; domain: string; sourceType: string; publishedAt?: Date; quote?: string; quoteVerified: boolean; voice?: KnowledgeVoice };
 };
 
 export class FactsError extends Error {

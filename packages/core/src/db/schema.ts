@@ -90,6 +90,10 @@ export const runStages = pgTable('run_stages', {
 /** Who wrote a signal (extract-signals.v3): someone in the affected business, an independent third party, or a seller. */
 export const SIGNAL_VOICES = ['operator', 'neutral', 'vendor'] as const;
 export type SignalVoice = (typeof SIGNAL_VOICES)[number];
+/** Compile-time: the library's voice vocabulary is exactly the signal voice vocabulary. */
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+const _voicesMatch: Equal<SignalVoice, import('../library/kinds').KnowledgeVoice> = true;
+void _voicesMatch;
 
 export const signals = pgTable('signals', {
   id: id(),
@@ -210,7 +214,7 @@ export const llmCalls = pgTable('llm_calls', {
   ok: boolean('ok').notNull(),
   error: text('error'),
   createdAt: createdAt(),
-});
+}, (t) => [index('llm_calls_mission_idx').on(t.missionId)]);
 
 export const dataCalls = pgTable('data_calls', {
   id: id(),
@@ -221,7 +225,7 @@ export const dataCalls = pgTable('data_calls', {
   costUsd: numeric('cost_usd').notNull().default('0'),
   ok: boolean('ok').notNull(),
   createdAt: createdAt(),
-});
+}, (t) => [index('data_calls_mission_idx').on(t.missionId)]);
 
 // ---- Validation pack (Plan 3, migration 0004) -----------------------------------------------------
 
@@ -431,6 +435,8 @@ export const knowledgeSources = pgTable('knowledge_sources', {
   fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
   quote: text('quote'),
   quoteVerified: boolean('quote_verified').notNull().default(false),
+  /** Who wrote this source's text; signals take their voice from the source they quote (the entry voice is for display and ranking). */
+  voice: text('voice', { enum: SIGNAL_VOICES }),
 }, (t) => [
   uniqueIndex('knowledge_sources_item_url_uq').on(t.itemId, t.url),
   index('knowledge_sources_source_type_idx').on(t.sourceType),

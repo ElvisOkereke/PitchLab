@@ -1,7 +1,7 @@
 import { inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { ModelStage } from '../config/models';
-import { MODEL_STAGES } from '../config/models';
+import { DEFAULT_MODELS, MODEL_STAGES } from '../config/models';
 import type { Db } from '../db/client';
 import { settings } from '../db/schema';
 import { LANDING_KEYS, SENDER_KEYS, getSetting } from '../validation/settings';
@@ -78,7 +78,8 @@ export type WorkerStatus = {
 const WorkerStatusSchema = z.object({
   at: z.string().max(40),
   providers: z.object({ llm: z.boolean(), github: z.boolean(), stackexchange: z.boolean(), places: z.boolean(), producthunt: z.boolean().default(false) }),
-  models: z.object(Object.fromEntries(MODEL_STAGES.map((s) => [s, z.string().max(200)])) as Record<ModelStage, z.ZodString>),
+  // Heartbeats from older workers lack newer stages: default them so the dashboard still shows the heartbeat.
+  models: z.object(Object.fromEntries(MODEL_STAGES.map((s) => [s, z.string().max(200).default(DEFAULT_MODELS[s])])) as Record<ModelStage, z.ZodDefault<z.ZodString>>),
 });
 
 /** The last worker heartbeat, or null when none was written or it is malformed. */

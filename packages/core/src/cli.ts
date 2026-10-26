@@ -174,7 +174,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       console.error('Exiting now. A run that was executing stays "running": recover it with npm run gen -- resume <id>');
       process.exit(130);
     }
-    console.error(busy ? 'Stopping after the current run (press Ctrl+C again to exit now).' : 'Stopping.');
+    console.error(busy ? 'Stopping after the current task (press Ctrl+C again to exit now).' : 'Stopping.');
     stop.abort();
   };
   process.on('SIGINT', onSigint);

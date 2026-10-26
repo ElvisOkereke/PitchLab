@@ -37,8 +37,12 @@ export type QueueMissionResult = { ok: true; id: string } | { ok: false; reason:
 
 async function insertMission(tx: Db, raw: MissionInput, origin: MissionOrigin): Promise<QueueMissionResult> {
   const input = MissionInputSchema.parse(raw);
-  const [queued] = await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(researchMissions).where(eq(researchMissions.status, 'queued'));
-  if ((queued?.n ?? 0) >= MAX_QUEUED_MISSIONS) return { ok: false, reason: 'too_many_queued' };
+  if (origin === 'owner') {
+    // The cap is for owner missions; background has its own one-at-a-time rule.
+    const [queued] = await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(researchMissions)
+      .where(and(eq(researchMissions.status, 'queued'), eq(researchMissions.origin, 'owner')));
+    if ((queued?.n ?? 0) >= MAX_QUEUED_MISSIONS) return { ok: false, reason: 'too_many_queued' };
+  }
   const [row] = await tx.insert(researchMissions).values({
     topic: input.topic,
     kinds: input.kinds,
@@ -92,12 +96,18 @@ export async function listMissions(db: Db, limit = 20): Promise<MissionView[]> {
   }));
 }
 
-/** Mean cost of the last 10 succeeded missions, or null when none has finished. */
+/** Mean cost of the last 10 succeeded owner missions, or null when none has finished. */
 export async function typicalMissionCost(db: Db): Promise<number | null> {
-  const rows = await db.select({ c: researchMissions.costUsd }).from(researchMissions).where(eq(researchMissions.status, 'succeeded'))
+  const rows = await db.select({ c: researchMissions.costUsd }).from(researchMissions).where(and(eq(researchMissions.status, 'succeeded'), eq(researchMissions.origin, 'owner')))
     .orderBy(desc(researchMissions.finishedAt), desc(researchMissions.id)).limit(10);
   if (rows.length === 0) return null;
   return rows.reduce((s, r) => s + Number(r.c), 0) / rows.length;
+}
+
+/** True while a research mission is running (the worker is busy and queued runs wait). */
+export async function missionRunning(db: Db): Promise<boolean> {
+  const [r] = await db.select({ id: researchMissions.id }).from(researchMissions).where(eq(researchMissions.status, 'running')).limit(1);
+  return r !== undefined;
 }
 
 export type ResearchSettings = { background: boolean; dailyCapUsd: number };

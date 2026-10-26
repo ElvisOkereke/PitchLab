@@ -156,6 +156,11 @@ describe('gen research', () => {
     await expect(parse(['research', 'status', '--budget', '3'])).rejects.toThrow(/no options/);
   });
 
+  it('uppercases lowercase country codes', async () => {
+    const h = await parse(['research', 'freight brokers', '--countries', 'ca, us,Global']);
+    expect(h.research).toHaveBeenCalledWith('freight brokers', { countries: ['CA', 'US', 'global'] });
+  });
+
   it('rejects bad kinds, audience, countries and budget', async () => {
     await expect(parse(['research', 'x topic', '--kinds', 'trend'])).rejects.toThrow(/kinds/);
     await expect(parse(['research', 'x topic', '--audience', 'everyone'])).rejects.toThrow();

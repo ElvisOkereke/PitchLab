@@ -31,7 +31,8 @@ CREATE TABLE "knowledge_sources" (
 	"published_at" timestamp with time zone,
 	"fetched_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"quote" text,
-	"quote_verified" boolean DEFAULT false NOT NULL
+	"quote_verified" boolean DEFAULT false NOT NULL,
+	"voice" text
 );
 --> statement-breakpoint
 CREATE TABLE "research_missions" (
@@ -67,4 +68,6 @@ CREATE INDEX "knowledge_sources_domain_idx" ON "knowledge_sources" USING btree (
 CREATE INDEX "research_missions_status_created_idx" ON "research_missions" USING btree ("status","created_at");--> statement-breakpoint
 ALTER TABLE "data_calls" ADD CONSTRAINT "data_calls_mission_id_research_missions_id_fk" FOREIGN KEY ("mission_id") REFERENCES "public"."research_missions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "llm_calls" ADD CONSTRAINT "llm_calls_mission_id_research_missions_id_fk" FOREIGN KEY ("mission_id") REFERENCES "public"."research_missions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "signals" ADD CONSTRAINT "signals_knowledge_item_id_knowledge_items_id_fk" FOREIGN KEY ("knowledge_item_id") REFERENCES "public"."knowledge_items"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "signals" ADD CONSTRAINT "signals_knowledge_item_id_knowledge_items_id_fk" FOREIGN KEY ("knowledge_item_id") REFERENCES "public"."knowledge_items"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "data_calls_mission_idx" ON "data_calls" USING btree ("mission_id");--> statement-breakpoint
+CREATE INDEX "llm_calls_mission_idx" ON "llm_calls" USING btree ("mission_id");
