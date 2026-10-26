@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
-import type { Db } from '../db/client';
 import { countEligibleForRun, getLibraryItem, retrieveForRun } from '../library/store';
 import { loadPrompt } from '../llm/prompts';
 import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
@@ -85,7 +84,7 @@ async function librarySignals(
   runId: string, marketId: string, countries: string[], queryText: string,
 ): Promise<string[]> {
   try {
-    const [vector] = await router.embed([queryText], { runId });
+    const [vector] = await router.embed([queryText], { runId, promptVersion: 'library-query.v1' });
     if (!vector) { log('harvest: library has no matching entries'); return []; }
     let rows = await retrieveForRun(db, vector, { limit: LIBRARY_SIGNAL_MAX, kinds: ['problem', 'pricing'], countries });
     if (rows.length === 0) { log('harvest: library has no matching entries'); return []; }
