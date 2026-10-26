@@ -14,7 +14,7 @@ function run(o: Partial<RunListRow> = {}): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'sector', marketId: 'ca-us', sectors: ['HVAC', 'plumbing'] }),
     status: 'succeeded', currentStage: 'case', error: null, costUsd: '1.2345', startedAt: ago(600), finishedAt: ago(60), createdAt: ago(700),
-    isExample: false, caseCount: 2, stages: [], ...o,
+    isExample: false, benchmarkPassId: null, caseCount: 2, stages: [], ...o,
   };
 }
 

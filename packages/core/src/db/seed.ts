@@ -16,7 +16,7 @@ export const CA_US = {
   ],
 };
 
-const LENSES = [
+export const LENSES = [
   {
     id: 'silent-failure',
     name: 'Silent failure monitor',

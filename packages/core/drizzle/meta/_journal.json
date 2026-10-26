@@ -57,6 +57,13 @@
       "when": 1792554533469,
       "tag": "0007_example_validation_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792988302957,
+      "tag": "0008_benchmark_passes",
+      "breakpoints": true
     }
   ]
 }

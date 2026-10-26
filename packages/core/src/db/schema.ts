@@ -5,7 +5,7 @@ import type { ValidationJobOptions } from '../dashboard/validation-jobs';
 import type { StepResult } from '../validation/run';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
-  vector, primaryKey, uniqueIndex, index, check,
+  vector, primaryKey, uniqueIndex, index, check, type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -41,6 +41,26 @@ export const lenses = pgTable('lenses', {
   createdAt: createdAt(),
 });
 
+export const benchmarkKind = pgEnum('benchmark_kind', ['baseline', 'pass', 'recompute']);
+export const benchmarkStatus = pgEnum('benchmark_status', ['running', 'complete', 'incomplete']);
+
+/** A frozen benchmark snapshot: the runs it covers and the metrics computed once (null while running). */
+export const benchmarkPasses = pgTable('benchmark_passes', {
+  id: id(),
+  /** e.g. 'bench-v1', or 'baseline' for baseline-0. */
+  version: text('version').notNull(),
+  label: text('label').notNull(),
+  kind: benchmarkKind('kind').notNull(),
+  status: benchmarkStatus('status').notNull(),
+  runIds: uuid('run_ids').array().notNull(),
+  /** Scorecard (narrowed in src/bench); null while running. */
+  metrics: jsonb('metrics').$type<unknown>(),
+  /** For recomputes: the pass this one was recomputed from. */
+  sourcePassId: uuid('source_pass_id').references((): AnyPgColumn => benchmarkPasses.id),
+  createdAt: createdAt(),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+});
+
 export const runs = pgTable('runs', {
   id: id(),
   config: jsonb('config').$type<RunConfig>().notNull(),
@@ -50,10 +70,11 @@ export const runs = pgTable('runs', {
   costUsd: numeric('cost_usd').notNull().default('0'),
   /** True only for the built-in example case's run (hidden/reset by src/example). */
   isExample: boolean('is_example').notNull().default(false),
+  benchmarkPassId: uuid('benchmark_pass_id').references(() => benchmarkPasses.id),
   startedAt: timestamp('started_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
   createdAt: createdAt(),
-});
+}, (t) => [index('runs_benchmark_pass_idx').on(t.benchmarkPassId)]);
 
 export const runStages = pgTable('run_stages', {
   runId: uuid('run_id').notNull().references(() => runs.id),
