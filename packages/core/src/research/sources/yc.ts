@@ -1,4 +1,4 @@
-import { request } from '../http';
+import { request, type CallHook } from '../http';
 import type { KnowledgeDraft } from '../../library/kinds';
 
 export const sourceType = 'yc';
@@ -23,8 +23,8 @@ export function resetYcCache(): void {
 
 const STATUSES = ['Active', 'Inactive', 'Acquired', 'Public'];
 
-async function load(f?: typeof fetch): Promise<YcCompany[]> {
-  const json = await request('yc', URL_ALL, { maxBytes: 30_000_000, timeoutMs: 30_000 }, { fetch: f });
+async function load(opts: { fetch?: typeof fetch; onCall?: CallHook }): Promise<YcCompany[]> {
+  const json = await request('yc', URL_ALL, { maxBytes: 30_000_000, timeoutMs: 30_000 }, { fetch: opts.fetch, onCall: opts.onCall });
   if (!Array.isArray(json)) return [];
   const out: YcCompany[] = [];
   for (const c of json as Record<string, unknown>[]) {
@@ -45,10 +45,10 @@ async function load(f?: typeof fetch): Promise<YcCompany[]> {
 
 export async function ycCompanies(
   filter: { query?: string; industries?: string[]; limit?: number } = {},
-  opts: { fetch?: typeof fetch } = {},
+  opts: { fetch?: typeof fetch; onCall?: CallHook } = {},
 ): Promise<YcCompany[]> {
   if (!cache) {
-    const p = load(opts.fetch);
+    const p = load(opts);
     cache = p;
     // Do not cache a failed or empty load; the error still reaches this caller.
     p.then(
