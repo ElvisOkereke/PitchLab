@@ -4,7 +4,7 @@ import type { Db } from '../../src/db/client';
 import { benchmarkPasses, runs, scores } from '../../src/db/schema';
 import { BENCHMARKS } from '../../src/bench/definitions';
 import {
-  BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, passCases, passProgress, queueBenchmarkPass, recomputePass, saveBaseline,
+  BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, passCases, passProgress, queueBenchmarkPass, recomputePass, saveBaseline, previewBaseline,
 } from '../../src/bench/passes';
 import { MAX_QUEUED, QUEUE_MARKET_ID } from '../../src/dashboard/runs';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -42,6 +42,30 @@ describe('saveBaseline', () => {
     const forced = await saveBaseline(db, { force: true });
     expect(forced.ok && forced.pass.label).toBe('baseline-1');
     expect((await listBenchmarkPasses(db)).length).toBe(2);
+  });
+});
+
+describe('baseline preview and owner-verdict copy', () => {
+  it('previewBaseline computes without saving', async () => {
+    const db = await testDb();
+    await mk(db, 'succeeded');
+    const p = await previewBaseline(db);
+    expect(p.metrics?.extra.runs).toBe(1);
+    expect(p.kind).toBe('baseline');
+    expect(await listBenchmarkPasses(db)).toHaveLength(0);
+  });
+
+  it('a baseline with no gut scores says not applicable, with no give-a-score note', async () => {
+    const db = await testDb();
+    const run = await mk(db, 'succeeded');
+    const idea = await insertIdea(db, run);
+    await insertCase(db, idea.id);
+    const first = await saveBaseline(db);
+    if (!first.ok) throw new Error('baseline');
+    const v = first.pass.metrics!.metrics.find((m) => m.id === 'ownerVerdict')!;
+    expect(v.display).toBe('not applicable (no scores at the time)');
+    expect(v.note).toBeUndefined();
+    expect(v.status).toBe('no_data');
   });
 });
 

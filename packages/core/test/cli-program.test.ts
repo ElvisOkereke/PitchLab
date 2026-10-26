@@ -129,6 +129,7 @@ describe('gen bench', () => {
   it('parses baseline, run and report', async () => {
     expect((await parse(['bench', 'baseline', '--force'])).benchBaseline).toHaveBeenCalledWith({ force: true });
     expect((await parse(['bench', 'baseline'])).benchBaseline).toHaveBeenCalledWith({});
+    expect((await parse(['bench', 'baseline', '--dry-run'])).benchBaseline).toHaveBeenCalledWith({ dryRun: true });
     expect((await parse(['bench', 'run'])).benchRun).toHaveBeenCalledWith();
     expect((await parse(['bench', 'report', 'abc', '--recompute'])).benchReport).toHaveBeenCalledWith('abc', { recompute: true });
     expect((await parse(['bench', 'report'])).benchReport).toHaveBeenCalledWith(undefined, {});

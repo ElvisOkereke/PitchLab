@@ -45,11 +45,21 @@ async function scoreRuns(db: Db, runIds: string[], noteFailed = true): Promise<{
   return { metrics, failed };
 }
 
-/** Freezes today's scorecard over every finished real run (newest 200). Never overwrites; `force` adds another. */
-export async function saveBaseline(
-  db: Db,
-  opts: { force?: boolean } = {},
-): Promise<{ ok: true; pass: PassRow } | { ok: false; reason: 'exists' }> {
+/** Baseline copy: with no gut scores at the time, the owner verdict is "not applicable", not a to-do (spec: Measurement rules). */
+function baselineCopy(metrics: Scorecard): Scorecard {
+  if (metrics.extra.scoredCases > 0) return metrics;
+  return {
+    ...metrics,
+    metrics: metrics.metrics.map((m) => {
+      if (m.id !== 'ownerVerdict' || m.status !== 'no_data') return m;
+      const { note: _note, ...rest } = m;
+      return { ...rest, display: 'not applicable (no scores at the time)' };
+    }),
+  };
+}
+
+/** The scorecard over every finished real run (newest 200), as a baseline row that is not saved. */
+async function baselineMetrics(db: Db): Promise<{ runIds: string[]; metrics: Scorecard }> {
   const finished = await db
     .select({ id: runs.id })
     .from(runs)
@@ -57,7 +67,24 @@ export async function saveBaseline(
     .orderBy(desc(runs.createdAt), desc(runs.id))
     .limit(SCORECARD_RUNS_MAX);
   const runIds = finished.map((r) => r.id);
-  const metrics = await computeScorecard(db, runIds);
+  return { runIds, metrics: baselineCopy(await computeScorecard(db, runIds)) };
+}
+
+/** What `saveBaseline` would freeze right now. Saves nothing (`gen bench baseline --dry-run`). */
+export async function previewBaseline(db: Db): Promise<PassRow> {
+  const { runIds, metrics } = await baselineMetrics(db);
+  return {
+    id: '00000000-0000-0000-0000-000000000000', version: 'baseline', label: 'baseline (preview, not saved)', kind: 'baseline',
+    status: 'complete', runIds, metrics, sourcePassId: null, createdAt: new Date(), completedAt: null,
+  };
+}
+
+/** Freezes today's scorecard over every finished real run (newest 200). Never overwrites; `force` adds another. */
+export async function saveBaseline(
+  db: Db,
+  opts: { force?: boolean } = {},
+): Promise<{ ok: true; pass: PassRow } | { ok: false; reason: 'exists' }> {
+  const { runIds, metrics } = await baselineMetrics(db);
   return db.transaction(async (tx) => {
     await lock(tx);
     const [{ n } = { n: 0 }] = await tx.select({ n: count() }).from(benchmarkPasses).where(eq(benchmarkPasses.kind, 'baseline'));

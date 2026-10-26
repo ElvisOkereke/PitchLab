@@ -7,10 +7,11 @@ import {
   type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { loadEnv, type Env } from './config/env';
+import { scrubError } from './tools/scrub';
 import { BENCHMARKS, CURRENT_BENCHMARK } from './bench/definitions';
 import { renderScorecardMarkdown } from './bench/markdown';
 import {
-  BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
+  BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, previewBaseline, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
 } from './bench/passes';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
 import { createDb, type Db } from './db/client';
@@ -96,8 +97,8 @@ async function exportCase(db: Db, slug: string): Promise<string> {
 async function finaliseBenchmarks(db: Db): Promise<void> {
   try {
     await finalizeBenchmarkPasses(db);
-  } catch {
-    console.error('benchmark finalise failed');
+  } catch (err) {
+    console.error(clean(`benchmark finalise failed: ${scrubError(err instanceof Error ? err.message : String(err)).slice(0, 300)}`));
   }
 }
 
@@ -148,7 +149,9 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
       const refusal = resumeRefusal(row.status);
       if (refusal) throw new CliError(`Cannot resume ${id}: ${refusal}`, 1);
     }
-    return await executeAndReport(db, env, id);
+    const code = await executeAndReport(db, env, id);
+    await finaliseBenchmarks(db);
+    return code;
   } finally {
     await closeDb(db);
   }
@@ -431,9 +434,14 @@ async function configGetCommand(key: string | undefined): Promise<number> {
 
 // ---- Benchmark ---------------------------------------------------------------------------------------
 
-async function benchBaselineCommand(opts: { force?: boolean }): Promise<number> {
+async function benchBaselineCommand(opts: { force?: boolean; dryRun?: boolean }): Promise<number> {
   return withDb(async (db) => {
-    const r = await saveBaseline(db, opts);
+    if (opts.dryRun) {
+      out(renderScorecardMarkdown([await previewBaseline(db)]));
+      out('Dry run: nothing was saved.');
+      return 0;
+    }
+    const r = await saveBaseline(db, { force: opts.force });
     if (!r.ok) {
       console.error('A baseline already exists. Use --force to save another.');
       return 1;
@@ -450,7 +458,7 @@ async function benchRunCommand(): Promise<number> {
       console.error(BENCH_REFUSAL[r.reason]);
       return 1;
     }
-    out(`Queued ${r.pass.label}: ${BENCHMARKS[CURRENT_BENCHMARK].costNote}.`);
+    out(`Queued ${r.pass.label} (pass id ${r.pass.id}): ${BENCHMARKS[CURRENT_BENCHMARK].costNote}.`);
     for (const id of r.pass.runIds) out(`  run ${id}`);
     out('Start the worker to execute them: npm run gen -- worker');
     return 0;
@@ -477,7 +485,8 @@ async function benchReportCommand(passId: string | undefined, opts: { recompute?
       }
     } else {
       const baseline = all.filter((p) => p.kind === 'baseline').at(-1);
-      passes = [...(baseline ? [baseline] : []), ...all.filter((p) => p.kind !== 'baseline').slice(0, 5)];
+      // Same order as the Progress page: baseline first, then passes oldest to newest.
+      passes = [...(baseline ? [baseline] : []), ...all.filter((p) => p.kind !== 'baseline').slice(0, 5).reverse()];
       if (passes.length === 0) {
         out('No benchmark passes yet. Save a baseline first: npm run gen -- bench baseline');
         return 0;

@@ -65,7 +65,7 @@ export type CliHandlers = {
   configSet(key: string, value: string): Promise<number>;
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
-  benchBaseline(opts: { force?: boolean }): Promise<number>;
+  benchBaseline(opts: { force?: boolean; dryRun?: boolean }): Promise<number>;
   benchRun(): Promise<number>;
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
 };
@@ -222,7 +222,8 @@ export function buildProgram(h: CliHandlers): Command {
   benchCmd.command('baseline')
     .description("Freeze today's scorecard over every finished real run as baseline-N")
     .option('--force', 'add another baseline even if one exists')
-    .action(async (opts: { force?: boolean }) => {
+    .option('--dry-run', 'print the scorecard without saving anything')
+    .action(async (opts: { force?: boolean; dryRun?: boolean }) => {
       process.exitCode = await h.benchBaseline(opts);
     });
   benchCmd.command('run')

@@ -4,8 +4,9 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { cases, ideas, runStages, runs } from '../../src/db/schema';
 import {
-  MAX_QUEUED, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, listRuns, queueGateKillRerun, queueRun, requeueRun,
+  MAX_QUEUED, QUEUE_MARKET_ID, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, listRuns, queueGateKillRerun, queueRun, requeueRun,
 } from '../../src/dashboard/runs';
+import { BENCHMARKS } from '../../src/bench/definitions';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
@@ -18,6 +19,14 @@ beforeEach(async () => {
 const queued = () => db.select().from(runs).where(eq(runs.status, 'queued'));
 
 describe('run config schemas', () => {
+  it('every bench-v1 seed config built the way queueBenchmarkPass builds it passes RunConfigSchema', () => {
+    const def = BENCHMARKS['bench-v1'];
+    for (const seed of def.seeds) {
+      const cfg = defaultRunConfig({ ...seed, marketId: QUEUE_MARKET_ID, ideaCount: def.ideaCount, advanceCount: def.advanceCount });
+      expect(RunConfigSchema.safeParse(cfg).success).toBe(true);
+    }
+  });
+
   it('RunConfigSchema accepts the CLI defaults and rejects absurd values', () => {
     expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'open' })).success).toBe(true);
     for (const patch of [

@@ -29,6 +29,11 @@ describe('renderScorecardMarkdown', () => {
     expect(md).toContain('1 of 4 runs failed');
   });
 
+  it('prints the pass id in each pass section', () => {
+    const md = renderScorecardMarkdown([pass('baseline-0', card({}))]);
+    expect(md).toContain('Id: 00000000-0000-4000-8000-000000000001');
+  });
+
   it('escapes pipes and Markdown in labels and notes', () => {
     const p = pass('a|b\n[x](http://e.com)', card({}));
     const md = renderScorecardMarkdown([p]);

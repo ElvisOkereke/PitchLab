@@ -19,7 +19,7 @@ export function renderScorecardMarkdown(passes: PassRow[]): string {
   }
   for (const p of passes) {
     const m = p.metrics;
-    out.push('', `## ${line(p.label)}`, '', `Status: ${p.status}`);
+    out.push('', `## ${line(p.label)}`, '', `Id: ${p.id}`, `Status: ${p.status}`);
     if (!m) {
       out.push('', 'No figures for this pass yet.');
       continue;
