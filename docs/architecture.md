@@ -134,7 +134,10 @@ flowchart TD
     B -- yes --> C[Claim it and execute the pipeline]
     B -- no --> D{Queued validation job?}
     D -- yes --> E[Claim it and run validation]
-    D -- no --> F[Sleep, 10 s by default]
+    D -- no --> M{Queued research mission?}
+    M -- yes --> N[Claim it and run the mission]
+    M -- no --> F[Sleep, 10 s by default]
+    N --> A
     C --> A
     E --> A
     F --> A
@@ -160,7 +163,7 @@ flowchart TD
 
 `packages/core/src/library/` stores entries (problem, startup and pricing in this release; trend, rule change and market are reserved) and `packages/core/src/research/` fills it.
 
-- **Mission engine** (`research/mission.ts`, worker side): plan the queries, collect, extract entries with the model, verify quotes, embed, store, all under a soft budget. The budget is checked between steps and between source batches, and one batch in flight may overshoot. A source that fails (a 429, a bad token, a timeout) becomes a mission warning, the other sources continue, and the mission still ends `done` with warnings.
+- **Mission engine** (`research/mission.ts`, worker side): plan the queries, collect, extract entries with the model, verify quotes, embed, store, all under a soft budget. The budget is checked between steps and between source batches, and one batch in flight may overshoot. A source that fails (a 429, a bad token, a timeout) becomes a mission warning, the other sources continue, and the mission still ends `succeeded` with warnings.
 - **Sources:** Hacker News, GitHub, Stack Exchange, app store reviews (English-language storefronts), Product Hunt (needs `PRODUCTHUNT_TOKEN`; non-commercial use unless Product Hunt agrees otherwise), the Y Combinator company list (fetched once per process) and web pages found by model web search. Reddit is not used: its terms need a commercial-use contract and its public API is closing.
 - **Source rules:** robots.txt is checked before any page fetch (disallowed means skip), each source has its own rate limit, only English-language sources are used, and domains in `tools/banned-sources.ts` are refused. Pages go through the SSRF-guarded `fetchPage`.
 - **Public data:** quotes are 500 characters or fewer. No usernames, profile URLs or author handles are stored, and `u/…`, `@handle` and "posted by" patterns are stripped from quotes and summaries. Invisible characters are stripped before storage.

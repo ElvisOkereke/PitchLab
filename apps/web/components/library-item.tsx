@@ -23,7 +23,7 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
     <section aria-labelledby="item-title" className="card library-detail" data-testid="library-detail">
       <h2 id="item-title">{item.title}</h2>
       <p>
-        <span className="badge badge-info">{item.kind}</span> {item.status === 'rejected' ? <span className="badge badge-bad">rejected</span> : null}
+        <span className="badge badge-info">{item.kind.replace('_', ' ')}</span> {item.status === 'rejected' ? <span className="badge badge-bad">rejected</span> : null}
       </p>
       <p>{item.summary}</p>
       {item.quote ? (

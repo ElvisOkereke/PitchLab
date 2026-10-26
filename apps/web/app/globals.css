@@ -165,6 +165,7 @@ button {
 input[type='text'],
 input[type='password'],
 input[type='number'],
+input[type='search'],
 select,
 textarea {
   min-height: var(--tap);

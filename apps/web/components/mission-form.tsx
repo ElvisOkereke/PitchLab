@@ -92,7 +92,7 @@ export function MissionForm({ typicalCost }: { typicalCost: number | null }) {
       </div>
       <p className="muted small" data-testid="mission-cost">
         This mission costs up to {usd(shownBudget)} in model and data calls.
-        {typicalCost === null ? '' : ` Recent missions cost about this much on average (typical: ${usd(typicalCost)}).`}
+        {typicalCost === null ? '' : ` Typical cost of recent missions: ${usd(typicalCost)}.`}
       </p>
       <button type="submit" disabled={pending}>
         {pending ? 'Starting…' : 'Start research mission'}

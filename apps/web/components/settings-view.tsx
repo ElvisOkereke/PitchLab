@@ -56,10 +56,13 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
       </section>
 
       <section aria-labelledby="research-title" className="card">
-        <h2 id="research-title">Research</h2>
+        <div className="label-row">
+          <h2 id="research-title">Research</h2>
+          <HelpTip term="library" />
+        </div>
         <p className="muted small">
-          Background research starts about one small research mission at a time while the worker is running, until the daily cap is spent
-          (the day ends at midnight in Toronto). It is off until you turn it on. Missions you start yourself on the Library page are not limited by it. <HelpTip term="library" />
+          Background research starts one small $1 mission at a time while the worker is running, until the daily cap is spent
+          (the day ends at midnight in Toronto). It is off until you turn it on. Missions you start yourself on the Library page are not limited by it.
         </p>
         <ResearchSettingsForm background={data.research.background} dailyCapUsd={data.research.dailyCapUsd} />
       </section>

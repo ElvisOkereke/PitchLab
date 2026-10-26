@@ -160,10 +160,10 @@ describe('LibraryView missions', () => {
     expect(card.getAttribute('data-tour')).toBe('library-missions');
     expect(within(card).getByRole('button', { name: 'Start research mission' })).toBeTruthy();
     expect(card.textContent).toContain('up to $2.00');
-    expect(card.textContent).not.toContain('typical');
+    expect(card.textContent).not.toContain('Typical cost');
     cleanup();
     const some = render(<LibraryView {...props({ typicalCost: 0.5 })} />);
-    expect(some.getByTestId('library-missions').textContent).toContain('typical: $0.50');
+    expect(some.getByTestId('library-missions').textContent).toContain('Typical cost of recent missions: $0.50');
   });
 
   it('the form has topic, one checkbox per kind, countries, audience and budget', () => {
@@ -216,6 +216,14 @@ describe('LibraryView missions', () => {
     cleanup();
     const busy = render(<LibraryView {...props({ missions: [mission({ status: 'queued' })] })} />);
     expect(busy.getByTestId('library-missions').getAttribute('data-refreshing')).toBe('true');
+  });
+});
+
+describe('markup validity', () => {
+  it('no details element sits inside a paragraph or heading (the parser would close it early)', () => {
+    const { container } = render(<LibraryView {...props({ item: null })} />);
+    expect(container.querySelectorAll('p details, h1 details, h2 details')).toHaveLength(0);
+    expect(container.querySelectorAll('details.help-tip').length).toBeGreaterThan(0);
   });
 });
 

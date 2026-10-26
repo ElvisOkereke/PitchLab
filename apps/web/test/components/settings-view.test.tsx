@@ -27,6 +27,13 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
   };
 }
 
+describe('SettingsView markup', () => {
+  it('no details element sits inside a paragraph or heading (the parser would close it early)', () => {
+    const { container } = render(<SettingsView data={data()} />);
+    expect(container.querySelectorAll('p details, h1 details, h2 details')).toHaveLength(0);
+  });
+});
+
 describe('SettingsView research card', () => {
   it('shows the Background research checkbox and the daily cap as saved, with a save button', () => {
     const { getByTestId } = render(<SettingsView data={data({ research: { background: true, dailyCapUsd: 7.5 } })} />);

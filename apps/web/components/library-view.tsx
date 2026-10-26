@@ -70,7 +70,9 @@ function Filters({ query, coverage }: { query: LibraryQuery; coverage: LibraryCo
         <button type="submit" className="secondary">
           Search
         </button>
-        <Link href="/library">Clear</Link>
+        <Link href="/library" className="button secondary">
+          Clear
+        </Link>
       </div>
     </form>
   );
@@ -236,9 +238,10 @@ export function LibraryView({ query, rows, total, coverage, item, missions, typi
   const filtered = Boolean(query.q || query.kind || query.audience || query.country || query.voice || query.source || query.age || query.status !== 'active');
   return (
     <main className="library-page">
-      <h1>
-        Library <HelpTip term="library" />
-      </h1>
+      <div className="label-row">
+        <h1>Library</h1>
+        <HelpTip term="library" />
+      </div>
       <Filters query={query} coverage={coverage} />
       {item ? <LibraryItem item={item} query={query} /> : null}
       <Results query={query} rows={rows} total={total} now={now} empty={!filtered && total === 0} />
