@@ -410,7 +410,7 @@ export const CHAPTERS: Record<TourChapterId, { title: string; steps: TourStep[] 
         target: 'progress-scorecard',
         kind: 'info',
         title: 'Track idea quality',
-        body: 'The Progress page compares each benchmark pass with the starting baseline. Score each pass\u2019s cases with Your gut so the owner verdict has data.',
+        body: 'The Progress page compares each benchmark pass with the starting baseline. Score a pass\u2019s cases with Your gut, then press Recompute on its column so the owner verdict counts them.',
       },
       {
         id: 'decide-example',

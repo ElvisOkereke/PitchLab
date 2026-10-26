@@ -6,6 +6,7 @@
 import { readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Db } from '@bcg/core/db/client';
+import { benchmarkPasses } from '@bcg/core/db/schema';
 import { ensureExample, hideExample } from '@bcg/core/example/example';
 import { setSetting } from '@bcg/core/validation/settings';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
@@ -74,6 +75,14 @@ const SPECS: Record<string, Spec> = {
   },
   'bench.ts#runBenchmarkAction': {
     seed: async () => ({}),
+  },
+  'bench.ts#recomputePassAction': {
+    seed: async (db) => {
+      const [p] = await db.insert(benchmarkPasses).values({
+        version: 'bench-v1', label: 'bench-v1 #1', kind: 'pass', status: 'complete', runIds: [], completedAt: new Date(),
+      }).returning({ id: benchmarkPasses.id });
+      return { passId: p!.id };
+    },
   },
   'validation.ts#queueValidationAction': {
     seed: async (db) => {

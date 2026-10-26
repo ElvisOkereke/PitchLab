@@ -2,6 +2,7 @@ import { METRIC_DEFS } from '@bcg/core/bench/definitions';
 import type { PassRow } from '@bcg/core/bench/passes';
 import type { MetricResult } from '@bcg/core/bench/scorecard';
 import Link from 'next/link';
+import { RecomputeForm } from './recompute-form';
 import { RunBenchmarkForm } from './run-benchmark-form';
 
 const MAX_PASS_COLUMNS = 5;
@@ -12,7 +13,14 @@ export type ScoreCases = { label: string; cases: { slug: string; title: string; 
 const day = (d: Date) => d.toISOString().slice(0, 10);
 
 function Cell({ m }: { m: MetricResult | undefined }) {
-  if (!m || m.status !== 'measured') return <td className="muted">{m?.display ?? 'no data'}</td>;
+  if (!m || m.status !== 'measured') {
+    return (
+      <td className="muted">
+        {m?.display ?? 'no data'}
+        {m?.note ? <div className="small">{m.note}</div> : null}
+      </td>
+    );
+  }
   return (
     <td>
       {m.display}{' '}
@@ -23,7 +31,7 @@ function Cell({ m }: { m: MetricResult | undefined }) {
   );
 }
 
-/** The scorecard (newest baseline plus the 5 newest passes), the run state, and the cases to score. Props only; no data access. */
+/** The scorecard (oldest baseline, the canonical one, plus the 5 newest passes), the run state, and the cases to score. Props only; no data access. */
 export function ProgressView({
   passes,
   running,
@@ -35,7 +43,8 @@ export function ProgressView({
   scoreCases: ScoreCases | null;
   costNote: string;
 }) {
-  const baseline = passes.find((p) => p.kind === 'baseline') ?? null;
+  // The list is newest first and the oldest baseline is the canonical one (baseline-0), as in `gen bench report`.
+  const baseline = passes.filter((p) => p.kind === 'baseline').at(-1) ?? null;
   const recent = passes.filter((p) => p.kind !== 'baseline' && p.status !== 'running').slice(0, MAX_PASS_COLUMNS).reverse();
   const columns = baseline ? [baseline, ...recent] : recent;
   return (
@@ -61,7 +70,9 @@ export function ProgressView({
                 <th key={p.id} scope="col">
                   {p.label}
                   <div className="muted small">{day(p.createdAt)}</div>
+                  <div className="muted small">Id {p.id.slice(0, 8)}</div>
                   {p.status === 'incomplete' ? <span className="badge badge-warn">incomplete</span> : null}
+                  <RecomputeForm passId={p.id} />
                 </th>
               ))}
             </tr>
@@ -102,7 +113,7 @@ export function ProgressView({
       {scoreCases ? (
         <section aria-labelledby="bench-score-title" className="card">
           <h2 id="bench-score-title">Score these cases</h2>
-          <p className="muted small">From {scoreCases.label}. Your gut score feeds the owner verdict.</p>
+          <p className="muted small">From {scoreCases.label}. Press Recompute under its column to include your gut scores in the owner verdict.</p>
           {scoreCases.cases.length === 0 ? (
             <p className="muted">This pass made no cases.</p>
           ) : (

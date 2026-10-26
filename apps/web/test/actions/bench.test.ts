@@ -1,6 +1,6 @@
 import type { Db } from '@bcg/core/db/client';
 import { benchmarkPasses, runs } from '@bcg/core/db/schema';
-import { BENCH_REFUSAL } from '@bcg/core/bench/passes';
+import { BENCH_REFUSAL, finalizeBenchmarkPasses } from '@bcg/core/bench/passes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDb } from '../helpers/db';
 import { request, resetRequest } from '../helpers/next-mocks';
@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/require-owner', () => ({ requireOwnerAction: async () => {},
 vi.mock('next/cache', () => import('../helpers/next-mocks').then((m) => m.nextCacheMock));
 vi.mock('next/navigation', () => import('../helpers/next-mocks').then((m) => m.nextNavigationMock));
 
-const { runBenchmarkAction } = await import('@/actions/bench');
+const { runBenchmarkAction, recomputePassAction } = await import('@/actions/bench');
 
 beforeEach(async () => {
   state.db = await createTestDb();
@@ -38,5 +38,37 @@ describe('runBenchmarkAction', () => {
     await state.db.insert(runs).values({ config: {} as never, status: 'queued' });
     expect(await runBenchmarkAction({}, new FormData())).toEqual({ error: BENCH_REFUSAL.busy });
     expect(await state.db.select().from(benchmarkPasses)).toHaveLength(0);
+  });
+});
+
+describe('recomputePassAction', () => {
+  const fd = (passId: string) => {
+    const f = new FormData();
+    f.set('passId', passId);
+    return f;
+  };
+  const finishedPass = async () => {
+    await runBenchmarkAction({}, new FormData());
+    await state.db.update(runs).set({ status: 'succeeded' });
+    await finalizeBenchmarkPasses(state.db);
+    const [p] = await state.db.select().from(benchmarkPasses);
+    return p!;
+  };
+
+  it('adds a recompute row for a finished pass and revalidates /progress', async () => {
+    const p = await finishedPass();
+    expect(await recomputePassAction({}, fd(p.id))).toEqual({ ok: true });
+    const rows = await state.db.select().from(benchmarkPasses);
+    expect(rows.map((r) => r.kind).sort()).toEqual(['pass', 'recompute']);
+    expect(request.revalidated).toContain('/progress');
+  });
+
+  it('says so for a missing pass, a bad id, and a pass still running', async () => {
+    expect(await recomputePassAction({}, fd('00000000-0000-4000-8000-000000000000'))).toEqual({ error: 'That pass no longer exists.' });
+    expect(await recomputePassAction({}, fd('nope'))).toEqual({ error: 'Invalid request. Refresh and try again.' });
+    await runBenchmarkAction({}, new FormData());
+    const [p] = await state.db.select().from(benchmarkPasses);
+    expect(await recomputePassAction({}, fd(p!.id))).toEqual({ error: 'Wait until the pass finishes.' });
+    expect(await state.db.select().from(benchmarkPasses)).toHaveLength(1);
   });
 });

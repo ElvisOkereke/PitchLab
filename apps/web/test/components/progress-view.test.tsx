@@ -4,7 +4,7 @@ import { METRIC_DEFS } from '@bcg/core/bench/definitions';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/actions/bench', () => ({ runBenchmarkAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/bench', () => ({ runBenchmarkAction: vi.fn(async () => ({})), recomputePassAction: vi.fn(async () => ({})) }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 const { ProgressView } = await import('@/components/progress-view');
@@ -93,6 +93,23 @@ describe('ProgressView', () => {
     expect(container.querySelector('a[href="/cases/c-d?tab=score"]')).not.toBeNull();
     expect(container.textContent).toContain('Your gut: 4');
     expect(container.textContent).toContain('not scored');
+  });
+
+  it('uses the oldest baseline, and shows pass ids, Recompute buttons and metric reasons', () => {
+    const passes = [
+      pass({ id: 'newbaseline-id', kind: 'baseline', label: 'baseline-1' }),
+      pass({ id: '12345678-aaaa-bbbb-cccc-ddddeeeeffff', label: 'bench-v1 #1', metrics: card({
+        realNeed: metric({ status: 'no_data', display: 'no data', note: 'No generated idea in this set cites a signal.' }),
+      }) }),
+      pass({ id: 'oldbaseline-id', kind: 'baseline', label: 'baseline-0' }),
+    ];
+    const { container, getAllByRole } = render(<ProgressView {...base} passes={passes} />);
+    const heads = [...container.querySelectorAll('thead th')].map((e) => e.textContent);
+    expect(heads[1]).toContain('baseline-0');
+    expect(container.textContent).not.toContain('baseline-1');
+    expect(container.textContent).toContain('Id 12345678');
+    expect(getAllByRole('button', { name: 'Recompute' })).toHaveLength(2);
+    expect(container.querySelector('tr[data-metric="realNeed"]')?.textContent).toContain('No generated idea in this set cites a signal.');
   });
 
   it('renders hostile labels and titles as text', () => {
