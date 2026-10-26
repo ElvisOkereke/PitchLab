@@ -1,3 +1,6 @@
+// Not used: site terms — see docs/superpowers/specs/2026-10-17-business-case-generator-design.md §11.1 sources.
+// Kept (with its tests) so it can be re-enabled if the owner gets permission; research missions never wire it.
+
 import { cleanText, toDate, type RawItem } from '../../tools/sources/types';
 import { request, SourceError, throttle, USER_AGENT, type HttpOpts } from '../http';
 

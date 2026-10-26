@@ -53,8 +53,9 @@ export const UNREACHABLE_NOTE = 'page could not be loaded by the checker — ope
  */
 export const COMPETITOR_REVIEW_NOTE = 'the checker could not find this on the linked page — check it yourself';
 const COMPETITOR_SECTIONS = new Set(['competitor', 'competitor-pricing']);
-const MIN_QUOTE_WORDS = 6;
-const MIN_QUOTE_CHARS = 30;
+/** A quote shorter than this (after normalize()) is too short to count as verified evidence (also used by research missions). */
+export const MIN_QUOTE_WORDS = 6;
+export const MIN_QUOTE_CHARS = 30;
 /**
  * A page that fetched fine but yields less readable text than this is treated as unreadable (typically rendered
  * client-side by JavaScript, so the fetcher sees an empty shell). Its claims are `unreachable`, not judged:

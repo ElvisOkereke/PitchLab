@@ -7,7 +7,7 @@ import { upsertKnowledgeItem } from '../library/store';
 import { loadPrompt } from '../llm/prompts';
 import type { CallCtx, ModelRouter } from '../llm/types';
 import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
-import { normalize } from '../pipeline/verify';
+import { MIN_QUOTE_CHARS, MIN_QUOTE_WORDS, normalize } from '../pipeline/verify';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { logDataCall } from '../tools/data-calls';
 import type { fetchPage as fetchPageFn, FetchPageOpts, PageResult } from '../tools/fetch-page';
@@ -20,8 +20,6 @@ import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
 import { robotsAllows } from './robots';
 import { appReviews, COUNTRIES as APP_STORE_COUNTRIES } from './sources/appreviews';
-import { productHuntSearch, productHuntToDraft, type ProductHuntItem } from './sources/producthunt';
-import { redditSearch } from './sources/reddit';
 import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
 
 /**
@@ -40,24 +38,30 @@ const API_LIMIT = 10;
 const WEB_MAX_SEARCHES = 3;
 export const BUDGET_WARNING = 'Budget reached; stopped early.';
 
-export const MISSION_SOURCES = ['web', 'reddit', 'hn', 'stackexchange', 'github', 'appreviews', 'producthunt', 'yc'] as const;
+/**
+ * Sources a mission may use. Reddit and Product Hunt are deliberately absent (site terms: Reddit needs a commercial
+ * contract and its API is closing; Product Hunt's API is non-commercial by default). Their collector modules stay in
+ * research/sources/ unused, so they can be re-enabled if the owner gets permission.
+ */
+export const MISSION_SOURCES = ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'yc'] as const;
 export type MissionSource = (typeof MISSION_SOURCES)[number];
 
-/** Which sources can feed each kind. Product Hunt and YC map to `startup` drafts in code. */
+/** Which sources can feed each kind. YC maps to `startup` drafts in code. */
 const SOURCES_FOR_KIND: Record<SliceAKind, readonly MissionSource[]> = {
-  problem: ['web', 'reddit', 'hn', 'stackexchange', 'github', 'appreviews'],
-  pricing: ['web', 'reddit', 'appreviews'],
-  startup: ['web', 'hn', 'producthunt', 'yc'],
+  problem: ['web', 'hn', 'stackexchange', 'github', 'appreviews'],
+  pricing: ['web', 'appreviews'],
+  startup: ['web', 'hn', 'yc'],
 };
+
+/** At most this many entries are kept per source per extract batch. */
+export const MAX_ENTRIES_PER_SOURCE = 3;
 
 const SOURCE_HINTS: Record<MissionSource, string> = {
   web: 'a model web search. Phrase it as a research question. Prefer owner and operator communities (trade forums, associations, local business news) and neutral bodies (regulators, statistics offices, journalists); vendor pages only to learn what is already sold.',
-  reddit: 'a short keyword search (2 to 6 words) as people would write it in a post title.',
   hn: 'a short keyword search (2 to 6 words) for Hacker News stories and comments.',
   stackexchange: 'a short keyword search (2 to 6 words) as people would write it in a question title.',
   github: 'a short keyword search (2 to 6 words) as people would write it in an issue title.',
   appreviews: 'the name of one app people in this topic use (its low-rated reviews hold problems and pricing complaints).',
-  producthunt: 'one topic keyword (for example "invoicing").',
   yc: 'one or two keywords matching what companies in this topic do.',
 };
 
@@ -65,9 +69,7 @@ export type CollectorCtx = { onCall: CallHook; countries: string[] };
 
 /** All injectable. A missing collector is a source the mission cannot use (and the plan is never offered). */
 export type Collectors = {
-  reddit?: (q: string, ctx: CollectorCtx) => Promise<RawItem[]>;
   appReviews?: (q: string, ctx: CollectorCtx) => Promise<RawItem[]>;
-  productHunt?: (q: string, ctx: CollectorCtx) => Promise<ProductHuntItem[]>;
   yc?: (q: string, ctx: CollectorCtx) => Promise<YcCompany[]>;
   hn?: SignalSource;
   stackexchange?: SignalSource;
@@ -83,15 +85,9 @@ export type MissionDeps = {
   now?: () => Date;
 };
 
-/** Real collectors bound to the owner's keys. Reddit and Product Hunt are left out without their keys. */
-export function buildCollectors(keys: {
-  redditClientId?: string;
-  redditClientSecret?: string;
-  productHuntToken?: string;
-  stackexchangeKey?: string;
-  githubToken?: string;
-}): Collectors {
-  const c: Collectors = {
+/** Real collectors bound to the owner's keys. Reddit and Product Hunt are never wired (see MISSION_SOURCES). */
+export function buildCollectors(keys: { stackexchangeKey?: string; githubToken?: string }): Collectors {
+  return {
     appReviews: (q, ctx) => {
       const country = ctx.countries.map((x) => x.toLowerCase()).find((x) => (APP_STORE_COUNTRIES as readonly string[]).includes(x)) ?? 'us';
       return appReviews(q, { country, limit: 20, onCall: ctx.onCall });
@@ -101,21 +97,13 @@ export function buildCollectors(keys: {
     stackexchange: createStackExchangeSource({ key: keys.stackexchangeKey }),
     github: createGithubSource({ token: keys.githubToken }),
   };
-  if (keys.redditClientId && keys.redditClientSecret) {
-    const { redditClientId: clientId, redditClientSecret: clientSecret } = keys;
-    c.reddit = (q, ctx) => redditSearch(q, { clientId, clientSecret, limit: API_LIMIT, onCall: ctx.onCall });
-  }
-  if (keys.productHuntToken) {
-    const token = keys.productHuntToken;
-    c.productHunt = (q, ctx) => productHuntSearch(q, { token, limit: API_LIMIT, onCall: ctx.onCall });
-  }
-  return c;
 }
 
 // ---- schemas and prompts ------------------------------------------------------------------------------
 
 const PlanSchema = z.object({
-  queries: z.array(z.object({ source: z.enum(MISSION_SOURCES), q: z.string() })),
+  // A plain string: a query for a source the mission does not use is ignored with a warning, not a re-ask.
+  queries: z.array(z.object({ source: z.string(), q: z.string() })),
 });
 
 const ExtractSchema = z.object({
@@ -226,13 +214,21 @@ function cleanIndustries(xs: string[]): string[] {
   return [...new Set(out)].slice(0, 10);
 }
 
-/** Verbatim after normalize(), on word boundaries, against the text the collector fetched. */
-function quoteOnSource(quote: string, sourceText: string): boolean {
-  const q = normalize(quote);
-  return q !== '' && ` ${normalize(sourceText)} `.includes(` ${q} `);
+/** Long enough to count as evidence: at least MIN_QUOTE_WORDS words and MIN_QUOTE_CHARS characters after normalize(). */
+function longEnough(s: string): boolean {
+  const n = normalize(s);
+  return n.length >= MIN_QUOTE_CHARS && n.split(' ').length >= MIN_QUOTE_WORDS;
 }
 
-/** Structured-source drafts (YC, Product Hunt): no model call; text fields still cleaned before storage. */
+/** Long enough, and verbatim after normalize() (on word boundaries) in the text the collector fetched. */
+function quoteOnSource(quote: string, sourceText: string): boolean {
+  return longEnough(quote) && ` ${normalize(sourceText)} `.includes(` ${normalize(quote)} `);
+}
+
+/** Redaction markers scrubPersonal inserts; they are not evidence, so they do not count toward a quote's length. */
+const REDACTION_MARKERS = /\[(?:user|profile removed|email removed)\]/g;
+
+/** Structured-source drafts (YC): no model call; text fields still cleaned before storage. */
 function cleanStructured(d: KnowledgeDraft): KnowledgeDraft {
   return { ...d, title: cleanStored(d.title), summary: cleanStored(d.summary), facts: cleanFacts(d.facts) };
 }
@@ -284,8 +280,8 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const kinds: SliceAKind[] = m.kinds.filter((k): k is SliceAKind => (SLICE_A_KINDS as readonly string[]).includes(k));
     if (kinds.length === 0) kinds.push(...SLICE_A_KINDS);
     const has: Record<MissionSource, boolean> = {
-      web: true, reddit: !!collectors.reddit, hn: !!collectors.hn, stackexchange: !!collectors.stackexchange,
-      github: !!collectors.github, appreviews: !!collectors.appReviews, producthunt: !!collectors.productHunt, yc: !!collectors.yc,
+      web: true, hn: !!collectors.hn, stackexchange: !!collectors.stackexchange, github: !!collectors.github,
+      appreviews: !!collectors.appReviews, yc: !!collectors.yc,
     };
     const allowed = MISSION_SOURCES.filter((s) => has[s] && kinds.some((k) => SOURCES_FOR_KIND[k].includes(s)));
     const countries = m.countries.length ? m.countries.join(', ') : 'any (global)';
@@ -309,8 +305,11 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       ctx(planPrompt.version),
     );
     const seenQ = new Set<string>();
-    const queries = plan.queries
-      .filter((q) => allowed.includes(q.source))
+    const usable = plan.queries.filter((q): q is { source: MissionSource; q: string } => (allowed as string[]).includes(q.source));
+    const ignored = plan.queries.length - usable.length;
+    // The source names come from model output, so they are counted, never echoed.
+    if (ignored > 0) warn(`plan: ignored ${ignored} quer${ignored === 1 ? 'y' : 'ies'} for unused sources`);
+    const queries = usable
       .map((q) => ({ source: q.source, q: capField(stripInvisible(q.q), 200) }))
       .filter((q) => q.q !== '' && !seenQ.has(`${q.source}\n${q.q}`) && seenQ.add(`${q.source}\n${q.q}`))
       .slice(0, MAX_QUERIES);
@@ -325,14 +324,14 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const onCall: CallHook = (c) => logDataCall(db, { runId: null, missionId, provider: c.provider, endpoint: c.endpoint, ok: c.ok });
     const cctx: CollectorCtx = { onCall, countries: m.countries };
     const researchPrompt = loadPrompt('library-research');
-    const guardedFetch = (url: string, opts: FetchPageOpts = {}) => deps.fetchPage(url, { ...opts, userAgent: USER_AGENT });
+    /** Every mission fetch (pages and robots.txt): research identity, and banned hosts refused on every redirect hop. */
+    const guardedFetch = (url: string, opts: FetchPageOpts = {}) =>
+      deps.fetchPage(url, { ...opts, userAgent: USER_AGENT, blockHosts: [...(opts.blockHosts ?? []), ...BANNED_DOMAINS] });
 
-    const addItems = (items: RawItem[], opts: { allowBanned?: boolean } = {}) => {
+    const addItems = (items: RawItem[]) => {
       for (const it of items) {
         const text = (it.text ?? '').trim();
-        if (!text || seenUrls.has(it.url)) continue;
-        // Reddit is on the banned list for scraping and web citations; its official API is an allowed source (spec).
-        if (!opts.allowBanned && isBannedSource(it.url)) continue;
+        if (!text || seenUrls.has(it.url) || isBannedSource(it.url)) continue;
         seenUrls.add(it.url);
         texts.push({ url: it.url, domain: hostOf(it.url), sourceType: it.source, title: it.title ?? '', text, publishedAt: it.publishedAt });
       }
@@ -344,6 +343,10 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
         structured.push(cleanStructured(d));
       }
     };
+    /**
+     * The existing HN / Stack Exchange / GitHub sources swallow their own HTTP errors and return [], so their failures
+     * cannot surface as mission warnings here (and the data call is logged ok).
+     */
     const searchSignal = async (src: SignalSource, q: string) => {
       let ok = false;
       try {
@@ -386,9 +389,10 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
           continue;
         }
         const finalUrl = page.finalUrl || url;
-        // A redirect may land on a banned domain or another site whose robots.txt disallows us: drop the text.
+        // After any redirect (same host or not), re-check: a banned domain or a robots-disallowed path drops the text.
+        const redirected = finalUrl !== url && finalUrl !== new URL(url).href;
         if (isBannedSource(finalUrl)) continue;
-        if (hostOf(finalUrl) !== host && !(await robotsAllows(finalUrl, { fetchPage: guardedFetch }))) {
+        if (redirected && !(await robotsAllows(finalUrl, { fetchPage: guardedFetch }))) {
           warn(`web: robots.txt disallows ${hostOf(finalUrl)}`);
           failed++;
           continue;
@@ -411,9 +415,6 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
             else anyOk = true;
             continue;
           }
-          case 'reddit':
-            addItems(await collectors.reddit!(q, cctx), { allowBanned: true });
-            break;
           case 'appreviews':
             addItems(await collectors.appReviews!(q, cctx));
             break;
@@ -425,9 +426,6 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
             break;
           case 'github':
             addItems(await searchSignal(collectors.github!, q));
-            break;
-          case 'producthunt':
-            addStructured((await collectors.productHunt!(q, cctx)).map(productHuntToDraft));
             break;
           case 'yc':
             addStructured((await collectors.yc!(q, cctx)).map(ycToDraft));
@@ -470,10 +468,17 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
         warn(`extract: ${sourceReason(e)}`);
         continue;
       }
+      const perSource = new Map<number, number>();
       for (const e of out.entries) {
         const d = toDraft(e, batch, shown, kinds);
-        if (d) extracted.push(d);
-        else invalid++;
+        if (!d) {
+          invalid++;
+          continue;
+        }
+        const n = perSource.get(e.source) ?? 0;
+        if (n >= MAX_ENTRIES_PER_SOURCE) continue; // one source cannot flood the library
+        perSource.set(e.source, n + 1);
+        extracted.push(d);
       }
     }
     if (invalid > 0) warn(`extract: ${invalid} invalid draft${invalid === 1 ? '' : 's'} dropped`);
@@ -515,9 +520,12 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Sl
   const summary = cleanStored(e.summary);
   if (!title || !summary) return null;
   const rawQuote = capField(stripInvisible(e.quote ?? ''), 2000);
-  // Verify first (against the fetched text), then scrub and cap what is stored.
-  const quoteVerified = rawQuote !== '' && quoteOnSource(rawQuote, sourceText);
+  // Verify first, on the raw quote against the fetched text; then scrub and cap what is stored. By design a verified
+  // stored quote may therefore contain a "[user]" (or other) redaction marker where a handle was removed. What remains
+  // once the markers are taken out must still be long enough, so a quote that was mostly a handle or byline is unverified.
   const quote = rawQuote ? cleanStored(rawQuote) || undefined : undefined;
+  const quoteVerified =
+    rawQuote !== '' && quote !== undefined && quoteOnSource(rawQuote, sourceText) && longEnough(quote.replace(REDACTION_MARKERS, ' '));
   return {
     kind: e.kind,
     title,
@@ -534,7 +542,7 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Sl
       sourceType: src.sourceType,
       publishedAt: src.publishedAt ?? undefined,
       quote,
-      quoteVerified: quoteVerified && quote !== undefined,
+      quoteVerified,
     },
   };
 }

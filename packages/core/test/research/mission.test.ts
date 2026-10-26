@@ -7,8 +7,7 @@ import { buildCollectors, runMission, type Collectors, type MissionDeps } from '
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
-import type { ProductHuntItem } from '../../src/research/sources/producthunt';
-import type { FetchPageOpts, PageResult } from '../../src/tools/fetch-page';
+import { fetchPage as realFetchPage, type FetchPageOpts, type PageResult } from '../../src/tools/fetch-page';
 import type { RawItem, SignalSource } from '../../src/tools/sources/types';
 import { testDb, unit } from '../helpers/db';
 
@@ -133,26 +132,27 @@ async function insertMission(db: Db, over: Partial<typeof researchMissions.$infe
 const mission = async (db: Db, id: string) => (await db.select().from(researchMissions).where(eq(researchMissions.id, id)))[0]!;
 
 const HN_TEXT = 'Chasing unpaid invoices takes me six hours every week. I use a spreadsheet and it keeps breaking.';
-const REDDIT_TEXT = 'Quoting jobs by hand loses us bids. We tried three apps and none fit small crews.';
+const APP_TEXT = 'Quoting jobs by hand loses us bids every single month. We tried three apps and none fit small crews.';
+const APP_URL = 'https://apps.apple.com/us/app/id123#review-1';
 const PAGE_URL = 'https://forum.tradesmen.example/t/scheduling';
 const PAGE_TEXT = 'Scheduling crews across sites is a nightmare for a ten-person shop. We double-book at least twice a month.';
 
-function happy(db: Db, over: { reddit?: Collectors['reddit'] } = {}) {
+function happy(db: Db, over: { appReviews?: Collectors['appReviews'] } = {}) {
   const hn = signalSource('hn', [item('hn', 'https://news.ycombinator.com/item?id=1', HN_TEXT)]);
-  const redditQueries: string[] = [];
-  const reddit: Collectors['reddit'] = over.reddit ?? (async (q, ctx) => {
-    redditQueries.push(q);
-    await ctx.onCall({ provider: 'reddit', endpoint: '/search', ok: true });
-    return [item('reddit', 'https://www.reddit.com/r/Plumbing/comments/abc/quoting/', REDDIT_TEXT)];
+  const appQueries: string[] = [];
+  const appReviews: Collectors['appReviews'] = over.appReviews ?? (async (q, ctx) => {
+    appQueries.push(q);
+    await ctx.onCall({ provider: 'appstore', endpoint: '/search', ok: true });
+    return [item('appstore', APP_URL, APP_TEXT)];
   });
   const router = mockRouter(db, {
-    plan: { queries: [{ source: 'hn', q: 'invoice chasing' }, { source: 'reddit', q: 'quoting jobs' }, { source: 'web', q: 'crew scheduling pain' }] },
+    plan: { queries: [{ source: 'hn', q: 'invoice chasing' }, { source: 'appreviews', q: 'JobQuote' }, { source: 'web', q: 'crew scheduling pain' }] },
     research: [{ text: 'found', sources: [{ url: PAGE_URL, title: 'Scheduling', citedText: 'model text, never verified' }] }],
   });
   const page = mockFetchPage({ [PAGE_URL]: PAGE_TEXT });
   const logs: string[] = [];
-  const deps: MissionDeps = { db, router, fetchPage: page.fn, collectors: { hn, reddit }, log: (m) => logs.push(m) };
-  return { deps, router, page, hn, redditQueries, logs };
+  const deps: MissionDeps = { db, router, fetchPage: page.fn, collectors: { hn, appReviews }, log: (m) => logs.push(m) };
+  return { deps, router, page, hn, appQueries, logs };
 }
 
 beforeEach(() => resetRobotsCache());
@@ -163,7 +163,7 @@ describe('runMission', () => {
   it('happy path: plans, collects from two sources plus web, extracts, verifies, embeds and stores', async () => {
     const db = await testDb();
     const id = await insertMission(db);
-    const { deps, router, page, hn, redditQueries } = happy(db);
+    const { deps, router, page, hn, appQueries } = happy(db);
 
     expect(await runMission(deps, id)).toBe('succeeded');
 
@@ -177,7 +177,7 @@ describe('runMission', () => {
     expect(Number(m.costUsd)).toBeCloseTo(0.04, 6);
 
     expect(hn.queries).toEqual(['invoice chasing']);
-    expect(redditQueries).toEqual(['quoting jobs']);
+    expect(appQueries).toEqual(['JobQuote']);
     const web = router.calls.find((c) => c.kind === 'research')!;
     expect(web.stage).toBe('research');
     expect(web.maxSearches).toBe(3);
@@ -189,6 +189,7 @@ describe('runMission', () => {
     // The page was fetched (after robots.txt) with the research identity.
     const pageFetch = page.calls.find((c) => c.url === PAGE_URL)!;
     expect(pageFetch.opts.userAgent).toBe(USER_AGENT);
+    expect(pageFetch.opts.blockHosts).toEqual(expect.arrayContaining(['reddit.com', 'g2.com']));
     const robotsFetch = page.calls.find((c) => c.url.endsWith('/robots.txt'))!;
     expect(robotsFetch.opts.userAgent).toBe(USER_AGENT);
     expect(page.calls.findIndex((c) => c.url.endsWith('/robots.txt'))).toBeLessThan(page.calls.findIndex((c) => c.url === PAGE_URL));
@@ -203,15 +204,15 @@ describe('runMission', () => {
     }
     const srcs = await db.select().from(knowledgeSources);
     expect(srcs.map((s) => s.url).sort()).toEqual(
-      ['https://news.ycombinator.com/item?id=1', 'https://www.reddit.com/r/Plumbing/comments/abc/quoting/', PAGE_URL].sort(),
+      ['https://news.ycombinator.com/item?id=1', APP_URL, PAGE_URL].sort(),
     );
     expect(srcs.find((s) => s.url === PAGE_URL)!.sourceType).toBe('web');
 
-    // Data calls carry the mission id: the reddit collector's onCall, the hn search and the page fetch.
+    // Data calls carry the mission id: the app-review collector's onCall, the hn search and the page fetch.
     const dc = await db.select().from(dataCalls);
     expect(dc.length).toBeGreaterThanOrEqual(3);
     for (const d of dc) expect(d.missionId).toBe(id);
-    expect(dc.map((d) => d.provider)).toEqual(expect.arrayContaining(['reddit', 'hn']));
+    expect(dc.map((d) => d.provider)).toEqual(expect.arrayContaining(['appstore', 'hn', 'web']));
   });
 
   it('stores a hallucinated quote with quoteVerified = false', async () => {
@@ -260,17 +261,17 @@ describe('runMission', () => {
     expect(srcs.map((s) => s.domain)).toEqual(['news.ycombinator.com']);
   });
 
-  it('a Reddit 429 becomes a warning and the other sources continue', async () => {
+  it('a 429 from one source becomes a warning and the other sources continue', async () => {
     const db = await testDb();
     const id = await insertMission(db);
     const { deps } = happy(db, {
-      reddit: async () => {
-        throw new SourceError('rate_limited', 'reddit');
+      appReviews: async () => {
+        throw new SourceError('rate_limited', 'appstore');
       },
     });
     expect(await runMission(deps, id)).toBe('succeeded');
     const m = await mission(db, id);
-    expect(m.warnings).toEqual(['reddit: rate limited']);
+    expect(m.warnings).toEqual(['appreviews: rate limited']);
     expect(m.itemsAdded).toBe(2);
   });
 
@@ -286,9 +287,9 @@ describe('runMission', () => {
   it('stops early once the budget is reached after the plan step, and still succeeds', async () => {
     const db = await testDb();
     const id = await insertMission(db, { budgetUsd: '2' });
-    const { deps, hn, redditQueries } = happy(db);
+    const { deps, hn, appQueries } = happy(db);
     const router = mockRouter(db, {
-      plan: { queries: [{ source: 'hn', q: 'invoices' }, { source: 'reddit', q: 'q' }, { source: 'web', q: 'w' }] },
+      plan: { queries: [{ source: 'hn', q: 'invoices' }, { source: 'appreviews', q: 'q' }, { source: 'web', q: 'w' }] },
       planCost: 2.25,
     });
     expect(await runMission({ ...deps, router }, id)).toBe('succeeded');
@@ -297,7 +298,7 @@ describe('runMission', () => {
     expect(Number(m.costUsd)).toBeCloseTo(2.25, 6);
     expect(m.itemsAdded).toBe(0);
     expect(hn.queries).toEqual([]);
-    expect(redditQueries).toEqual([]);
+    expect(appQueries).toEqual([]);
     expect(router.calls.map((c) => c.stage)).toEqual(['research']);
   });
 
@@ -314,7 +315,7 @@ describe('runMission', () => {
   it('strips usernames from quotes and summaries before storing', async () => {
     const db = await testDb();
     const id = await insertMission(db);
-    const text = 'Thanks u/someone for the tip on invoices. Chasing payments still eats my Sundays.';
+    const text = 'Thanks u/someone for the tip on chasing unpaid invoices every month. Chasing payments still eats my Sundays.';
     const { deps } = happy(db);
     const router = mockRouter(db, {
       plan: { queries: [{ source: 'hn', q: 'invoices' }] },
@@ -368,22 +369,22 @@ describe('runMission', () => {
     expect(prompt).toContain('CA, US');
   });
 
-  it('maps YC and Product Hunt records straight to drafts, with no extract call', async () => {
+  it('maps YC records straight to drafts, with no extract call; Product Hunt queries are ignored', async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['startup'] });
     const yc: YcCompany = {
       name: 'Crewly', oneLiner: 'Scheduling for trade crews', url: 'https://crewly.example', status: 'Inactive', batch: 'W21',
       industries: ['Construction'], regions: [],
     };
-    const ph: ProductHuntItem = { name: 'QuoteFast', tagline: 'Quotes for plumbers, $19/mo', url: 'https://quotefast.example', launchedAt: null, votes: 10, pricingHint: '$19/mo' };
-    const collectors: Collectors = { yc: async () => [yc], productHunt: async () => [ph] };
+    const collectors: Collectors = { yc: async () => [yc] };
     const router = mockRouter(db, { plan: { queries: [{ source: 'yc', q: 'construction' }, { source: 'producthunt', q: 'plumbing' }] } });
     const { deps } = happy(db);
     expect(await runMission({ ...deps, router, collectors }, id)).toBe('succeeded');
     expect(router.calls.filter((c) => c.stage === 'library_extract')).toEqual([]);
     expect(router.calls.filter((c) => c.kind === 'embed')).toHaveLength(1);
     const items = await db.select().from(knowledgeItems);
-    expect(items.map((i) => i.title).sort()).toEqual(['Crewly', 'QuoteFast']);
+    expect(items.map((i) => i.title)).toEqual(['Crewly']);
+    expect((await mission(db, id)).warnings).toEqual(['plan: ignored 1 query for unused sources']);
     for (const i of items) expect(i.kind).toBe('startup');
     expect((items.find((i) => i.title === 'Crewly')!.facts as { outcome: string }).outcome).toBe('dead');
   });
@@ -447,17 +448,137 @@ describe('runMission', () => {
   it('fails when every source fails and nothing was collected', async () => {
     const db = await testDb();
     const id = await insertMission(db);
-    const reddit: Collectors['reddit'] = async () => {
-      throw new SourceError('auth', 'reddit', 'reddit: HTTP 401');
+    const appReviews: Collectors['appReviews'] = async () => {
+      throw new SourceError('auth', 'appstore', 'appstore: HTTP 401');
     };
-    const router = mockRouter(db, { plan: { queries: [{ source: 'reddit', q: 'a' }, { source: 'web', q: 'b' }] }, research: [{ text: '', sources: [{ url: PAGE_URL }] }] });
+    const router = mockRouter(db, { plan: { queries: [{ source: 'appreviews', q: 'a' }, { source: 'web', q: 'b' }] }, research: [{ text: '', sources: [{ url: PAGE_URL }] }] });
     const { deps } = happy(db);
     const page = mockFetchPage({});
-    expect(await runMission({ ...deps, router, fetchPage: page.fn, collectors: { reddit } }, id)).toBe('failed');
+    expect(await runMission({ ...deps, router, fetchPage: page.fn, collectors: { appReviews } }, id)).toBe('failed');
     const m = await mission(db, id);
     expect(m.status).toBe('failed');
     expect(m.error).toMatch(/every source failed/i);
-    expect(m.warnings).toEqual(['reddit: not authorised (check the key)', 'web: forum.tradesmen.example timed out']);
+    expect(m.warnings).toEqual(['appreviews: not authorised (check the key)', 'web: forum.tradesmen.example timed out']);
+  });
+
+  it('ignores planner queries for Reddit and Product Hunt with a warning, and never offers them', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['problem', 'pricing', 'startup'] });
+    const { deps, hn } = happy(db);
+    const router = mockRouter(db, { plan: { queries: [{ source: 'reddit', q: 'a' }, { source: 'producthunt', q: 'b' }, { source: 'hn', q: 'c' }] } });
+    expect(await runMission({ ...deps, router }, id)).toBe('succeeded');
+    expect(hn.queries).toEqual(['c']);
+    expect((await mission(db, id)).warnings).toEqual(['plan: ignored 2 queries for unused sources']);
+    const plan = router.calls[0]!.prompt;
+    expect(plan).not.toMatch(/reddit/i);
+    expect(plan).not.toMatch(/producthunt/i);
+  });
+
+  it('a short verbatim fragment is not verified', async () => {
+    const db = await testDb();
+    const id = await insertMission(db);
+    const { deps } = happy(db);
+    const router = mockRouter(db, { plan: { queries: [{ source: 'hn', q: 'invoices' }] }, extract: (s) => ({ ...defaultEntry(s), quote: 'unpaid invoices' }) });
+    expect(await runMission({ ...deps, router }, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    expect(it!.quoteVerified).toBe(false);
+  });
+
+  it('a verbatim quote that is mostly handles once scrubbed is not verified', async () => {
+    const db = await testDb();
+    const id = await insertMission(db);
+    const text = 'Thanks u/alpha_one u/bravo_two u/charlie_3 u/delta_four u/echo_five for help. Invoices are still a mess.';
+    const { deps } = happy(db);
+    const router = mockRouter(db, { plan: { queries: [{ source: 'hn', q: 'invoices' }] } });
+    const hn = signalSource('hn', [item('hn', 'https://news.ycombinator.com/item?id=11', text)]);
+    expect(await runMission({ ...deps, router, collectors: { hn } }, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    expect(it!.quote).not.toMatch(/alpha|bravo/);
+    expect(it!.quoteVerified).toBe(false);
+  });
+
+  it("verifies a quote only against the draft's own source", async () => {
+    const db = await testDb();
+    const id = await insertMission(db);
+    const { deps } = happy(db);
+    const hn = signalSource('hn', [
+      item('hn', 'https://news.ycombinator.com/item?id=21', HN_TEXT),
+      item('hn', 'https://news.ycombinator.com/item?id=22', APP_TEXT),
+    ]);
+    // Names Source 1 but quotes Source 2's first sentence.
+    const router = mockRouter(db, {
+      plan: { queries: [{ source: 'hn', q: 'invoices' }] },
+      extract: (s) => (s.n === 1 ? { ...defaultEntry(s), quote: firstSentence(APP_TEXT) } : null),
+    });
+    expect(await runMission({ ...deps, router, collectors: { hn } }, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    expect(it!.quoteVerified).toBe(false);
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src!.url).toBe('https://news.ycombinator.com/item?id=21');
+  });
+
+  it('keeps at most 3 entries per source per batch', async () => {
+    const db = await testDb();
+    const id = await insertMission(db);
+    const { deps } = happy(db);
+    const router = mockRouter(db, {
+      plan: { queries: [{ source: 'hn', q: 'invoices' }] },
+      extract: (s) => [1, 2, 3, 4, 5].map((k) => ({ ...defaultEntry(s), title: `Entry ${k}`, summary: `Summary number ${k}` })),
+    });
+    expect(await runMission({ ...deps, router }, id)).toBe('succeeded');
+    expect(await db.select().from(knowledgeItems)).toHaveLength(3);
+    expect(router.calls.find((c) => c.kind === 'embed')!.prompt.split('\n---\n')).toHaveLength(3);
+  });
+
+  describe('redirects (real guarded fetcher, fake network)', () => {
+    const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
+    const html = (body: string) =>
+      new Response(`<html><head><title>T</title></head><body><article><p>${body}</p></article></body></html>`, {
+        status: 200, headers: { 'content-type': 'text/html' },
+      });
+    const redirect = (to: string) => new Response(null, { status: 302, headers: { location: to } });
+    const notFound = () => new Response('', { status: 404, headers: { 'content-type': 'text/plain' } });
+
+    function guarded(routes: Record<string, () => Response>) {
+      const requested: string[] = [];
+      const fetchImpl = (async (u: string | URL | Request) => {
+        const url = String(u);
+        requested.push(url);
+        return (routes[url] ?? notFound)();
+      }) as typeof fetch;
+      const fn = ((url: string, opts: FetchPageOpts = {}) => realFetchPage(url, { ...opts, fetchImpl, lookup })) as MissionDeps['fetchPage'];
+      return { fn, requested };
+    }
+
+    it('refuses a redirect to a banned host before requesting it', async () => {
+      const db = await testDb();
+      const id = await insertMission(db);
+      const { deps } = happy(db);
+      const start = 'https://hop.example/a';
+      const net = guarded({ [start]: () => redirect('https://www.g2.com/products/x/reviews') });
+      const router = mockRouter(db, { plan: { queries: [{ source: 'hn', q: 'i' }, { source: 'web', q: 'w' }] }, research: [{ text: '', sources: [{ url: start }] }] });
+      expect(await runMission({ ...deps, router, fetchPage: net.fn }, id)).toBe('succeeded');
+      expect(net.requested.some((u) => u.includes('g2.com'))).toBe(false);
+      expect((await mission(db, id)).warnings).toEqual(['web: hop.example blocked address']);
+      expect((await db.select().from(knowledgeSources)).map((s) => s.domain)).toEqual(['news.ycombinator.com']);
+    });
+
+    it('drops a page whose redirect lands on a robots-disallowed path on the same host', async () => {
+      const db = await testDb();
+      const id = await insertMission(db);
+      const { deps } = happy(db);
+      const start = 'https://same.example/open';
+      const net = guarded({
+        'https://same.example/robots.txt': () =>
+          new Response('User-agent: *\nDisallow: /private\n', { status: 200, headers: { 'content-type': 'text/plain' } }),
+        [start]: () => redirect('/private/page'),
+        'https://same.example/private/page': () => html(PAGE_TEXT),
+      });
+      const router = mockRouter(db, { plan: { queries: [{ source: 'hn', q: 'i' }, { source: 'web', q: 'w' }] }, research: [{ text: '', sources: [{ url: start }] }] });
+      expect(await runMission({ ...deps, router, fetchPage: net.fn }, id)).toBe('succeeded');
+      expect((await mission(db, id)).warnings).toEqual(['web: robots.txt disallows same.example']);
+      expect((await db.select().from(knowledgeSources)).map((s) => s.domain)).toEqual(['news.ycombinator.com']);
+    });
   });
 
   it('keeps at most 20 warnings', async () => {
@@ -473,13 +594,8 @@ describe('runMission', () => {
 });
 
 describe('buildCollectors', () => {
-  it('leaves out Reddit and Product Hunt without their keys', () => {
-    const c = buildCollectors({});
-    expect(c.reddit).toBeUndefined();
-    expect(c.productHunt).toBeUndefined();
+  it('never wires Reddit or Product Hunt (site terms)', () => {
+    const c = buildCollectors({ stackexchangeKey: 'k', githubToken: 't' });
     expect(Object.keys(c).sort()).toEqual(['appReviews', 'github', 'hn', 'stackexchange', 'yc']);
-    const k = buildCollectors({ redditClientId: 'id', redditClientSecret: 'secret', productHuntToken: 'tok' });
-    expect(typeof k.reddit).toBe('function');
-    expect(typeof k.productHunt).toBe('function');
   });
 });
