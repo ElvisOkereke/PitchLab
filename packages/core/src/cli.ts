@@ -7,6 +7,7 @@ import {
   type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { loadEnv, type Env } from './config/env';
+import { finalizeBenchmarkPasses } from './bench/passes';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
@@ -84,6 +85,15 @@ async function exportCase(db: Db, slug: string): Promise<string> {
   const path = join(EXPORT_DIR, `${slug}.md`);
   writeFileSync(path, caseToMarkdown(kase, claimRows, scoreRows), 'utf8');
   return path;
+}
+
+/** Freezes any benchmark pass whose runs have all finished; never lets a failure stop the worker. */
+async function finaliseBenchmarks(db: Db): Promise<void> {
+  try {
+    await finalizeBenchmarkPasses(db);
+  } catch {
+    console.error('benchmark finalise failed');
+  }
 }
 
 /** Executes (or resumes) one run with the real stages, then prints slugs, cost and export paths (gen run and gen worker). */
@@ -166,12 +176,17 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       signal: stop.signal,
       once: opts.once,
       log: out,
-      heartbeat: () => setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models)),
+      // Also finalises here: a run that failed during setup is marked failed by the worker after `execute` throws.
+      heartbeat: async () => {
+        await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models));
+        await finaliseBenchmarks(db);
+      },
       execute: async (id) => {
         busy = true;
         try {
           return (await executeAndReport(db, env, id)) === 0 ? 'succeeded' : 'failed';
         } finally {
+          await finaliseBenchmarks(db);
           busy = false;
         }
       },
