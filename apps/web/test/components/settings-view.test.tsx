@@ -48,6 +48,14 @@ describe('SettingsView research card', () => {
     expect(within(f).getByRole('button', { name: 'Save research settings' })).toBeTruthy();
   });
 
+  it('says a cap below $1 stops background research, and not otherwise', () => {
+    const low = render(<SettingsView data={data({ research: { background: true, dailyCapUsd: 0.5 } })} />);
+    expect(low.getByTestId('research-cap-note').textContent).toBe('Background research needs a cap of at least $1.');
+    low.unmount();
+    const ok = render(<SettingsView data={data({ research: { background: true, dailyCapUsd: 1 } })} />);
+    expect(ok.queryByTestId('research-cap-note')).toBeNull();
+  });
+
   it('is unchecked by default', () => {
     const { getByTestId } = render(<SettingsView data={data()} />);
     expect(getByTestId('research-settings').querySelector<HTMLInputElement>('input[name="background"]')!.checked).toBe(false);

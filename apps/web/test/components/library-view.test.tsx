@@ -105,8 +105,8 @@ describe('LibraryView entry detail', () => {
   const item = {
     ...row(), facts: { persona: 'shop owner', pricePoints: [{ amount: 10, currency: 'USD', unit: 'month' }], frequencyOrCost: '<b>weekly</b>' },
     sources: [
-      { id: 's1', url: 'https://news.example/post/1', domain: 'news.example', sourceType: 'hn', publishedAt: new Date('2026-10-18T00:00:00Z'), fetchedAt: NOW, quote: 'I spend Fridays chasing invoices', quoteVerified: true },
-      { id: 's2', url: 'javascript:alert(1)', domain: 'bad.example', sourceType: 'web', publishedAt: null, fetchedAt: NOW, quote: null, quoteVerified: false },
+      { id: 's1', url: 'https://news.example/post/1', domain: 'news.example', sourceType: 'hn', publishedAt: new Date('2026-10-18T00:00:00Z'), fetchedAt: NOW, quote: 'I spend Fridays chasing invoices', quoteVerified: true, voice: 'operator' as const },
+      { id: 's2', url: 'javascript:alert(1)', domain: 'bad.example', sourceType: 'web', publishedAt: null, fetchedAt: NOW, quote: null, quoteVerified: false, voice: null },
     ],
   };
 
@@ -174,6 +174,19 @@ describe('LibraryView missions', () => {
     const b = f.querySelector<HTMLInputElement>('[name="budgetUsd"]')!;
     expect([b.min, b.max, b.value]).toEqual(['0.5', '10', '2']);
     expect(f.querySelector<HTMLInputElement>('[name="topic"]')!.maxLength).toBe(200);
+  });
+
+  it('shows pending cost and the start time for queued and running missions', () => {
+    const ms = [
+      mission({ id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', status: 'queued', startedAt: null, finishedAt: null, costUsd: 0 }),
+      mission({ id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', status: 'running', finishedAt: null, costUsd: 0.1 }),
+    ];
+    const { getByTestId } = render(<LibraryView {...props({ missions: ms })} />);
+    const rows = [...getByTestId('mission-list').querySelectorAll('tbody tr')];
+    expect(rows[0]!.querySelector('[data-label="Started"]')!.textContent).toBe('not started');
+    expect(rows[0]!.querySelector('[data-label="Cost"]')!.textContent).toBe('pending');
+    expect(rows[1]!.querySelector('[data-label="Cost"]')!.textContent).toBe('pending');
+    expect(rows[1]!.querySelector('[data-label="Started"]')!.textContent).not.toBe('not started');
   });
 
   it('lists missions with status, items added and merged, cost, error, and warnings inside a details element', () => {

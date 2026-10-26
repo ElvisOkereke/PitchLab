@@ -1,5 +1,6 @@
 import { listActiveLenses } from '@bcg/core/dashboard/lenses';
 import { getMarket } from '@bcg/core/dashboard/markets';
+import { missionRunning } from '@bcg/core/dashboard/missions';
 import { QUEUE_MARKET_ID, countRunsByStatus, listRuns } from '@bcg/core/dashboard/runs';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { QueueRunForm } from '@/components/queue-run-form';
@@ -16,11 +17,12 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
   await requireOwner();
   const query = parseRunsQuery(await searchParams);
   const db = getDb();
-  const [history, counts, lenses, market] = await Promise.all([
+  const [history, counts, lenses, market, missionBusy] = await Promise.all([
     listRuns(db, { page: query.page, pageSize: PAGE_SIZE }),
     countRunsByStatus(db),
     listActiveLenses(db),
     getMarket(db, QUEUE_MARKET_ID),
+    missionRunning(db),
   ]);
   const busy = counts.queued + counts.running > 0;
   return (
@@ -37,6 +39,11 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
         <p className="muted small">
           Runs execute when <code>npm run worker</code> is running.
         </p>
+        {missionBusy ? (
+          <p className="muted small" data-testid="mission-busy-note">
+            The worker is busy with a research mission; queued runs start after it.
+          </p>
+        ) : null}
       </section>
       <p>
         {counts.queued} queued · {counts.running} running

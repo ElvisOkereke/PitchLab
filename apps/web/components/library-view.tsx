@@ -192,7 +192,7 @@ function Missions({ missions, typicalCost, research, backgroundSpend }: Pick<Lib
             <tbody>
               {missions.map((m) => (
                 <tr key={m.id}>
-                  <td data-label="Started">{formatDateTime(m.createdAt)}</td>
+                  <td data-label="Started">{m.startedAt ? formatDateTime(m.startedAt) : 'not started'}</td>
                   <td data-label="Topic" className="pre">
                     {m.topic}
                   </td>
@@ -202,7 +202,7 @@ function Missions({ missions, typicalCost, research, backgroundSpend }: Pick<Lib
                   </td>
                   <td data-label="Added">{m.itemsAdded}</td>
                   <td data-label="Merged">{m.itemsMerged}</td>
-                  <td data-label="Cost">{usd(m.costUsd)}</td>
+                  <td data-label="Cost">{m.status === 'queued' || m.status === 'running' ? 'pending' : usd(m.costUsd)}</td>
                   <td data-label="Warnings">
                     {m.warnings.length > 0 ? (
                       <details>

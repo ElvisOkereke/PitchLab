@@ -35,6 +35,11 @@ export function ResearchSettingsForm({ background, dailyCapUsd }: { background: 
           onChange={(e) => f.set('dailyCapUsd', e.target.value)}
         />
       </div>
+      {f.text('dailyCapUsd').trim() !== '' && Number(f.text('dailyCapUsd')) < 1 ? (
+        <p className="muted small" data-testid="research-cap-note">
+          Background research needs a cap of at least $1.
+        </p>
+      ) : null}
       <button type="submit" disabled={pending}>
         {pending ? 'Saving…' : 'Save research settings'}
       </button>
