@@ -7,6 +7,7 @@ function handlers() {
     run: vi.fn(ok), resume: vi.fn(ok), export: vi.fn(ok), runs: vi.fn(ok),
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
+    benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -121,5 +122,15 @@ describe('gen prospects import / outreach / config', () => {
     expect((await parse(['export', '--all'])).export).toHaveBeenCalledWith(undefined, { all: true });
     expect((await parse(['run', '--seed', 'sector', '--sectors', 'a,b'])).run).toHaveBeenCalledWith({ seed: 'sector', sectors: 'a,b' });
     expect((await parse(['runs'])).runs).toHaveBeenCalled();
+  });
+});
+
+describe('gen bench', () => {
+  it('parses baseline, run and report', async () => {
+    expect((await parse(['bench', 'baseline', '--force'])).benchBaseline).toHaveBeenCalledWith({ force: true });
+    expect((await parse(['bench', 'baseline'])).benchBaseline).toHaveBeenCalledWith({});
+    expect((await parse(['bench', 'run'])).benchRun).toHaveBeenCalledWith();
+    expect((await parse(['bench', 'report', 'abc', '--recompute'])).benchReport).toHaveBeenCalledWith('abc', { recompute: true });
+    expect((await parse(['bench', 'report'])).benchReport).toHaveBeenCalledWith(undefined, {});
   });
 });

@@ -148,6 +148,24 @@ describe('runWorker', () => {
     expect(row.finishedAt).toBeInstanceOf(Date);
   });
 
+  it('calls the finalize hook after an invalid-config failure in once mode, and survives a throwing hook', async () => {
+    const db = await testDb();
+    await insertAt(db, { ...cfg, ideaCount: 1e9 }, new Date());
+    const finalize = vi.fn(async () => { throw new Error('boom'); });
+    await runWorker({ executeValidation: noValidation, db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded', finalize });
+    expect(finalize).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls the finalize hook after success and after execute throws', async () => {
+    const db = await testDb();
+    await insertAt(db, cfg, new Date());
+    const finalize = vi.fn(async () => {});
+    await runWorker({ executeValidation: noValidation, db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => { throw new Error('x'); }, finalize });
+    await insertAt(db, cfg, new Date());
+    await runWorker({ executeValidation: noValidation, db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded', finalize });
+    expect(finalize).toHaveBeenCalledTimes(2);
+  });
+
   it('marks the run failed when execute throws (it never stays running)', async () => {
     const db = await testDb();
     const id = await insertAt(db, cfg, new Date());

@@ -154,6 +154,27 @@ describe('frozen passes and recompute', () => {
     expect(await passCases(db, p.id)).toEqual([{ slug: expect.any(String), title: 'Case', gut: 4 }]);
   });
 
+  it('recompute of a baseline stays complete with no failed-runs note; of a pass it keeps the failure status', async () => {
+    const db = await testDb();
+    await mk(db, 'succeeded');
+    await mk(db, 'failed');
+    const b = await saveBaseline(db);
+    if (!b.ok) throw new Error('baseline');
+    const re = await recomputePass(db, b.pass.id);
+    if (!re.ok) throw new Error('recompute');
+    expect(re.pass.status).toBe('complete');
+    expect(re.pass.metrics?.notes.some((n) => /runs failed/.test(n))).toBe(false);
+    await db.delete(benchmarkPasses);
+    const p = await queued(db);
+    await setStatus(db, p.runIds.slice(0, 1), 'failed');
+    await setStatus(db, p.runIds.slice(1), 'succeeded');
+    await finalizeBenchmarkPasses(db);
+    const re2 = await recomputePass(db, p.id);
+    if (!re2.ok) throw new Error('recompute2');
+    expect(re2.pass.status).toBe('incomplete');
+    expect(re2.pass.metrics?.notes).toContain('1 of 4 runs failed');
+  });
+
   it('recompute refuses unknown and running passes', async () => {
     const db = await testDb();
     expect(await recomputePass(db, '00000000-0000-4000-8000-000000000000')).toEqual({ ok: false, reason: 'not_found' });

@@ -7,7 +7,11 @@ import {
   type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { loadEnv, type Env } from './config/env';
-import { finalizeBenchmarkPasses } from './bench/passes';
+import { BENCHMARKS, CURRENT_BENCHMARK } from './bench/definitions';
+import { renderScorecardMarkdown } from './bench/markdown';
+import {
+  BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
+} from './bench/passes';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
@@ -31,6 +35,7 @@ import { resolveModels, runWorker, workerStatus } from './worker';
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
 const fromBase = (p: string) => resolve(BASE_DIR, p);
 const EXPORT_DIR = fromBase(join('output', 'cases'));
+const BENCH_DIR = fromBase(join('output', 'bench'));
 const VALIDATION_DIR = fromBase(join('output', 'validation'));
 const DEFAULT_DB_URL = 'pglite://.data/pglite';
 
@@ -178,15 +183,18 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       log: out,
       // Also finalises here: a run that failed during setup is marked failed by the worker after `execute` throws.
       heartbeat: async () => {
-        await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models));
-        await finaliseBenchmarks(db);
+        try {
+          await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models));
+        } finally {
+          await finaliseBenchmarks(db);
+        }
       },
+      finalize: () => finaliseBenchmarks(db),
       execute: async (id) => {
         busy = true;
         try {
           return (await executeAndReport(db, env, id)) === 0 ? 'succeeded' : 'failed';
         } finally {
-          await finaliseBenchmarks(db);
           busy = false;
         }
       },
@@ -421,6 +429,70 @@ async function configGetCommand(key: string | undefined): Promise<number> {
   });
 }
 
+// ---- Benchmark ---------------------------------------------------------------------------------------
+
+async function benchBaselineCommand(opts: { force?: boolean }): Promise<number> {
+  return withDb(async (db) => {
+    const r = await saveBaseline(db, opts);
+    if (!r.ok) {
+      console.error('A baseline already exists. Use --force to save another.');
+      return 1;
+    }
+    out(`Saved ${r.pass.label} over ${r.pass.runIds.length} run(s).`);
+    return 0;
+  });
+}
+
+async function benchRunCommand(): Promise<number> {
+  return withDb(async (db) => {
+    const r = await queueBenchmarkPass(db);
+    if (!r.ok) {
+      console.error(BENCH_REFUSAL[r.reason]);
+      return 1;
+    }
+    out(`Queued ${r.pass.label}: ${BENCHMARKS[CURRENT_BENCHMARK].costNote}.`);
+    for (const id of r.pass.runIds) out(`  run ${id}`);
+    out('Start the worker to execute them: npm run gen -- worker');
+    return 0;
+  });
+}
+
+const slugOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'scorecard';
+
+async function benchReportCommand(passId: string | undefined, opts: { recompute?: boolean }): Promise<number> {
+  if (opts.recompute && !passId) throw new CliError('--recompute needs a pass id', 2);
+  return withDb(async (db) => {
+    await finalizeBenchmarkPasses(db);
+    const all = await listBenchmarkPasses(db, 200);
+    let passes: PassRow[];
+    if (passId) {
+      const found = all.find((p) => p.id === passId);
+      if (!found) throw new CliError(`No benchmark pass with id: ${passId}`, 1);
+      if (opts.recompute) {
+        const r = await recomputePass(db, passId);
+        if (!r.ok) throw new CliError(r.reason === 'running' ? 'That pass is still running.' : `No benchmark pass with id: ${passId}`, 1);
+        passes = [r.pass];
+      } else {
+        passes = [found];
+      }
+    } else {
+      const baseline = all.filter((p) => p.kind === 'baseline').at(-1);
+      passes = [...(baseline ? [baseline] : []), ...all.filter((p) => p.kind !== 'baseline').slice(0, 5)];
+      if (passes.length === 0) {
+        out('No benchmark passes yet. Save a baseline first: npm run gen -- bench baseline');
+        return 0;
+      }
+    }
+    const md = renderScorecardMarkdown(passes);
+    out(md);
+    mkdirSync(BENCH_DIR, { recursive: true });
+    const path = join(BENCH_DIR, `${new Date().toISOString().slice(0, 10)}-${slugOf(passes[0]!.label)}.md`);
+    writeFileSync(path, md, 'utf8');
+    out(`Wrote ${path}`);
+    return 0;
+  });
+}
+
 const program = buildProgram({
   run: (opts: RunOpts) => execute(null, configFrom(opts)),
   resume: async (runId: string) => {
@@ -436,6 +508,9 @@ const program = buildProgram({
   configSet: configSetCommand,
   configGet: configGetCommand,
   worker: workerCommand,
+  benchBaseline: benchBaselineCommand,
+  benchRun: benchRunCommand,
+  benchReport: benchReportCommand,
 });
 
 try {

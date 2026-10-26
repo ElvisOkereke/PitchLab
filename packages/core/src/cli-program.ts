@@ -65,6 +65,9 @@ export type CliHandlers = {
   configSet(key: string, value: string): Promise<number>;
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
+  benchBaseline(opts: { force?: boolean }): Promise<number>;
+  benchRun(): Promise<number>;
+  benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
 };
 
 export type WorkerCliOpts = { interval: number; once?: boolean };
@@ -213,6 +216,26 @@ export function buildProgram(h: CliHandlers): Command {
     .action(async (key: string | undefined) => {
       if (key !== undefined) checkConfigKey(key);
       process.exitCode = await h.configGet(key);
+    });
+
+  const benchCmd = program.command('bench').description('Idea-quality benchmark: baseline, passes and the scorecard');
+  benchCmd.command('baseline')
+    .description("Freeze today's scorecard over every finished real run as baseline-N")
+    .option('--force', 'add another baseline even if one exists')
+    .action(async (opts: { force?: boolean }) => {
+      process.exitCode = await h.benchBaseline(opts);
+    });
+  benchCmd.command('run')
+    .description('Queue the benchmark runs (costs model calls; start `gen worker` to execute them)')
+    .action(async () => {
+      process.exitCode = await h.benchRun();
+    });
+  benchCmd.command('report')
+    .description('Print and write the scorecard (baseline plus the newest passes, or one pass) to output/bench/')
+    .argument('[passId]', 'a pass id')
+    .option('--recompute', "freeze a new snapshot of that pass with today's data first")
+    .action(async (passId: string | undefined, opts: { recompute?: boolean }) => {
+      process.exitCode = await h.benchReport(passId, opts);
     });
 
   return program;

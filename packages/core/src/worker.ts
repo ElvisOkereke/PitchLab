@@ -70,6 +70,8 @@ export type WorkerOptions = {
   heartbeat: () => Promise<void>;
   log: (m: string) => void;
   once?: boolean;
+  /** Called after every run outcome (success, execute throw, invalid config); a throw is logged and ignored. */
+  finalize?: () => Promise<void>;
 };
 
 const ERROR_MAX = 1000;
@@ -106,6 +108,13 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       await o.heartbeat();
     } catch (err) {
       o.log(`heartbeat failed: ${messageOf(err)}`);
+    }
+  };
+  const finish = async () => {
+    try {
+      await o.finalize?.();
+    } catch (err) {
+      o.log(`finalize failed: ${messageOf(err)}`);
     }
   };
   while (!o.signal.aborted) {
@@ -146,6 +155,7 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       const issues = parsed.error.issues.map((i) => `${i.path.join('.') || 'config'}: ${i.message}`).join('; ');
       await failRun(o.db, id, `invalid run config: ${issues}`);
       o.log(`run ${id} failed: invalid run config`);
+      await finish();
     } else {
       o.log(`run ${id} claimed`);
       // Runs take minutes: keep the heartbeat fresh while one executes, so the dashboard does not report the worker gone.
@@ -160,6 +170,7 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       } finally {
         clearInterval(timer);
       }
+      await finish();
     }
     if (o.once) return;
   }

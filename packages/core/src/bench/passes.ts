@@ -37,11 +37,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const lock = (tx: Tx) => tx.execute(sql`select pg_advisory_xact_lock(${QUEUE_LOCK_KEY})`);
 
 /** Scorecard over `runIds`, plus whether all runs succeeded. Failed runs add a note. */
-async function scoreRuns(db: Db, runIds: string[]): Promise<{ metrics: Scorecard; failed: number }> {
+async function scoreRuns(db: Db, runIds: string[], noteFailed = true): Promise<{ metrics: Scorecard; failed: number }> {
   const metrics = await computeScorecard(db, runIds);
   const rows = await db.select({ n: count() }).from(runs).where(and(inArray(runs.id, runIds), eq(runs.status, 'failed')));
   const failed = Number(rows[0]?.n ?? 0);
-  if (failed > 0) metrics.notes.push(`${failed} of ${runIds.length} runs failed`);
+  if (noteFailed && failed > 0) metrics.notes.push(`${failed} of ${runIds.length} runs failed`);
   return { metrics, failed };
 }
 
@@ -127,12 +127,12 @@ export async function recomputePass(
   const [src] = await db.select().from(benchmarkPasses).where(eq(benchmarkPasses.id, passId));
   if (!src) return { ok: false, reason: 'not_found' };
   if (src.status === 'running') return { ok: false, reason: 'running' };
-  const { metrics, failed } = await scoreRuns(db, src.runIds);
+  const { metrics, failed } = await scoreRuns(db, src.runIds, src.kind !== 'baseline');
   const [row] = await db.insert(benchmarkPasses).values({
     version: src.version,
     label: `${src.label} (recomputed ${new Date().toISOString().slice(0, 10)})`,
     kind: 'recompute',
-    status: failed > 0 ? 'incomplete' : 'complete',
+    status: src.kind === 'baseline' ? src.status : failed > 0 ? 'incomplete' : 'complete',
     runIds: src.runIds,
     metrics,
     sourcePassId: src.id,
