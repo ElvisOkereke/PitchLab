@@ -10,8 +10,6 @@ export const MERGE_SIMILARITY = 0.9;
 export const PAGE_SIZE = 50;
 export const RETRIEVAL_MAX = 30;
 const MAX_LISTED = 100;
-const POOL_MIN = 60;
-const POOL_MAX = 300;
 const PER_DOMAIN = 3;
 const VOICE_BONUS = 0.05;
 const AGE_FREE_YEARS = 2;
@@ -68,6 +66,8 @@ export async function upsertKnowledgeItem(
   ctx: { missionId?: string },
 ): Promise<{ outcome: 'added' | 'merged' | 'duplicate'; itemId: string }> {
   const hash = contentHash(d);
+  /** The quote text the collector verified against the fetched source, or null. The entry quote must be this text. */
+  const verifiedQuote = d.source.quoteVerified && d.source.quote ? d.source.quote : null;
   return db.transaction(async (tx) => {
     const addSource = (itemId: string) =>
       tx.insert(knowledgeSources).values({
@@ -75,9 +75,25 @@ export async function upsertKnowledgeItem(
         publishedAt: d.source.publishedAt ?? null, quote: d.source.quote ?? null, quoteVerified: d.source.quoteVerified,
       }).onConflictDoNothing();
 
-    const [exact] = await tx.select({ id: knowledgeItems.id }).from(knowledgeItems).where(eq(knowledgeItems.contentHash, hash));
+    /** Shared by the duplicate and merge paths: add the source, upgrade voice, adopt a verified quote. */
+    const absorb = async (existing: { id: string; voice: KnowledgeVoice | null; quoteVerified: boolean }) => {
+      await addSource(existing.id);
+      const patch: Partial<typeof knowledgeItems.$inferInsert> = {
+        updatedAt: new Date(),
+        voice: moreIndependent(existing.voice, d.voice ?? null),
+      };
+      if (!existing.quoteVerified && verifiedQuote) {
+        patch.quote = verifiedQuote;
+        patch.quoteVerified = true;
+      }
+      await tx.update(knowledgeItems).set(patch).where(eq(knowledgeItems.id, existing.id));
+    };
+
+    const [exact] = await tx
+      .select({ id: knowledgeItems.id, voice: knowledgeItems.voice, quoteVerified: knowledgeItems.quoteVerified })
+      .from(knowledgeItems).where(eq(knowledgeItems.contentHash, hash));
     if (exact) {
-      await addSource(exact.id);
+      await absorb(exact);
       return { outcome: 'duplicate' as const, itemId: exact.id };
     }
 
@@ -88,21 +104,12 @@ export async function upsertKnowledgeItem(
       .orderBy(cosineDistance(knowledgeItems.embedding, embedding), asc(knowledgeItems.id))
       .limit(1);
     if (nearest && Number(nearest.sim) >= MERGE_SIMILARITY) {
-      await addSource(nearest.id);
-      const patch: Partial<typeof knowledgeItems.$inferInsert> = {
-        updatedAt: new Date(),
-        voice: moreIndependent(nearest.voice, d.voice ?? null),
-      };
-      if (!nearest.quoteVerified && d.source.quoteVerified && d.quote) {
-        patch.quote = d.quote;
-        patch.quoteVerified = true;
-      }
-      await tx.update(knowledgeItems).set(patch).where(eq(knowledgeItems.id, nearest.id));
+      await absorb(nearest);
       return { outcome: 'merged' as const, itemId: nearest.id };
     }
 
     const [row] = await tx.insert(knowledgeItems).values({
-      kind: d.kind, title: d.title, summary: d.summary, quote: d.quote ?? null, quoteVerified: d.source.quoteVerified && !!d.quote,
+      kind: d.kind, title: d.title, summary: d.summary, quote: verifiedQuote ?? d.quote ?? null, quoteVerified: verifiedQuote !== null,
       audience: d.audience, countries: d.countries, industries: d.industries, voice: d.voice ?? null,
       facts: d.facts, embedding, contentHash: hash, missionId: ctx.missionId ?? null,
     }).returning({ id: knowledgeItems.id });
@@ -166,12 +173,12 @@ export async function searchLibrary(db: Db, f: LibraryFilter): Promise<{ rows: L
   if (f.industry) conds.push(sql`${f.industry} = any(${knowledgeItems.industries})`);
   if (f.voice) conds.push(eq(knowledgeItems.voice, f.voice as KnowledgeVoice));
   if (f.sourceType) conds.push(sql`exists (select 1 from knowledge_sources s where s.item_id = knowledge_items.id and s.source_type = ${f.sourceType})`);
-  if (f.maxAgeDays != null) {
+  if (f.maxAgeDays != null && Number.isFinite(f.maxAgeDays)) {
     const cutoff = new Date(Date.now() - f.maxAgeDays * 86_400_000).toISOString();
     conds.push(sql`${newestExpr} >= ${cutoff}::timestamptz`);
   }
   const where = and(...conds);
-  const page = Math.max(1, Math.floor(f.page ?? 1));
+  const page = Number.isFinite(f.page) ? Math.max(1, Math.floor(f.page!)) : 1;
 
   const [{ total } = { total: 0 }] = await db.select({ total: count() }).from(knowledgeItems).where(where);
   const order = f.queryVector
@@ -251,7 +258,7 @@ export async function retrieveForRun(
   queryVector: number[],
   opts: { limit: number; kinds?: ('problem' | 'pricing')[]; countries?: string[] },
 ): Promise<LibraryRow[]> {
-  const limit = Math.min(Math.max(Math.floor(opts.limit), 0), RETRIEVAL_MAX);
+  const limit = Math.min(Math.max(Number.isFinite(opts.limit) ? Math.floor(opts.limit) : RETRIEVAL_MAX, 0), RETRIEVAL_MAX);
   if (limit === 0) return [];
   const kinds = opts.kinds?.length ? opts.kinds : (['problem', 'pricing'] as const);
   const conds: (SQL | undefined)[] = [
@@ -264,32 +271,32 @@ export async function retrieveForRun(
     const arr = sql`array[${sql.join(opts.countries.map((c) => sql`${c}`), sql`, `)}]::text[]`;
     conds.push(sql`(${knowledgeItems.countries} && ${arr} or 'global' = any(${knowledgeItems.countries}) or cardinality(${knowledgeItems.countries}) = 0)`);
   }
-  const domainExpr = sql<string | null>`(select s.domain from knowledge_sources s where s.item_id = knowledge_items.id order by s.fetched_at, s.id limit 1)`;
-  const pool = Math.min(Math.max(limit * 8, POOL_MIN), POOL_MAX);
-  const cands = await db.select({ ...rowShape, sim: similarity(queryVector), domain: domainExpr })
-    .from(knowledgeItems).where(and(...conds))
-    .orderBy(cosineDistance(knowledgeItems.embedding, queryVector), asc(knowledgeItems.id)).limit(pool);
+  const domainExpr = sql<string>`coalesce((select s.domain from knowledge_sources s where s.item_id = knowledge_items.id order by s.fetched_at, s.id limit 1), knowledge_items.id::text)`;
+  const scoreExpr = sql<number>`(${similarity(queryVector)})
+    + (case when ${knowledgeItems.voice} in ('operator', 'neutral') then ${VOICE_BONUS}::float8 else 0::float8 end)
+    - greatest(0::float8, extract(epoch from (now() - coalesce(${newestExpr}, now()))) / ${YEAR_MS / 1000}::float8 - ${AGE_FREE_YEARS}::float8) * ${AGE_PENALTY_PER_YEAR}::float8`;
 
-  const now = Date.now();
-  const scored = cands.map((c) => {
-    const ageYears = c.newestSourceAt ? Math.max(0, (now - c.newestSourceAt.getTime()) / YEAR_MS) : 0;
-    const score = Number(c.sim)
-      + (c.voice === 'operator' || c.voice === 'neutral' ? VOICE_BONUS : 0)
-      - Math.max(0, ageYears - AGE_FREE_YEARS) * AGE_PENALTY_PER_YEAR;
-    return { c, score };
-  }).sort((a, b) => b.score - a.score);
+  // One bounded query: score every eligible entry, keep the best 3 per domain, take the top `limit`.
+  const base = db.select({
+    id: knowledgeItems.id, kind: knowledgeItems.kind, title: knowledgeItems.title, summary: knowledgeItems.summary,
+    quote: knowledgeItems.quote, quoteVerified: knowledgeItems.quoteVerified, audience: knowledgeItems.audience,
+    countries: knowledgeItems.countries, industries: knowledgeItems.industries, voice: knowledgeItems.voice,
+    status: knowledgeItems.status, updatedAt: knowledgeItems.updatedAt,
+    sourceCount: sourceCountExpr.as('source_count'), newestSourceAt: newestExpr.as('newest_source_at'),
+    score: scoreExpr.as('score'), dom: domainExpr.as('dom'),
+  }).from(knowledgeItems).where(and(...conds)).as('base');
+  const ranked = db.select({
+    id: base.id, kind: base.kind, title: base.title, summary: base.summary, quote: base.quote, quoteVerified: base.quoteVerified,
+    audience: base.audience, countries: base.countries, industries: base.industries, voice: base.voice, status: base.status,
+    updatedAt: base.updatedAt, sourceCount: base.sourceCount, newestSourceAt: base.newestSourceAt, score: base.score,
+    rn: sql<number>`row_number() over (partition by ${base.dom} order by ${base.score} desc, ${base.id})`.as('rn'),
+  }).from(base).as('ranked');
+  const rows = await db.select().from(ranked).where(sql`${ranked.rn} <= ${PER_DOMAIN}`)
+    .orderBy(desc(ranked.score), asc(ranked.id)).limit(limit);
 
-  const perDomain = new Map<string, number>();
-  const out: LibraryRow[] = [];
-  for (const { c } of scored) {
-    const dom = c.domain ?? c.id;
-    const used = perDomain.get(dom) ?? 0;
-    if (used >= PER_DOMAIN) continue;
-    perDomain.set(dom, used + 1);
-    const { sim: _sim, domain: _domain, ...row } = c;
-    void _sim; void _domain;
-    out.push(row as LibraryRow);
-    if (out.length >= limit) break;
-  }
-  return out;
+  return rows.map((r) => ({
+    id: r.id, kind: r.kind, title: r.title, summary: r.summary, quote: r.quote, quoteVerified: r.quoteVerified,
+    audience: r.audience, countries: r.countries, industries: r.industries, voice: r.voice, status: r.status,
+    sourceCount: Number(r.sourceCount), newestSourceAt: toDate(r.newestSourceAt), updatedAt: r.updatedAt,
+  }));
 }

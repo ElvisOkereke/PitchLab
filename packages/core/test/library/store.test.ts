@@ -81,6 +81,50 @@ describe('upsertKnowledgeItem', () => {
     expect(it?.quote).toBe('verified one');
     expect(it?.quoteVerified).toBe(true);
   });
+  it('keeps the existing verified quote when both are verified', async () => {
+    const db = await testDb();
+    const a = await upsertKnowledgeItem(db, draft({ quote: 'first', source: { url: 'https://a.example/1', domain: 'a.example', sourceType: 'hn', quote: 'first', quoteVerified: true } }), unit(0), {});
+    await upsertKnowledgeItem(db, draft({ quote: 'second', source: { url: 'https://b.example/1', domain: 'b.example', sourceType: 'hn', quote: 'second', quoteVerified: true } }), near(0.95), {});
+    expect((await getLibraryItem(db, a.itemId))?.quote).toBe('first');
+  });
+  it('leaves quote unchanged when both are unverified', async () => {
+    const db = await testDb();
+    const a = await upsertKnowledgeItem(db, draft({ quote: 'first', source: unverifiedSource('https://a.example/1', 'a.example') }), unit(0), {});
+    await upsertKnowledgeItem(db, draft({ quote: 'second', source: unverifiedSource('https://b.example/1', 'b.example') }), near(0.95), {});
+    const it = await getLibraryItem(db, a.itemId);
+    expect(it?.quote).toBe('first');
+    expect(it?.quoteVerified).toBe(false);
+  });
+  it('stores the verified source quote, never an unchecked model quote', async () => {
+    const db = await testDb();
+    const a = await upsertKnowledgeItem(db, draft({ quote: 'model words', source: { url: 'https://a.example/1', domain: 'a.example', sourceType: 'hn', quote: 'page words', quoteVerified: true } }), unit(0), {});
+    const it = await getLibraryItem(db, a.itemId);
+    expect(it?.quote).toBe('page words');
+    expect(it?.quoteVerified).toBe(true);
+    const b = await upsertKnowledgeItem(db, draft({ quote: 'model only', source: { url: 'https://b.example/1', domain: 'b.example', sourceType: 'hn', quote: 'page', quoteVerified: false } }), unit(7), {});
+    expect((await getLibraryItem(db, b.itemId))?.quoteVerified).toBe(false);
+    // merge adopts the source quote, not d.quote
+    await upsertKnowledgeItem(db, draft({ quote: 'other model words', source: { url: 'https://c.example/1', domain: 'c.example', sourceType: 'hn', quote: 'verified page words', quoteVerified: true } }), (() => { const v = unit(7); v[7] = 0.95; v[8] = Math.sqrt(1 - 0.95 * 0.95); return v; })(), {});
+    const m = await getLibraryItem(db, b.itemId);
+    expect(m?.quote).toBe('verified page words');
+    expect(m?.quoteVerified).toBe(true);
+  });
+  it('duplicate path also upgrades voice and adopts a verified quote', async () => {
+    const db = await testDb();
+    const d = draft({ voice: 'vendor', source: unverifiedSource('https://a.example/1', 'a.example') });
+    const a = await upsertKnowledgeItem(db, d, unit(0), {});
+    const r = await upsertKnowledgeItem(db, { ...d, voice: 'operator', source: { url: 'https://b.example/1', domain: 'b.example', sourceType: 'hn', quote: d.quote!, quoteVerified: true } }, unit(0), {});
+    expect(r.outcome).toBe('duplicate');
+    const it = await getLibraryItem(db, a.itemId);
+    expect(it?.voice).toBe('operator');
+    expect(it?.quoteVerified).toBe(true);
+  });
+  it('non-finite search inputs fall back to defaults', async () => {
+    const db = await testDb();
+    await upsertKnowledgeItem(db, draft(), unit(0), {});
+    expect((await searchLibrary(db, { page: NaN, maxAgeDays: Infinity })).rows).toHaveLength(1);
+    expect((await searchLibrary(db, { page: Infinity, maxAgeDays: NaN })).total).toBe(1);
+  });
   it('merging into a rejected entry keeps it rejected', async () => {
     const db = await testDb();
     const a = await upsertKnowledgeItem(db, draft(), unit(0), {});
@@ -179,10 +223,17 @@ describe('retrieveForRun', () => {
   it('excludes unverified, rejected and startup entries', async () => {
     const db = await testDb();
     const ok = await upsertKnowledgeItem(db, draft({ title: 'ok' }), unit(0), {});
-    await upsertKnowledgeItem(db, draft({ title: 'unverified', source: unverifiedSource('https://u.example/1', 'u.example') }), near(0.7), {});
-    const rej = await upsertKnowledgeItem(db, draft({ title: 'rej', domain: 'r.example', url: 'https://r.example/1' }), near(0.6), {});
+    const unv = await upsertKnowledgeItem(db, draft({ title: 'unverified', source: unverifiedSource('https://u.example/1', 'u.example') }), near(0.7, 1), {});
+    const rej = await upsertKnowledgeItem(db, draft({ title: 'rej', domain: 'r.example', url: 'https://r.example/1' }), near(0.6, 2), {});
     await rejectItem(db, rej.itemId);
-    await upsertKnowledgeItem(db, draft({ title: 'startup', kind: 'startup', facts: { name: 'n', whatItDoes: 'x', businessModel: 'b', outcome: 'dead' } }), near(0.5), {});
+    await upsertKnowledgeItem(db, draft({ title: 'startup', kind: 'startup', facts: { name: 'n', whatItDoes: 'x', businessModel: 'b', outcome: 'dead' } }), near(0.5, 3), {});
+    // the unverified entry exists, is active and unverified, and would rank without the filter
+    const u = await getLibraryItem(db, unv.itemId);
+    expect(u?.status).toBe('active');
+    expect(u?.quoteVerified).toBe(false);
+    const visible = await searchLibrary(db, { queryVector: unit(0) });
+    expect(visible.rows.map((r) => r.title)).toContain('unverified');
+    expect(visible.rows.map((r) => r.title)).not.toContain('rej');
     const rows = await retrieveForRun(db, unit(0), { limit: 10 });
     expect(rows.map((r) => r.id)).toEqual([ok.itemId]);
   });
@@ -194,6 +245,31 @@ describe('retrieveForRun', () => {
     await upsertKnowledgeItem(db, draft({ title: 'old', voice: 'vendor', domain: 'x.example', url: 'https://x.example/1', publishedAt: yearsAgo(5) }), near(0.93, 4), {});
     const rows = await retrieveForRun(db, unit(0), { limit: 10 });
     expect(rows.map((r) => r.title)).toEqual(['operator', 'vendor', 'old']);
+  });
+  it('penalises 0.05 per year beyond 2, nothing before', async () => {
+    const db = await testDb();
+    // 1.5y sim 0.80 -> 0.80; 3y sim 0.84 -> 0.79; fresh sim 0.70 -> 0.70.
+    // (a per-year-from-zero formula would order them 1.5y, fresh, 3y)
+    await upsertKnowledgeItem(db, draft({ title: 'fresh', voice: 'vendor', domain: 'f.example', url: 'https://f.example/1', publishedAt: new Date() }), near(0.7, 2), {});
+    await upsertKnowledgeItem(db, draft({ title: 'y1.5', voice: 'vendor', domain: 'a.example', url: 'https://a1.example/1', publishedAt: yearsAgo(1.5) }), near(0.8, 3), {});
+    await upsertKnowledgeItem(db, draft({ title: 'y3', voice: 'vendor', domain: 'b.example', url: 'https://b1.example/1', publishedAt: yearsAgo(3) }), near(0.84, 4), {});
+    const rows = await retrieveForRun(db, unit(0), { limit: 10 });
+    expect(rows.map((r) => r.title)).toEqual(['y1.5', 'y3', 'fresh']);
+  });
+  it('does not starve results when a few domains cluster', async () => {
+    const db = await testDb();
+    for (let i = 0; i < 20; i++) {
+      await upsertKnowledgeItem(db, draft({ domain: 'one.example', url: `https://one.example/${i}` }), near(0.9 - i * 0.01, 10 + i), {});
+      await upsertKnowledgeItem(db, draft({ domain: 'two.example', url: `https://two.example/${i}` }), near(0.9 - i * 0.01, 40 + i), {});
+    }
+    for (let i = 0; i < 10; i++) await upsertKnowledgeItem(db, draft({ domain: `o${i}.example`, url: `https://o${i}.example/1` }), near(0.3, 70 + i), {});
+    expect(await retrieveForRun(db, unit(0), { limit: 30 })).toHaveLength(16);
+  });
+  it('treats non-finite limit as the default', async () => {
+    const db = await testDb();
+    await upsertKnowledgeItem(db, draft(), unit(0), {});
+    expect(await retrieveForRun(db, unit(0), { limit: NaN })).toHaveLength(1);
+    expect(await retrieveForRun(db, unit(0), { limit: Infinity })).toHaveLength(1);
   });
   it('caps 3 per domain and limit at 30', async () => {
     const db = await testDb();
