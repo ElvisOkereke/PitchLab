@@ -253,13 +253,8 @@ export async function libraryCoverage(db: Db): Promise<LibraryCoverage> {
   };
 }
 
-export async function retrieveForRun(
-  db: Db,
-  queryVector: number[],
-  opts: { limit: number; kinds?: ('problem' | 'pricing')[]; countries?: string[] },
-): Promise<LibraryRow[]> {
-  const limit = Math.min(Math.max(Number.isFinite(opts.limit) ? Math.floor(opts.limit) : RETRIEVAL_MAX, 0), RETRIEVAL_MAX);
-  if (limit === 0) return [];
+/** The eligibility rule shared by retrieveForRun and countEligibleForRun. */
+function eligibleConds(opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[] }): (SQL | undefined)[] {
   const kinds = opts.kinds?.length ? opts.kinds : (['problem', 'pricing'] as const);
   const conds: (SQL | undefined)[] = [
     eq(knowledgeItems.status, 'active'),
@@ -271,6 +266,23 @@ export async function retrieveForRun(
     const arr = sql`array[${sql.join(opts.countries.map((c) => sql`${c}`), sql`, `)}]::text[]`;
     conds.push(sql`(${knowledgeItems.countries} && ${arr} or 'global' = any(${knowledgeItems.countries}) or cardinality(${knowledgeItems.countries}) = 0)`);
   }
+  return conds;
+}
+
+/** How many entries retrieveForRun could return for these options (same eligibility, no limit). */
+export async function countEligibleForRun(db: Db, opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[] }): Promise<number> {
+  const [r] = await db.select({ n: count() }).from(knowledgeItems).where(and(...eligibleConds(opts)));
+  return Number(r?.n ?? 0);
+}
+
+export async function retrieveForRun(
+  db: Db,
+  queryVector: number[],
+  opts: { limit: number; kinds?: ('problem' | 'pricing')[]; countries?: string[] },
+): Promise<LibraryRow[]> {
+  const limit = Math.min(Math.max(Number.isFinite(opts.limit) ? Math.floor(opts.limit) : RETRIEVAL_MAX, 0), RETRIEVAL_MAX);
+  if (limit === 0) return [];
+  const conds = eligibleConds(opts);
   const domainExpr = sql<string>`coalesce((select s.domain from knowledge_sources s where s.item_id = knowledge_items.id order by s.fetched_at, s.id limit 1), knowledge_items.id::text)`;
   const scoreExpr = sql<number>`(${similarity(queryVector)})
     + (case when ${knowledgeItems.voice} in ('operator', 'neutral') then ${VOICE_BONUS}::float8 else 0::float8 end)

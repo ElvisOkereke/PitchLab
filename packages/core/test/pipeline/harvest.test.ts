@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { signals, dataCalls } from '../../src/db/schema';
 import { CA_US } from '../../src/db/seed';
 import { harvest, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
@@ -402,11 +402,11 @@ describe('harvest', () => {
 });
 
 describe('harvest library signals', () => {
-  const lib = async (db: Awaited<ReturnType<typeof testDb>>, o: { url: string; quote?: string; verified?: boolean; voice?: 'operator' | 'neutral' | 'vendor'; kind?: 'problem' | 'pricing'; vec?: number[]; domain?: string; title?: string }) => {
+  const lib = async (db: Awaited<ReturnType<typeof testDb>>, o: { url: string; quote?: string; verified?: boolean; voice?: 'operator' | 'neutral' | 'vendor'; kind?: 'problem' | 'pricing'; vec?: number[]; domain?: string; title?: string; countries?: string[] }) => {
     const quote = o.quote ?? `library quote for ${o.url}`;
     const r = await upsertKnowledgeItem(db, {
       kind: o.kind ?? 'problem', title: o.title ?? `T ${o.url}`, summary: 'S', quote, audience: 'business',
-      countries: ['US'], industries: ['retail'], voice: o.voice ?? 'operator', facts: o.kind === 'pricing' ? {} : { persona: 'p' },
+      countries: o.countries ?? ['US'], industries: ['retail'], voice: o.voice ?? 'operator', facts: o.kind === 'pricing' ? {} : { persona: 'p' },
       source: { url: o.url, domain: o.domain ?? new URL(o.url).hostname, sourceType: 'hn', quote, quoteVerified: o.verified ?? true },
     } as never, o.vec ?? unit(0), {});
     return r.itemId;
@@ -418,7 +418,8 @@ describe('harvest library signals', () => {
   };
   const mk = (db: Awaited<ReturnType<typeof testDb>>, embed?: (t: string[]) => number[][]) =>
     fakeRouter({ research: { harvest: [{ text: '', sources: [] }, { text: '', sources: [] }] }, structured: { extract: [{ signals: [] }, { signals: [] }] }, embed });
-  const logs: string[] = [];
+  let logs: string[] = [];
+  beforeEach(() => { logs = []; });
   const deps = (db: Awaited<ReturnType<typeof testDb>>, router: ReturnType<typeof fakeRouter>) => ({ db, router, sources: [], fetchPage, log: (m: string) => { logs.push(m); } });
 
   it('returns library-linked signals with voice and knowledge_item_id, before per-run signals', async () => {
@@ -466,5 +467,38 @@ describe('harvest library signals', () => {
     const b = await harvest(deps(db, mk(db, () => [unit(0)])), run);
     expect(b.signalIds).toEqual(a.signalIds);
     expect(await db.select().from(signals)).toHaveLength(1);
+  });
+
+  it('does not halve when the 50+ entries are out of the run market', async () => {
+    const { db, run } = await setup();
+    for (let i = 0; i < 50; i++) await lib(db, { url: `https://o${i}.test/${i}`, countries: ['GB'], vec: unit(i) });
+    for (let i = 0; i < 10; i++) await lib(db, { url: `https://in${i}.test/${i}`, vec: unit(100 + i) });
+    const out = await harvest(deps(db, mk(db, () => [unit(100)])), run);
+    expect(out.signalIds).toHaveLength(10);
+  });
+
+  it('halves at exactly 50 eligible but not at 49', async () => {
+    for (const [total, expected] of [[49, 15], [50, 7]] as const) {
+      const { db, run } = await setup();
+      for (let i = 0; i < total; i++) await lib(db, { url: `https://b${i}.test/${i}`, vec: unit(i) });
+      const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+      expect(out.signalIds).toHaveLength(expected);
+    }
+  });
+
+  it('two entries sharing a best source url and quote yield one signal without dropping the library', async () => {
+    const { db, run } = await setup();
+    await lib(db, { url: 'https://same.test/1', quote: 'shared quote text', title: 'A', vec: unit(0) });
+    await lib(db, { url: 'https://same.test/1', quote: 'shared quote text', title: 'B totally different', vec: unit(1) });
+    await lib(db, { url: 'https://other.test/2', vec: unit(2) });
+    const out = await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(out.signalIds).toHaveLength(2);
+    expect(logs.some((l) => l.startsWith('harvest: library unavailable'))).toBe(false);
+  });
+
+  it('logs when the library has no matching entries', async () => {
+    const { db, run } = await setup();
+    await harvest(deps(db, mk(db, () => [unit(0)])), run);
+    expect(logs).toContain('harvest: library has no matching entries');
   });
 });

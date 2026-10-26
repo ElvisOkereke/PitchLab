@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { and, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { knowledgeItems, lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
+import { lenses, markets, signals, SIGNAL_VOICES, type SignalVoice } from '../db/schema';
 import type { Db } from '../db/client';
-import { getLibraryItem, retrieveForRun } from '../library/store';
+import { countEligibleForRun, getLibraryItem, retrieveForRun } from '../library/store';
 import { loadPrompt } from '../llm/prompts';
 import { neutralizeUntrusted, wrapUntrusted } from '../llm/untrusted';
 import { DEFAULT_WP_SLUGS } from '../tools/sources/wordpress';
@@ -86,12 +86,11 @@ async function librarySignals(
 ): Promise<string[]> {
   try {
     const [vector] = await router.embed([queryText], { runId });
-    if (!vector) return [];
+    if (!vector) { log('harvest: library has no matching entries'); return []; }
     let rows = await retrieveForRun(db, vector, { limit: LIBRARY_SIGNAL_MAX, kinds: ['problem', 'pricing'], countries });
-    if (rows.length === 0) return [];
-    const [{ n } = { n: 0 }] = await db.select({ n: count() }).from(knowledgeItems)
-      .where(and(eq(knowledgeItems.status, 'active'), eq(knowledgeItems.quoteVerified, true), inArray(knowledgeItems.kind, ['problem', 'pricing'])));
-    if (Number(n) >= LIBRARY_MIN_ENTRIES) rows = rows.slice(0, Math.floor(LIBRARY_SIGNAL_MAX / 2));
+    if (rows.length === 0) { log('harvest: library has no matching entries'); return []; }
+    const n = await countEligibleForRun(db, { kinds: ['problem', 'pricing'], countries });
+    if (n >= LIBRARY_MIN_ENTRIES) rows = rows.slice(0, Math.floor(LIBRARY_SIGNAL_MAX / 2));
 
     const picked: { id: string; url: string; source: string; title: string; quote: string; hash: string; voice: SignalVoice | null; sector: string | null; publishedAt: Date | null }[] = [];
     for (const row of rows) {
@@ -106,8 +105,13 @@ async function librarySignals(
         voice: row.voice, sector: row.industries[0] ?? null, publishedAt: best.publishedAt,
       });
     }
-    if (picked.length === 0) return [];
-    await db.insert(signals).values(picked.map((p) => ({
+    if (picked.length === 0) { log('harvest: library has no matching entries'); return []; }
+    // One row per url + quote hash: ON CONFLICT DO UPDATE may not touch a row twice in one insert (first, best-ranked wins).
+    const uniq = new Map<string, (typeof picked)[number]>();
+    for (const p of picked) { const k = `${p.url}
+${p.hash}`; if (!uniq.has(k)) uniq.set(k, p); }
+    const unique = [...uniq.values()];
+    const written = await db.insert(signals).values(unique.map((p) => ({
       runId, marketId, source: p.source, url: p.url, title: p.title, quote: p.quote, quoteHash: p.hash,
       sector: p.sector, painType: null, voice: p.voice, publishedAt: p.publishedAt, knowledgeItemId: p.id,
     }))).onConflictDoUpdate({
@@ -116,13 +120,11 @@ async function librarySignals(
         voice: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('voice')}, excluded.${sql.identifier('voice')})`,
         knowledgeItemId: sql`coalesce(${sql.identifier('signals')}.${sql.identifier('knowledge_item_id')}, excluded.${sql.identifier('knowledge_item_id')})`,
       },
-    });
-    const ids: string[] = [];
-    for (const p of picked) {
-      const [r] = await db.select({ id: signals.id }).from(signals).where(and(eq(signals.url, p.url), eq(signals.quoteHash, p.hash)));
-      if (r) ids.push(r.id);
-    }
-    return ids;
+    }).returning({ id: signals.id, url: signals.url, quoteHash: signals.quoteHash });
+    const byKey = new Map(written.map((w) => [`${w.url}
+${w.quoteHash}`, w.id]));
+    return unique.map((p) => byKey.get(`${p.url}
+${p.hash}`)).filter((x): x is string => !!x);
   } catch (err) {
     log(`harvest: library unavailable (${err instanceof Error ? err.message : String(err)}), using per-run harvest only`);
     return [];
