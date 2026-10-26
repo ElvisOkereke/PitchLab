@@ -16,7 +16,7 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
       'sender.name': 'Al <b>Owner</b>', 'sender.company': '', 'sender.address': '1 Main St', 'sender.contact': 'https://al.example', 'sender.email': '',
       'landing.privacyContact': 'privacy@al.example', 'landing.formEndpoint': '',
     },
-    worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
+    worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false, producthunt: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
     database: true,
     example: { hidden: false },
     lenses: [{ id: 'aggregator', name: 'Sell to the aggregator' }, { id: 'review-gap', name: 'Incumbent review gap' }],

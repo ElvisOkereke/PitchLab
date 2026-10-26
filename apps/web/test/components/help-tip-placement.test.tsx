@@ -39,7 +39,7 @@ describe('help tip placement keeps accessible names clean', () => {
     const c = render(
       <CommandCenter
         data={{
-          now, needsYou: [], worker: { at: now.toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false }, models: DEFAULT_MODELS },
+          now, needsYou: [], worker: { at: now.toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false, producthunt: false }, models: DEFAULT_MODELS },
           spend: { today: { llmUsd: 0, dataUsd: 0, llmCalls: 0 }, week: { llmUsd: 0, dataUsd: 0, llmCalls: 0 } },
           runs: { queued: 0, running: 0, succeeded: 0, failed: 0 } as never, recent: [],
         }}

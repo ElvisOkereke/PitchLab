@@ -2,7 +2,8 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Env } from './config/env';
 import { DEFAULT_MODELS, MODEL_STAGES, isModelStage, type ModelStage } from './config/models';
 import type { Db } from './db/client';
-import { runs, validationJobs } from './db/schema';
+import { maybeQueueBackgroundMission } from './dashboard/missions';
+import { researchMissions, runs, validationJobs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
 import { errorMessage, scrubError } from './tools/scrub';
@@ -41,6 +42,20 @@ export async function claimNextValidationJob(db: Db): Promise<string | null> {
   return row?.id ?? null;
 }
 
+/** Same as claimNextRun, for the oldest queued research mission (FOR UPDATE SKIP LOCKED). */
+export async function claimNextMission(db: Db): Promise<string | null> {
+  const next = db.select({ id: researchMissions.id }).from(researchMissions)
+    .where(eq(researchMissions.status, 'queued'))
+    .orderBy(asc(researchMissions.createdAt), asc(researchMissions.id))
+    .limit(1)
+    .for('update', { skipLocked: true });
+  const [row] = await db.update(researchMissions)
+    .set({ status: 'running', startedAt: sql`now()` })
+    .where(and(eq(researchMissions.status, 'queued'), eq(researchMissions.id, sql`(${next})`)))
+    .returning({ id: researchMissions.id });
+  return row?.id ?? null;
+}
+
 /** The model per stage the worker will use (defaults plus MODEL_OVERRIDES), as buildRouter resolves them. */
 export function resolveModels(env: Env): Record<ModelStage, string> {
   const overrides = Object.fromEntries(Object.entries(env.MODEL_OVERRIDES).filter(([k]) => isModelStage(k)));
@@ -56,6 +71,7 @@ export function workerStatus(env: Env, models: Record<ModelStage, string>): Work
       github: Boolean(env.GITHUB_TOKEN),
       stackexchange: Boolean(env.STACKEXCHANGE_KEY),
       places: Boolean(env.GOOGLE_PLACES_API_KEY),
+      producthunt: Boolean(env.PRODUCTHUNT_TOKEN),
     },
     models: { ...models },
   };
@@ -67,6 +83,8 @@ export type WorkerOptions = {
   signal: AbortSignal;
   execute: (runId: string) => Promise<'succeeded' | 'failed'>;
   executeValidation: (jobId: string) => Promise<'succeeded' | 'failed'>;
+  /** Research missions, taken after runs and validation jobs. When absent, missions stay queued. */
+  executeMission?: (missionId: string) => Promise<'succeeded' | 'failed'>;
   heartbeat: () => Promise<void>;
   log: (m: string) => void;
   once?: boolean;
@@ -140,6 +158,33 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
         }
         if (o.once) return;
         continue;
+      }
+      if (o.executeMission) {
+        const missionId = await claimNextMission(o.db);
+        if (missionId !== null) {
+          o.log(`mission ${missionId} claimed`);
+          const timer = setInterval(() => void beat(), o.intervalMs);
+          try {
+            const status = await o.executeMission(missionId);
+            o.log(`mission ${missionId} ${status}`);
+          } catch (err) {
+            await o.db.update(researchMissions)
+              .set({ status: 'failed', error: scrubError(errorMessage(err)).slice(0, ERROR_MAX), finishedAt: new Date() })
+              .where(eq(researchMissions.id, missionId));
+            o.log(`mission ${missionId} failed: ${errorMessage(err)}`);
+          } finally {
+            clearInterval(timer);
+          }
+          if (o.once) return;
+          continue;
+        }
+        // Idle: top up the background queue (a failure here must never stop the worker).
+        try {
+          const queued = await maybeQueueBackgroundMission(o.db, new Date());
+          if (queued === 'queued') o.log('background research mission queued');
+        } catch (err) {
+          o.log(`background research check failed: ${messageOf(err)}`);
+        }
       }
       if (o.once) {
         o.log('no queued runs');

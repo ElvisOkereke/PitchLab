@@ -1,4 +1,5 @@
 import { Argument, Command, Option } from 'commander';
+import { SLICE_A_KINDS } from './library/kinds';
 import type { RunConfig } from './pipeline/types';
 import { pilotSiteDomain } from './validation/prospects';
 
@@ -68,7 +69,32 @@ export type CliHandlers = {
   benchBaseline(opts: { force?: boolean; dryRun?: boolean }): Promise<number>;
   benchRun(): Promise<number>;
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
+  research(topic: string, opts: ResearchCliOpts): Promise<number>;
+  researchStatus(): Promise<number>;
 };
+
+export type ResearchCliOpts = { kinds?: string[]; countries?: string[]; audience?: 'business' | 'consumer' | 'both'; budget?: number };
+
+function kindsArg(v: string): string[] {
+  const kinds = v.split(',').map((s) => s.trim()).filter(Boolean);
+  const bad = kinds.filter((k) => !(SLICE_A_KINDS as readonly string[]).includes(k));
+  if (kinds.length === 0 || kinds.length > 3 || bad.length > 0) {
+    throw new CliError(`--kinds takes up to 3 of ${SLICE_A_KINDS.join(', ')} (comma-separated), got: ${v}`, 2);
+  }
+  return kinds;
+}
+function countriesArg(v: string): string[] {
+  const list = v.split(',').map((s) => s.trim()).filter(Boolean);
+  if (list.length === 0 || list.length > 10 || list.some((c) => !/^([A-Z]{2}|global)$/.test(c))) {
+    throw new CliError(`--countries takes up to 10 two-letter codes such as CA,US (or global), got: ${v}`, 2);
+  }
+  return list;
+}
+function budgetArg(v: string): number {
+  const n = Number(v);
+  if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > 10) throw new CliError(`--budget is a dollar amount from 0.5 to 10, got: ${v}`, 2);
+  return n;
+}
 
 export type WorkerCliOpts = { interval: number; once?: boolean };
 
@@ -144,6 +170,17 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--once', 'check the queue once (execute at most one queued run), then exit')
     .action(async (opts: WorkerCliOpts) => {
       process.exitCode = await h.worker(opts);
+    });
+
+  program.command('research')
+    .description('Queue a research mission that adds to the library (start `gen worker` to run it); "gen research status" lists recent missions')
+    .argument('<topic>', 'what to research, or "status"')
+    .option('--kinds <list>', `comma-separated: ${SLICE_A_KINDS.join(', ')} (default problem,pricing,startup)`, kindsArg)
+    .option('--countries <list>', 'comma-separated two-letter codes, e.g. CA,US (or global)', countriesArg)
+    .addOption(new Option('--audience <who>', 'who the topic is about').choices(['business', 'consumer', 'both']))
+    .option('--budget <usd>', 'most to spend, 0.5 to 10 (default 2)', budgetArg)
+    .action(async (topic: string, opts: ResearchCliOpts) => {
+      process.exitCode = topic === 'status' ? await h.researchStatus() : await h.research(topic, opts);
     });
 
   program.command('export')

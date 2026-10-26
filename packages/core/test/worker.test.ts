@@ -4,13 +4,14 @@ import { loadEnv } from '../src/config/env';
 import { DEFAULT_MODELS } from '../src/config/models';
 import { createDb, type Db } from '../src/db/client';
 import { runMigrations } from '../src/db/migrate';
-import { runs, validationJobs } from '../src/db/schema';
+import { researchMissions, runs, validationJobs } from '../src/db/schema';
 import { ValidationJobOptionsSchema } from '../src/dashboard/validation-jobs';
 import { WORKER_STATUS_KEY, readWorkerStatus } from '../src/dashboard/settings';
 import { createRun } from '../src/pipeline/run';
 import { defaultRunConfig, type RunConfig } from '../src/pipeline/types';
+import { saveResearchSettings } from '../src/dashboard/missions';
 import { setSetting } from '../src/validation/settings';
-import { claimNextRun, claimNextValidationJob, resolveModels, runWorker, workerStatus } from '../src/worker';
+import { claimNextMission, claimNextRun, claimNextValidationJob, resolveModels, runWorker, workerStatus } from '../src/worker';
 import { insertCase, insertIdea, insertRun, testDb } from './helpers/db';
 
 const cfg = defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 });
@@ -113,6 +114,65 @@ describe('runWorker with validation jobs', () => {
   });
 });
 
+async function insertMissionRow(db: Db): Promise<string> {
+  const [row] = await db.insert(researchMissions).values({ topic: 'freight', kinds: ['problem'], countries: [], budgetUsd: '2', origin: 'owner' }).returning({ id: researchMissions.id });
+  return row!.id;
+}
+
+describe('runWorker with missions', () => {
+  it('claimNextMission takes the oldest queued mission once', async () => {
+    const db = await testDb();
+    const id = await insertMissionRow(db);
+    expect(await claimNextMission(db)).toBe(id);
+    expect(await claimNextMission(db)).toBeNull();
+  });
+
+  it('runs and jobs go first; a mission runs only when they are empty', async () => {
+    const db = await testDb();
+    const runId = (await insertRun(db, cfg)).id;
+    const jobId = await insertJob(db);
+    const missionId = await insertMissionRow(db);
+    const execute = vi.fn(async () => 'succeeded' as const);
+    const executeValidation = vi.fn(async () => 'succeeded' as const);
+    const executeMission = vi.fn(async () => 'succeeded' as const);
+    const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute, executeValidation, executeMission };
+    await db.update(runs).set({ status: 'succeeded' }).where(eq(runs.id, runId));
+    // insertJob made its own queued run too; the first pass takes that one
+    await runWorker(base);
+    expect(executeMission).not.toHaveBeenCalled();
+    await db.update(runs).set({ status: 'succeeded' });
+    await runWorker(base);
+    expect(executeValidation).toHaveBeenCalledWith(jobId);
+    expect(executeMission).not.toHaveBeenCalled();
+    await runWorker(base);
+    expect(executeMission).toHaveBeenCalledWith(missionId);
+  });
+
+  it('marks a mission failed when execute throws', async () => {
+    const db = await testDb();
+    const id = await insertMissionRow(db);
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation,
+      executeMission: async () => { throw new Error('boom'); } });
+    const [m] = await db.select().from(researchMissions).where(eq(researchMissions.id, id));
+    expect(m).toMatchObject({ status: 'failed' });
+    expect(m!.error).toContain('boom');
+  });
+
+  it('queues a background mission only when idle and background is on', async () => {
+    const db = await testDb();
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    const executeMission = vi.fn(async () => 'succeeded' as const);
+    const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded' as const, executeValidation: noValidation, executeMission };
+    await runWorker(base);
+    const rows = await db.select().from(researchMissions);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ origin: 'background', status: 'queued' });
+    expect(executeMission).not.toHaveBeenCalled();
+    await runWorker(base);
+    expect(executeMission).toHaveBeenCalledWith(rows[0]!.id);
+  });
+});
+
 describe('runWorker', () => {
   it('executes queued runs oldest first and writes a heartbeat with no secret values', async () => {
     const db = await testDb();
@@ -129,7 +189,7 @@ describe('runWorker', () => {
     expect(seen).toEqual([oldest]);
     expect((await statusOf(db, newer)).status).toBe('queued');
     const hb = await readWorkerStatus(db);
-    expect(hb).toMatchObject({ providers: { llm: true, github: true, stackexchange: false, places: false } });
+    expect(hb).toMatchObject({ providers: { llm: true, github: true, stackexchange: false, places: false, producthunt: false } });
     expect(hb!.models).toEqual({ ...DEFAULT_MODELS, score: 'gemini-x' });
     expect(JSON.stringify(hb)).not.toContain('test-key-value');
     expect(JSON.stringify(hb)).not.toContain('gh-secret-value');
@@ -259,7 +319,9 @@ describe('runWorker', () => {
 describe('workerStatus', () => {
   it('reports which keys are set, never their values', () => {
     const s = workerStatus(loadEnv({ LLM_API_KEY: 'k1', STACKEXCHANGE_KEY: 'k2', GOOGLE_PLACES_API_KEY: 'k3' }), DEFAULT_MODELS);
-    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true });
+    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true, producthunt: false });
+    expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1', PRODUCTHUNT_TOKEN: 'k4' }), DEFAULT_MODELS).providers.producthunt).toBe(true);
+    expect(Object.keys(s.providers)).not.toContain('reddit');
     expect(Number.isNaN(Date.parse(s.at))).toBe(false);
     expect(JSON.stringify(s)).not.toMatch(/k1|k2|k3/);
   });

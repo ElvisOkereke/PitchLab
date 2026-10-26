@@ -23,6 +23,8 @@ const schema = z.object({
   STACKEXCHANGE_KEY: z.string().min(1).optional(),
   /** Optional: enables the Google Places prospect source (Text Search, New). */
   GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
+  /** Optional: enables the Product Hunt collector in research missions (Reddit is not used). */
+  PRODUCTHUNT_TOKEN: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

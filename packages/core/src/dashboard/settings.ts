@@ -71,13 +71,13 @@ export type WorkerStatus = {
   /** ISO time of the last heartbeat. */
   at: string;
   /** Which providers have a key configured on the worker (booleans only, never values). */
-  providers: { llm: boolean; github: boolean; stackexchange: boolean; places: boolean };
+  providers: { llm: boolean; github: boolean; stackexchange: boolean; places: boolean; producthunt: boolean };
   models: Record<ModelStage, string>;
 };
 
 const WorkerStatusSchema = z.object({
   at: z.string().max(40),
-  providers: z.object({ llm: z.boolean(), github: z.boolean(), stackexchange: z.boolean(), places: z.boolean() }),
+  providers: z.object({ llm: z.boolean(), github: z.boolean(), stackexchange: z.boolean(), places: z.boolean(), producthunt: z.boolean().default(false) }),
   models: z.object(Object.fromEntries(MODEL_STAGES.map((s) => [s, z.string().max(200)])) as Record<ModelStage, z.ZodString>),
 });
 

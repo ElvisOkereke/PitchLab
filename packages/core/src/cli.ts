@@ -4,7 +4,7 @@ import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizz
 import { caseToMarkdown } from './case/export-markdown';
 import {
   CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
-  type MarkType, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { loadEnv, type Env } from './config/env';
 import { scrubError } from './tools/scrub';
@@ -31,6 +31,8 @@ import { executeValidationJob } from './validation/job';
 import { runValidation, type ValidationDeps } from './validation/run';
 import { getSetting, setSetting } from './validation/settings';
 import { resolveModels, runWorker, workerStatus } from './worker';
+import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
+import { buildCollectors, runMission } from './research/mission';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -201,6 +203,17 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
           busy = false;
         }
       },
+      executeMission: async (missionId) => {
+        busy = true;
+        try {
+          return await runMission({
+            db, router: buildRouter(env, db), fetchPage, log: out,
+            collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN }),
+          }, missionId);
+        } finally {
+          busy = false;
+        }
+      },
       executeValidation: async (jobId) => {
         busy = true;
         try {
@@ -215,6 +228,39 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     process.off('SIGINT', onSigint);
     await closeDb(db);
   }
+}
+
+/** `gen research <topic>`: queues a mission for the worker. */
+async function researchCommand(topic: string, opts: ResearchCliOpts): Promise<number> {
+  const parsed = MissionInputSchema.safeParse({
+    topic, ...(opts.kinds ? { kinds: opts.kinds } : {}), ...(opts.countries ? { countries: opts.countries } : {}),
+    ...(opts.audience ? { audience: opts.audience } : {}), ...(opts.budget !== undefined ? { budgetUsd: opts.budget } : {}),
+  });
+  if (!parsed.success) throw new CliError('Topic must be 3 to 200 characters.', 2);
+  return withDb(async (db) => {
+    const r = await queueMission(db, parsed.data);
+    if (!r.ok) {
+      console.error('Too many missions are waiting. Start `gen worker` or wait for them to finish.');
+      return 1;
+    }
+    out(`Mission ${r.id} queued: up to $${parsed.data.budgetUsd.toFixed(2)}. Start \`gen worker\` to run it.`);
+    return 0;
+  });
+}
+
+/** `gen research status`: the last 10 missions. */
+async function researchStatusCommand(): Promise<number> {
+  return withDb(async (db) => {
+    const rows = await listMissions(db, 10);
+    if (rows.length === 0) {
+      out('No research missions yet.');
+      return 0;
+    }
+    for (const m of rows) {
+      out(`${m.id}  ${m.status.padEnd(9)} ${m.origin.padEnd(10)} $${m.costUsd.toFixed(2)}/$${m.budgetUsd.toFixed(2)}  +${m.itemsAdded} new, ${m.itemsMerged} merged  ${m.topic}`);
+    }
+    return 0;
+  });
 }
 
 const csv = (v: string) => v.split(',').map((s) => s.trim()).filter(Boolean);
@@ -517,6 +563,8 @@ const program = buildProgram({
   configSet: configSetCommand,
   configGet: configGetCommand,
   worker: workerCommand,
+  research: researchCommand,
+  researchStatus: researchStatusCommand,
   benchBaseline: benchBaselineCommand,
   benchRun: benchRunCommand,
   benchReport: benchReportCommand,

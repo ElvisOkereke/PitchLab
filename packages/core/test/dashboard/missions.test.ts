@@ -1,0 +1,178 @@
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  BACKGROUND_BUDGET_USD, MAX_QUEUED_MISSIONS, MissionInputSchema, RESEARCH_KEYS, backgroundSpendToday, getResearchSettings, listMissions,
+  maybeQueueBackgroundMission, queueMission, saveResearchSettings, typicalMissionCost,
+} from '../../src/dashboard/missions';
+import type { Db } from '../../src/db/client';
+import { dataCalls, llmCalls, researchMissions } from '../../src/db/schema';
+import { BACKGROUND_TOPICS } from '../../src/research/topics';
+import { setSetting } from '../../src/validation/settings';
+import { claimNextMission } from '../../src/worker';
+import { testDb } from '../helpers/db';
+
+let db: Db;
+beforeEach(async () => {
+  db = await testDb();
+});
+
+const topics = () => BACKGROUND_TOPICS.map((t) => t.topic);
+
+async function spend(missionId: string, usd: number): Promise<void> {
+  await db.insert(dataCalls).values({ missionId, provider: 'x', endpoint: 'y', costUsd: String(usd), ok: true });
+}
+async function finishAll(): Promise<void> {
+  await db.update(researchMissions).set({ status: 'succeeded' });
+}
+
+describe('MissionInputSchema', () => {
+  it('defaults and bounds', () => {
+    expect(MissionInputSchema.parse({ topic: 'freight brokers' })).toEqual({
+      topic: 'freight brokers', kinds: ['problem', 'pricing', 'startup'], countries: [], budgetUsd: 2,
+    });
+    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 0.4 }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 10.5 }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 10 }).success).toBe(true);
+    expect(MissionInputSchema.safeParse({ topic: 'ab' }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'x'.repeat(201) }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['trend'] }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: [] }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', countries: ['ca'] }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', countries: ['CA', 'global'] }).success).toBe(true);
+  });
+});
+
+describe('queueMission and claimNextMission', () => {
+  it('queues, then only one of two racing claims wins', async () => {
+    const r = await queueMission(db, { topic: 'freight brokers' });
+    expect(r.ok).toBe(true);
+    const [a, b] = await Promise.all([claimNextMission(db), claimNextMission(db)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    const [row] = await db.select().from(researchMissions);
+    expect(row).toMatchObject({ status: 'running', origin: 'owner', topic: 'freight brokers', budgetUsd: '2' });
+    expect(row!.startedAt).toBeInstanceOf(Date);
+    expect(await claimNextMission(db)).toBeNull();
+  });
+
+  it('refuses a queue deeper than the cap, even when requests race', async () => {
+    const rs = await Promise.all(Array.from({ length: MAX_QUEUED_MISSIONS + 2 }, (_, i) => queueMission(db, { topic: `topic ${i}` })));
+    expect(rs.filter((r) => r.ok)).toHaveLength(MAX_QUEUED_MISSIONS);
+    expect(rs.filter((r) => !r.ok)).toEqual([{ ok: false, reason: 'too_many_queued' }, { ok: false, reason: 'too_many_queued' }]);
+  });
+});
+
+describe('listMissions and typicalMissionCost', () => {
+  it('lists newest first and averages the last succeeded costs', async () => {
+    expect(await typicalMissionCost(db)).toBeNull();
+    for (const c of ['1', '3']) {
+      await db.insert(researchMissions).values({ topic: 't', kinds: ['problem'], countries: [], budgetUsd: '2', origin: 'owner', status: 'succeeded', costUsd: c, finishedAt: new Date() });
+    }
+    await db.insert(researchMissions).values({ topic: 'f', kinds: ['problem'], countries: [], budgetUsd: '2', origin: 'owner', status: 'failed', costUsd: '9' });
+    expect(await typicalMissionCost(db)).toBe(2);
+    expect(await listMissions(db, 2)).toHaveLength(2);
+  });
+});
+
+describe('research settings', () => {
+  it('defaults, saves, and validates the cap', async () => {
+    expect(await getResearchSettings(db)).toEqual({ background: false, dailyCapUsd: 5 });
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 12 });
+    expect(await getResearchSettings(db)).toEqual({ background: true, dailyCapUsd: 12 });
+    await expect(saveResearchSettings(db, { background: true, dailyCapUsd: 51 })).rejects.toThrow();
+    await expect(saveResearchSettings(db, { background: true, dailyCapUsd: -1 })).rejects.toThrow();
+  });
+});
+
+describe('maybeQueueBackgroundMission', () => {
+  const now = new Date('2026-10-26T15:00:00Z');
+
+  it('off by default', async () => {
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('off');
+    expect(await db.select().from(researchMissions)).toHaveLength(0);
+  });
+
+  it('queues a $1 background mission, advances the topic, and is then busy', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+    const [m] = await db.select().from(researchMissions);
+    expect(m).toMatchObject({ origin: 'background', status: 'queued', topic: BACKGROUND_TOPICS[0]!.topic, budgetUsd: String(BACKGROUND_BUDGET_USD) });
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('busy');
+    await db.update(researchMissions).set({ status: 'running' });
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('busy');
+    await finishAll();
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+    expect(await getTopics()).toContain(BACKGROUND_TOPICS[1]!.topic);
+  });
+
+  async function getTopics(): Promise<string[]> {
+    return (await db.select().from(researchMissions)).map((r) => r.topic);
+  }
+
+  it('concurrent calls queue only one', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    const rs = await Promise.all([maybeQueueBackgroundMission(db, now), maybeQueueBackgroundMission(db, now), maybeQueueBackgroundMission(db, now)]);
+    expect(rs.filter((r) => r === 'queued')).toHaveLength(1);
+    expect(await db.select().from(researchMissions)).toHaveLength(1);
+  });
+
+  it('every 4th pick is a gap topic, not from the list', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const picked: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+      await finishAll();
+    }
+    for (const m of await db.select().from(researchMissions).orderBy(researchMissions.createdAt)) picked.push(m.topic);
+    expect(picked.filter((t) => topics().includes(t))).toHaveLength(3);
+    expect(picked.filter((t) => !topics().includes(t))).toHaveLength(1);
+    expect(await db.select().from(researchMissions)).toHaveLength(4);
+  });
+
+  it('stops at the daily cap and the Toronto day boundary resets it', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    // 03:30Z on the 27th is 23:30 on the 26th in Toronto (EDT); 05:00Z on the 27th is 01:00 on the 27th.
+    const evening = new Date('2026-10-27T03:30:00Z');
+    const [m] = await db.insert(researchMissions).values({
+      topic: 'old', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'background', status: 'succeeded', createdAt: new Date('2026-10-26T14:00:00Z'),
+    }).returning({ id: researchMissions.id });
+    await spend(m!.id, 3);
+    await db.insert(llmCalls).values({
+      missionId: m!.id, stage: 's', provider: 'p', model: 'm', inputTokens: 0, outputTokens: 0, searchRequests: 0, costUsd: '2.5', latencyMs: 1, promptVersion: 'v', ok: true,
+    });
+    expect(await backgroundSpendToday(db, evening)).toBeCloseTo(5.5);
+    expect(await maybeQueueBackgroundMission(db, evening)).toBe('cap_reached');
+    const nextDay = new Date('2026-10-27T05:00:00Z');
+    expect(await backgroundSpendToday(db, nextDay)).toBe(0);
+    expect(await maybeQueueBackgroundMission(db, nextDay)).toBe('queued');
+  });
+
+  it('owner missions do not count toward the background cap', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 1 });
+    const [m] = await db.insert(researchMissions).values({
+      topic: 'mine', kinds: ['problem'], countries: [], budgetUsd: '1', origin: 'owner', status: 'succeeded',
+    }).returning({ id: researchMissions.id });
+    await spend(m!.id, 4);
+    expect(await backgroundSpendToday(db, new Date())).toBe(0);
+  });
+
+  it('uses the stored keys', () => {
+    expect(RESEARCH_KEYS).toEqual({ background: 'research.background', dailyCapUsd: 'research.dailyCapUsd' });
+  });
+
+  it('ignores a corrupted topic index', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 5 });
+    await setSetting(db, 'research.topicIndex', 'x');
+    expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+    expect((await db.select().from(researchMissions).where(eq(researchMissions.origin, 'background')))[0]!.topic).toBe(BACKGROUND_TOPICS[0]!.topic);
+  });
+});
+
+describe('BACKGROUND_TOPICS', () => {
+  it('has 40 distinct entries with valid countries', () => {
+    expect(BACKGROUND_TOPICS).toHaveLength(40);
+    expect(new Set(topics()).size).toBe(40);
+    for (const t of BACKGROUND_TOPICS) {
+      expect(MissionInputSchema.safeParse({ topic: t.topic, countries: t.countries, audience: t.audience }).success).toBe(true);
+    }
+  });
+});

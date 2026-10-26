@@ -7,7 +7,7 @@ function handlers() {
     run: vi.fn(ok), resume: vi.fn(ok), export: vi.fn(ok), runs: vi.fn(ok),
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
-    benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok),
+    benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -133,5 +133,30 @@ describe('gen bench', () => {
     expect((await parse(['bench', 'run'])).benchRun).toHaveBeenCalledWith();
     expect((await parse(['bench', 'report', 'abc', '--recompute'])).benchReport).toHaveBeenCalledWith('abc', { recompute: true });
     expect((await parse(['bench', 'report'])).benchReport).toHaveBeenCalledWith(undefined, {});
+  });
+});
+
+describe('gen research', () => {
+  it('queues a topic with defaults', async () => {
+    expect((await parse(['research', 'freight brokers'])).research).toHaveBeenCalledWith('freight brokers', {});
+  });
+
+  it('parses every option', async () => {
+    const h = await parse(['research', 'freight brokers', '--kinds', 'problem,pricing', '--countries', 'CA,US', '--audience', 'business', '--budget', '3.5']);
+    expect(h.research).toHaveBeenCalledWith('freight brokers', { kinds: ['problem', 'pricing'], countries: ['CA', 'US'], audience: 'business', budget: 3.5 });
+  });
+
+  it('status lists missions instead of queueing', async () => {
+    const h = await parse(['research', 'status']);
+    expect(h.researchStatus).toHaveBeenCalled();
+    expect(h.research).not.toHaveBeenCalled();
+  });
+
+  it('rejects bad kinds, audience, countries and budget', async () => {
+    await expect(parse(['research', 'x topic', '--kinds', 'trend'])).rejects.toThrow(/kinds/);
+    await expect(parse(['research', 'x topic', '--audience', 'everyone'])).rejects.toThrow();
+    await expect(parse(['research', 'x topic', '--countries', 'canada'])).rejects.toThrow(/countries/);
+    await expect(parse(['research', 'x topic', '--budget', '0.1'])).rejects.toThrow(/budget/);
+    await expect(parse(['research', 'x topic', '--budget', 'lots'])).rejects.toThrow(/budget/);
   });
 });
