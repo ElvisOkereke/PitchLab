@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 const TABS: readonly { href: string; label: string; 'data-tour'?: string }[] = [
   { href: '/', label: 'Board' },
   { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/progress', label: 'Progress' },
   { href: '/command', label: 'Command center', 'data-tour': 'nav-command' },
   { href: '/runs', label: 'Runs' },
   { href: '/settings', label: 'Settings', 'data-tour': 'nav-settings' },

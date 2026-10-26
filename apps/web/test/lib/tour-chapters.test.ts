@@ -98,7 +98,7 @@ describe('tour chapters', () => {
   });
 
   it('every non-case route is a real page', () => {
-    for (const s of all) if (typeof s.route === 'string') expect(['/', '/command', '/runs', '/settings', '/leaderboard'], s.id).toContain(s.route);
+    for (const s of all) if (typeof s.route === 'string') expect(['/', '/command', '/runs', '/settings', '/leaderboard', '/progress'], s.id).toContain(s.route);
   });
 
   it('action steps say how they advance', () => {

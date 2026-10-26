@@ -11,7 +11,8 @@ export type GlossaryTerm =
   | 'checklist'
   | 'overturnKill'
   | 'worker'
-  | 'notionalSpend';
+  | 'notionalSpend'
+  | 'benchmark';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -66,5 +67,9 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   notionalSpend: {
     label: 'Notional spend',
     text: 'An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.',
+  },
+  benchmark: {
+    label: 'Benchmark',
+    text: 'A fixed set of 4 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too.',
   },
 };

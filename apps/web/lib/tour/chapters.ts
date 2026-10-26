@@ -405,6 +405,14 @@ export const CHAPTERS: Record<TourChapterId, { title: string; steps: TourStep[] 
         body: 'Start each day here. Needs you lists cases to score, flagged ideas to keep or kill, replies to log and failed runs.',
       },
       {
+        id: 'decide-progress',
+        route: '/progress',
+        target: 'progress-scorecard',
+        kind: 'info',
+        title: 'Track idea quality',
+        body: 'The Progress page compares each benchmark pass with the starting baseline. Score each pass\u2019s cases with Your gut so the owner verdict has data.',
+      },
+      {
         id: 'decide-example',
         route: '/settings',
         target: 'settings-example',

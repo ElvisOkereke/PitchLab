@@ -72,6 +72,9 @@ const SPECS: Record<string, Spec> = {
   'runs.ts#requeueRunAction': {
     seed: async (db) => ({ runId: (await seedFailedRun(db)).id }),
   },
+  'bench.ts#runBenchmarkAction': {
+    seed: async () => ({}),
+  },
   'validation.ts#queueValidationAction': {
     seed: async (db) => {
       const c = await seedCase(db);
