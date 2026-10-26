@@ -20,6 +20,7 @@ import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
 import { robotsAllows } from './robots';
 import { appReviews, COUNTRIES as APP_STORE_COUNTRIES } from './sources/appreviews';
+import { productHuntSearch, productHuntToDraft, type ProductHuntItem } from './sources/producthunt';
 import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
 
 /**
@@ -39,18 +40,19 @@ const WEB_MAX_SEARCHES = 3;
 export const BUDGET_WARNING = 'Budget reached; stopped early.';
 
 /**
- * Sources a mission may use. Reddit and Product Hunt are deliberately absent (site terms: Reddit needs a commercial
- * contract and its API is closing; Product Hunt's API is non-commercial by default). Their collector modules stay in
- * research/sources/ unused, so they can be re-enabled if the owner gets permission.
+ * Sources a mission may use. Reddit is deliberately absent (site terms: commercial use needs a contract and its API
+ * is closing); its collector module stays in research/sources/ unused, so it can be re-enabled with permission.
+ * Product Hunt is used only when PRODUCTHUNT_TOKEN is set (owner ruling: non-commercial prototyping under its free API
+ * terms).
  */
-export const MISSION_SOURCES = ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'yc'] as const;
+export const MISSION_SOURCES = ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'producthunt', 'yc'] as const;
 export type MissionSource = (typeof MISSION_SOURCES)[number];
 
-/** Which sources can feed each kind. YC maps to `startup` drafts in code. */
+/** Which sources can feed each kind. Product Hunt and YC map to `startup` drafts in code. */
 const SOURCES_FOR_KIND: Record<SliceAKind, readonly MissionSource[]> = {
   problem: ['web', 'hn', 'stackexchange', 'github', 'appreviews'],
   pricing: ['web', 'appreviews'],
-  startup: ['web', 'hn', 'yc'],
+  startup: ['web', 'hn', 'producthunt', 'yc'],
 };
 
 /** At most this many entries are kept per source per extract batch. */
@@ -62,6 +64,7 @@ const SOURCE_HINTS: Record<MissionSource, string> = {
   stackexchange: 'a short keyword search (2 to 6 words) as people would write it in a question title.',
   github: 'a short keyword search (2 to 6 words) as people would write it in an issue title.',
   appreviews: 'the name of one app people in this topic use (its low-rated reviews hold problems and pricing complaints).',
+  producthunt: 'one topic keyword (for example "invoicing").',
   yc: 'one or two keywords matching what companies in this topic do.',
 };
 
@@ -70,6 +73,7 @@ export type CollectorCtx = { onCall: CallHook; countries: string[] };
 /** All injectable. A missing collector is a source the mission cannot use (and the plan is never offered). */
 export type Collectors = {
   appReviews?: (q: string, ctx: CollectorCtx) => Promise<RawItem[]>;
+  productHunt?: (q: string, ctx: CollectorCtx) => Promise<ProductHuntItem[]>;
   yc?: (q: string, ctx: CollectorCtx) => Promise<YcCompany[]>;
   hn?: SignalSource;
   stackexchange?: SignalSource;
@@ -85,9 +89,9 @@ export type MissionDeps = {
   now?: () => Date;
 };
 
-/** Real collectors bound to the owner's keys. Reddit and Product Hunt are never wired (see MISSION_SOURCES). */
-export function buildCollectors(keys: { stackexchangeKey?: string; githubToken?: string }): Collectors {
-  return {
+/** Real collectors bound to the owner's keys. Product Hunt only with its token; Reddit is never wired (MISSION_SOURCES). */
+export function buildCollectors(keys: { productHuntToken?: string; stackexchangeKey?: string; githubToken?: string }): Collectors {
+  const c: Collectors = {
     appReviews: (q, ctx) => {
       const country = ctx.countries.map((x) => x.toLowerCase()).find((x) => (APP_STORE_COUNTRIES as readonly string[]).includes(x)) ?? 'us';
       return appReviews(q, { country, limit: 20, onCall: ctx.onCall });
@@ -97,6 +101,11 @@ export function buildCollectors(keys: { stackexchangeKey?: string; githubToken?:
     stackexchange: createStackExchangeSource({ key: keys.stackexchangeKey }),
     github: createGithubSource({ token: keys.githubToken }),
   };
+  if (keys.productHuntToken) {
+    const token = keys.productHuntToken;
+    c.productHunt = (q, ctx) => productHuntSearch(q, { token, limit: API_LIMIT, onCall: ctx.onCall });
+  }
+  return c;
 }
 
 // ---- schemas and prompts ------------------------------------------------------------------------------
@@ -228,7 +237,7 @@ function quoteOnSource(quote: string, sourceText: string): boolean {
 /** Redaction markers scrubPersonal inserts; they are not evidence, so they do not count toward a quote's length. */
 const REDACTION_MARKERS = /\[(?:user|profile removed|email removed)\]/g;
 
-/** Structured-source drafts (YC): no model call; text fields still cleaned before storage. */
+/** Structured-source drafts (YC, Product Hunt): no model call; text fields still cleaned before storage. */
 function cleanStructured(d: KnowledgeDraft): KnowledgeDraft {
   return { ...d, title: cleanStored(d.title), summary: cleanStored(d.summary), facts: cleanFacts(d.facts) };
 }
@@ -281,7 +290,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     if (kinds.length === 0) kinds.push(...SLICE_A_KINDS);
     const has: Record<MissionSource, boolean> = {
       web: true, hn: !!collectors.hn, stackexchange: !!collectors.stackexchange, github: !!collectors.github,
-      appreviews: !!collectors.appReviews, yc: !!collectors.yc,
+      appreviews: !!collectors.appReviews, producthunt: !!collectors.productHunt, yc: !!collectors.yc,
     };
     const allowed = MISSION_SOURCES.filter((s) => has[s] && kinds.some((k) => SOURCES_FOR_KIND[k].includes(s)));
     const countries = m.countries.length ? m.countries.join(', ') : 'any (global)';
@@ -426,6 +435,9 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
             break;
           case 'github':
             addItems(await searchSignal(collectors.github!, q));
+            break;
+          case 'producthunt':
+            addStructured((await collectors.productHunt!(q, cctx)).map(productHuntToDraft));
             break;
           case 'yc':
             addStructured((await collectors.yc!(q, cctx)).map(ycToDraft));

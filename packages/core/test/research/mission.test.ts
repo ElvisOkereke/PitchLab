@@ -7,6 +7,7 @@ import { buildCollectors, runMission, type Collectors, type MissionDeps } from '
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
+import type { ProductHuntItem } from '../../src/research/sources/producthunt';
 import { fetchPage as realFetchPage, type FetchPageOpts, type PageResult } from '../../src/tools/fetch-page';
 import type { RawItem, SignalSource } from '../../src/tools/sources/types';
 import { testDb, unit } from '../helpers/db';
@@ -369,22 +370,23 @@ describe('runMission', () => {
     expect(prompt).toContain('CA, US');
   });
 
-  it('maps YC records straight to drafts, with no extract call; Product Hunt queries are ignored', async () => {
+  it('maps YC and Product Hunt records straight to drafts, with no extract call', async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['startup'] });
     const yc: YcCompany = {
       name: 'Crewly', oneLiner: 'Scheduling for trade crews', url: 'https://crewly.example', status: 'Inactive', batch: 'W21',
       industries: ['Construction'], regions: [],
     };
-    const collectors: Collectors = { yc: async () => [yc] };
+    const ph: ProductHuntItem = { name: 'QuoteFast', tagline: 'Quotes for plumbers, $19/mo', url: 'https://quotefast.example', launchedAt: null, votes: 10, pricingHint: '$19/mo' };
+    const collectors: Collectors = { yc: async () => [yc], productHunt: async () => [ph] };
     const router = mockRouter(db, { plan: { queries: [{ source: 'yc', q: 'construction' }, { source: 'producthunt', q: 'plumbing' }] } });
     const { deps } = happy(db);
     expect(await runMission({ ...deps, router, collectors }, id)).toBe('succeeded');
     expect(router.calls.filter((c) => c.stage === 'library_extract')).toEqual([]);
     expect(router.calls.filter((c) => c.kind === 'embed')).toHaveLength(1);
     const items = await db.select().from(knowledgeItems);
-    expect(items.map((i) => i.title)).toEqual(['Crewly']);
-    expect((await mission(db, id)).warnings).toEqual(['plan: ignored 1 query for unused sources']);
+    expect(items.map((i) => i.title).sort()).toEqual(['Crewly', 'QuoteFast']);
+    expect((await mission(db, id)).warnings).toEqual([]);
     for (const i of items) expect(i.kind).toBe('startup');
     expect((items.find((i) => i.title === 'Crewly')!.facts as { outcome: string }).outcome).toBe('dead');
   });
@@ -461,13 +463,14 @@ describe('runMission', () => {
     expect(m.warnings).toEqual(['appreviews: not authorised (check the key)', 'web: forum.tradesmen.example timed out']);
   });
 
-  it('ignores planner queries for Reddit and Product Hunt with a warning, and never offers them', async () => {
+  it('ignores planner queries for Reddit with a warning and never offers it; Product Hunt is skipped without a token', async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['problem', 'pricing', 'startup'] });
     const { deps, hn } = happy(db);
     const router = mockRouter(db, { plan: { queries: [{ source: 'reddit', q: 'a' }, { source: 'producthunt', q: 'b' }, { source: 'hn', q: 'c' }] } });
     expect(await runMission({ ...deps, router }, id)).toBe('succeeded');
     expect(hn.queries).toEqual(['c']);
+    // No productHunt collector here (no token): its query is ignored too, and it is not offered.
     expect((await mission(db, id)).warnings).toEqual(['plan: ignored 2 queries for unused sources']);
     const plan = router.calls[0]!.prompt;
     expect(plan).not.toMatch(/reddit/i);
@@ -594,8 +597,21 @@ describe('runMission', () => {
 });
 
 describe('buildCollectors', () => {
-  it('never wires Reddit or Product Hunt (site terms)', () => {
+  it('never wires Reddit; wires Product Hunt only with its token', () => {
     const c = buildCollectors({ stackexchangeKey: 'k', githubToken: 't' });
     expect(Object.keys(c).sort()).toEqual(['appReviews', 'github', 'hn', 'stackexchange', 'yc']);
+    const k = buildCollectors({ productHuntToken: 'tok' });
+    expect(Object.keys(k).sort()).toEqual(['appReviews', 'github', 'hn', 'productHunt', 'stackexchange', 'yc']);
+    expect(k).not.toHaveProperty('reddit');
+  });
+
+  it('offers Product Hunt to the planner when its collector is wired', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['startup'] });
+    const router = mockRouter(db, { plan: { queries: [] } });
+    const { deps } = happy(db);
+    expect(await runMission({ ...deps, router, collectors: { productHunt: async () => [] } }, id)).toBe('succeeded');
+    expect(router.calls[0]!.prompt).toMatch(/`producthunt`/);
+    expect(router.calls[0]!.prompt).not.toMatch(/reddit/i);
   });
 });
