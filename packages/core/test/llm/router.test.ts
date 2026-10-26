@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
-import { llmCalls, runs } from '../../src/db/schema';
+import { llmCalls, runs, researchMissions } from '../../src/db/schema';
 import { DEFAULT_MODELS } from '../../src/config/models';
 import { costOf } from '../../src/config/prices';
 import { createRouter, buildRouter, StructuredOutputError } from '../../src/llm/router';
@@ -124,6 +124,17 @@ describe('createRouter', () => {
     expect(Number(calls[1].costUsd)).toBe(0);
     const [after] = await db.select().from(runs).where(eq(runs.id, run.id));
     expect(Number(after.costUsd)).toBeCloseTo(0.006);
+  });
+
+  it('logs the mission id on llm_calls', async () => {
+    const db = await testDb();
+    const [m] = await db.insert(researchMissions).values({ topic: 't', kinds: [], countries: [], budgetUsd: '1', origin: 'owner' }).returning();
+    const a = scriptedAdapter([{ text: 'one', usage: { inputTokens: 1, outputTokens: 1, searchRequests: 0 } }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    await r.text('extract', { prompt: 'p' }, { runId: null, missionId: m.id, promptVersion: 'v' });
+    const [call] = await db.select().from(llmCalls);
+    expect(call.missionId).toBe(m.id);
+    expect(call.runId).toBeNull();
   });
 
   it('stores a failed call error with credentials scrubbed and rethrows the original (D2-R2)', async () => {

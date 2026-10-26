@@ -106,6 +106,8 @@ export const signals = pgTable('signals', {
   /** One of SIGNAL_VOICES (type-level only, no DB constraint); null for signals extracted before tuning-4 (untagged). */
   voice: text('voice', { enum: SIGNAL_VOICES }),
   embedding: vector('embedding', { dimensions: 1536 }),
+  /** The library entry this signal was promoted from (null for pipeline-collected signals). */
+  knowledgeItemId: uuid('knowledge_item_id').references((): AnyPgColumn => knowledgeItems.id),
   createdAt: createdAt(),
 }, (t) => [uniqueIndex('signals_url_quote_hash_uq').on(t.url, t.quoteHash)]);
 
@@ -195,6 +197,7 @@ export const scores = pgTable('scores', {
 export const llmCalls = pgTable('llm_calls', {
   id: id(),
   runId: uuid('run_id').references(() => runs.id),
+  missionId: uuid('mission_id').references((): AnyPgColumn => researchMissions.id),
   stage: text('stage').notNull(),
   provider: text('provider').notNull(),
   model: text('model').notNull(),
@@ -212,6 +215,7 @@ export const llmCalls = pgTable('llm_calls', {
 export const dataCalls = pgTable('data_calls', {
   id: id(),
   runId: uuid('run_id').references(() => runs.id),
+  missionId: uuid('mission_id').references((): AnyPgColumn => researchMissions.id),
   provider: text('provider').notNull(),
   endpoint: text('endpoint').notNull(),
   costUsd: numeric('cost_usd').notNull().default('0'),
@@ -361,3 +365,74 @@ export const settings = pgTable('settings', {
   value: jsonb('value').$type<unknown>().notNull(),
   createdAt: createdAt(),
 });
+
+// ---- Research library (Slice A, migration 0009) ---------------------------------------------------
+
+export const knowledgeKind = pgEnum('knowledge_kind', ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market']);
+export const knowledgeStatus = pgEnum('knowledge_status', ['active', 'rejected']);
+export const missionOrigin = pgEnum('mission_origin', ['owner', 'background']);
+
+export const KNOWLEDGE_AUDIENCES = ['business', 'consumer', 'both'] as const;
+
+/** A research mission: one owner- or worker-started collection pass with a soft budget. */
+export const researchMissions = pgTable('research_missions', {
+  id: id(),
+  topic: text('topic').notNull(),
+  kinds: text('kinds').array().notNull(),
+  countries: text('countries').array().notNull(),
+  audience: text('audience', { enum: KNOWLEDGE_AUDIENCES }),
+  budgetUsd: numeric('budget_usd').notNull(),
+  costUsd: numeric('cost_usd').notNull().default('0'),
+  origin: missionOrigin('origin').notNull(),
+  status: runStatus('status').notNull().default('queued'),
+  itemsAdded: integer('items_added').notNull().default(0),
+  itemsMerged: integer('items_merged').notNull().default(0),
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+  error: text('error'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  createdAt: createdAt(),
+}, (t) => [index('research_missions_status_created_idx').on(t.status, t.createdAt)]);
+
+/** A deduplicated library entry. Facts are kind-specific (see library/kinds.ts). */
+export const knowledgeItems = pgTable('knowledge_items', {
+  id: id(),
+  kind: knowledgeKind('kind').notNull(),
+  title: text('title').notNull(),
+  summary: text('summary').notNull(),
+  quote: text('quote'),
+  quoteVerified: boolean('quote_verified').notNull().default(false),
+  audience: text('audience', { enum: KNOWLEDGE_AUDIENCES }).notNull(),
+  countries: text('countries').array().notNull(),
+  industries: text('industries').array().notNull(),
+  voice: text('voice', { enum: SIGNAL_VOICES }),
+  facts: jsonb('facts').notNull(),
+  embedding: vector('embedding', { dimensions: 1536 }),
+  contentHash: text('content_hash').notNull(),
+  status: knowledgeStatus('status').notNull().default('active'),
+  rejectReason: text('reject_reason'),
+  missionId: uuid('mission_id').references((): AnyPgColumn => researchMissions.id),
+  createdAt: createdAt(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('knowledge_items_content_hash_uq').on(t.contentHash),
+  index('knowledge_items_kind_status_idx').on(t.kind, t.status),
+  index('knowledge_items_updated_idx').on(t.updatedAt),
+]);
+
+/** Where an entry came from (one entry can have many sources). Never stores author identity. */
+export const knowledgeSources = pgTable('knowledge_sources', {
+  id: id(),
+  itemId: uuid('item_id').notNull().references(() => knowledgeItems.id),
+  url: text('url').notNull(),
+  domain: text('domain').notNull(),
+  sourceType: text('source_type').notNull(),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  quote: text('quote'),
+  quoteVerified: boolean('quote_verified').notNull().default(false),
+}, (t) => [
+  uniqueIndex('knowledge_sources_item_url_uq').on(t.itemId, t.url),
+  index('knowledge_sources_source_type_idx').on(t.sourceType),
+  index('knowledge_sources_domain_idx').on(t.domain),
+]);

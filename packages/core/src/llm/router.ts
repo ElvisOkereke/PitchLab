@@ -41,6 +41,7 @@ export function createRouter(opts: {
     const cost = costOf(row.model, row.usage);
     await db.insert(llmCalls).values({
       runId: row.ctx.runId,
+      missionId: row.ctx.missionId ?? null,
       stage: row.stage,
       provider: row.provider,
       model: row.model,

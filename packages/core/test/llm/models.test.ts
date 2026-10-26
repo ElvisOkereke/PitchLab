@@ -26,6 +26,11 @@ describe('model config', () => {
     });
   });
 
+  it('has the research library stages with their defaults', () => {
+    expect(MODEL_STAGES).toEqual(expect.arrayContaining(['research', 'library_extract']));
+    expect(DEFAULT_MODELS).toMatchObject({ research: 'claude-sonnet-5-5', library_extract: 'claude-haiku-5-5' });
+  });
+
   it('requires the prospect stage to be a claude model (web search)', () => {
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, prospect: 'gpt-6-sol' })).toThrow(/prospect.*claude/);
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, prospect: 'gemini-3.1-pro' })).toThrow(/prospect/);

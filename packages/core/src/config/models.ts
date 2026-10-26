@@ -2,6 +2,8 @@ export const MODEL_STAGES = [
   'extract', 'harvest', 'ideate', 'screen', 'gate', 'competitors', 'case', 'verify', 'score', 'embed',
   // Validation pack (Plan 3)
   'pack', 'prospect', 'outreach', 'landing',
+  // Research library (Slice A)
+  'research', 'library_extract',
 ] as const;
 
 export type ModelStage = (typeof MODEL_STAGES)[number];
@@ -23,6 +25,8 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
   prospect: 'claude-sonnet-5-5',
   outreach: 'claude-sonnet-5-5',
   landing: 'claude-sonnet-5-5',
+  research: 'claude-sonnet-5-5',
+  library_extract: 'claude-haiku-5-5',
 };
 
 /**

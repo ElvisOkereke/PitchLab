@@ -26,7 +26,7 @@ export interface ProviderAdapter {
   embed(model: string, texts: string[]): Promise<{ vectors: number[][]; inputTokens: number }>;
 }
 
-export type CallCtx = { runId: string | null; promptVersion: string };
+export type CallCtx = { runId: string | null; missionId?: string | null; promptVersion: string };
 
 export interface ModelRouter {
   text(stage: ModelStage, req: { system?: string; prompt: string; maxTokens?: number }, ctx: CallCtx): Promise<string>;
