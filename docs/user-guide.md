@@ -365,8 +365,13 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
      it. It is refused while other runs are waiting or a pass is already running. Keep `npm run worker` running.
   3. The page refreshes while the pass runs. When it finishes, a new column appears. A pass where a run failed is
      marked "incomplete".
-  4. Under **Score these cases**, open each case and give it your gut score. Those scores feed the owner verdict.
+  4. Under **Score these cases**, open each case and give it your gut score. A pass freezes when its last run ends,
+     so scores you give afterwards show only after you press **Recompute** under that pass's column. That adds a new
+     column with today's scores; the old one stays as it was. Retrying a failed run after its pass froze doesn't change
+     the pass either: press Recompute to include the retried run.
 - **What good looks like:** Repetition and near-duplicates fall, buyer variety rises, and your own verdict stays above
   3.5. With only 4 runs, small differences (under about 0.05 similarity, or one case) may be noise.
 - **From the terminal:** `npm run gen -- bench report` prints the scorecard and writes it to `output/bench/`.
-  Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data.
+  Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
+  button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline
+  --dry-run` shows what a baseline would hold without saving it.

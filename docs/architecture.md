@@ -161,16 +161,17 @@ immutable `bench-v1` seeds and the 13 metric definitions; `scorecard.ts` compute
 (example data excluded, at most 200 runs and 3000 ideas, with a note when trimmed); `passes.ts` freezes baselines,
 queues passes and finalises them. A snapshot is stored once in `benchmark_passes` (kind `baseline`, `pass` or
 `recompute`; status `running`, `complete` or `incomplete`) and is never recomputed in place: `gen bench report
---recompute` adds a new `recompute` row.
+--recompute` (or the Recompute button on Progress) adds a new `recompute` row.
 
 - **Queueing:** `queueBenchmarkPass` runs in one transaction under the queue advisory lock. It refuses when a pass is
   running or any run is queued or running, then inserts the pass and its 4 runs, each with `runs.benchmark_pass_id`
   set. The dashboard's Progress page and `gen bench run` both call it.
-- **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each item. When every run of a running pass has
+- **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each run outcome and on every heartbeat (not after
+  validation jobs); `gen resume` calls it too. When every run of a running pass has
   finished, the pass is frozen with metrics over all its runs: `complete`, or `incomplete` if any run failed. The hook
   is idempotent and a failure in it never stops the worker.
 - **Dashboard:** `apps/web` imports these modules as web-safe core code; the Progress page only reads passes and queues
-  one through `runBenchmarkAction`.
+  one through `runBenchmarkAction` and recomputes one through `recomputePassAction`.
 
 ## Data model
 

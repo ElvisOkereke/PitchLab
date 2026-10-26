@@ -138,7 +138,7 @@ All variables go in the repo-root `.env` (there is no `apps/web/.env`). `.env.ex
 ## Updating PitchLab
 After pulling a new version: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database
 is migrated, then start the web app again. Only `gen` and the worker migrate; a web app on an older database shows
-errors on every signed-in page.
+errors on every signed-in page. The idea-quality benchmark adds migration 0008, so this step matters after pulling it.
 
 ## Daily use
 ```

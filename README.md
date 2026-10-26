@@ -64,7 +64,7 @@ Fill in `.env` (every variable is described in `.env.example` and in the [setup 
   `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
 
 Updating PitchLab: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database is migrated,
-then start the web app again. A web app on an older database shows errors on every page.
+then start the web app again (the benchmark needs migration 0008). A web app on an older database shows errors on every page.
 
 Then:
 
@@ -88,9 +88,9 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen validate <case-slug>` | Builds the validation pack and writes it to `output/validation/<slug>/`. `--skip-prospects` skips the paid prospect search; `--refresh` regenerates the pack and landing page; `--redraft` rewrites drafts for prospects you have not contacted. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then queued validation packs. |
-| `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another. |
+| `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |
 | `gen bench run` | Queues the 4 benchmark runs (about $12–28 in model calls); the worker executes them. |
-| `gen bench report [passId]` | Prints the scorecard and writes it to `output/bench/`. `--recompute` freezes a new snapshot of a pass with today's data first. |
+| `gen bench report [passId]` | Prints the scorecard and writes it to `output/bench/`. `--recompute` freezes a new snapshot of a pass with today's data first (the Progress page's Recompute button does the same). |
 
 Also: `resume <runId>`, `export [slug] --all`, `outreach mark|status`, `prospects import`, `config set|get`.
 `npm run gen -- <command> --help` shows every option.

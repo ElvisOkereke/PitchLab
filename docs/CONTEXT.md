@@ -63,7 +63,7 @@
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
   **Idea-quality benchmark, branch `benchmark`** (spec `docs/superpowers/specs/2026-10-25-idea-quality-roadmap-and-benchmark-design.md`):
   13-metric scorecard computed from stored rows, frozen `benchmark_passes` snapshots, `gen bench baseline|run|report`,
-  a worker finalise hook and a Progress page with a Run benchmark button. Not merged yet; no live pass run yet.
+  a worker finalise hook and a Progress page with Run benchmark and Recompute buttons (migration 0008: after pulling, run a `gen` command or start the worker once before `npm run web`). Not merged yet; no live pass run yet.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
 - **Last updated:** 2026-10-26
 
