@@ -3,6 +3,7 @@ import type { CaseSections } from '../case/schema';
 import type { RunConfig } from '../pipeline/types';
 import type { ValidationJobOptions } from '../dashboard/validation-jobs';
 import type { StepResult } from '../validation/run';
+import type { Scorecard } from '../bench/scorecard';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
   vector, primaryKey, uniqueIndex, index, check, type AnyPgColumn,
@@ -53,8 +54,8 @@ export const benchmarkPasses = pgTable('benchmark_passes', {
   kind: benchmarkKind('kind').notNull(),
   status: benchmarkStatus('status').notNull(),
   runIds: uuid('run_ids').array().notNull(),
-  /** Scorecard (narrowed in src/bench); null while running. */
-  metrics: jsonb('metrics').$type<unknown>(),
+  /** The frozen scorecard; null while running. */
+  metrics: jsonb('metrics').$type<Scorecard | null>(),
   /** For recomputes: the pass this one was recomputed from. */
   sourcePassId: uuid('source_pass_id').references((): AnyPgColumn => benchmarkPasses.id),
   createdAt: createdAt(),
