@@ -38,6 +38,18 @@ describe('scrubPersonal', () => {
   it.each(['meet @ 5pm', 'at @5pm sharp', 'use u/s here', 'see example.com/u/123 ok', 'posted by the team', 'Posted by someone else', 'https://github.com/org/repo/issues/12', 'github.com/org/repo', 'visit box.com/files'])('keeps %s', (s) => {
     expect(scrubPersonal(s)).toBe(s);
   });
+  it('strips a GitHub profile link at the end of a sentence', () => {
+    const out = scrubPersonal('Find me at github.com/ghuser.');
+    expect(out).not.toContain('ghuser');
+    expect(scrubPersonal('Code is at https://github.com/ghuser. Thanks')).not.toContain('ghuser');
+    expect(scrubPersonal('see github.com/org/repo.')).toBe('see github.com/org/repo.');
+  });
+  it('does not drop words across a sentence boundary after "posted by"', () => {
+    const out = scrubPersonal('Posted by jsmith. The team replied');
+    expect(out).not.toContain('jsmith');
+    expect(out).toContain('The team replied');
+    expect(scrubPersonal('Posted by j.smith today')).not.toContain('smith');
+  });
   it('leaves ordinary text alone', () => {
     expect(scrubPersonal('Invoices take 3 hours a week.')).toBe('Invoices take 3 hours a week.');
   });

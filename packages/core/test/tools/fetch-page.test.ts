@@ -32,6 +32,15 @@ describe('fetchPage', () => {
     expect(r.text).toContain('Leads vanished');
   });
 
+  it('sends the default User-Agent unless one is given', async () => {
+    const f = htmlFetch('<p>x</p>');
+    await fetchPage('https://a.test', { fetchImpl: f });
+    expect((f.mock.calls[0]![1] as any).headers['User-Agent']).toMatch(/^BusinessCaseGen\/0\.1/);
+    const g = htmlFetch('<p>x</p>');
+    await fetchPage('https://a.test', { fetchImpl: g, userAgent: 'pitchlab-research/0.1' });
+    expect((g.mock.calls[0]![1] as any).headers['User-Agent']).toBe('pitchlab-research/0.1');
+  });
+
   it('reports http errors, timeouts, non-html, oversize and bad schemes without throwing', async () => {
     expect((await fetchPage('https://a.test', { fetchImpl: statusFetch(403) })).reason).toBe('http_error');
     expect((await fetchPage('https://a.test', { timeoutMs: 10, fetchImpl: hangingFetch() })).reason).toBe('timeout');

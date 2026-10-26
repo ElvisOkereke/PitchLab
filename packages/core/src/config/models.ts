@@ -37,7 +37,7 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
 export const NO_FORCED_TOOL_CHOICE: ReadonlySet<string> = new Set(['claude-opus-5-5', 'claude-sonnet-5-5']);
 
 /** Stages that use the Anthropic web-search server tool, so must run on a claude model. */
-const WEB_SEARCH_STAGES = ['harvest', 'competitors', 'case', 'prospect'] as const satisfies readonly ModelStage[];
+const WEB_SEARCH_STAGES = ['harvest', 'competitors', 'case', 'prospect', 'research'] as const satisfies readonly ModelStage[];
 
 export function isModelStage(value: string): value is ModelStage {
   return (MODEL_STAGES as readonly string[]).includes(value);

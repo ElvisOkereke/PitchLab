@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { matches, resetRobotsCache, robotsAllows } from '../../src/research/robots';
+import { USER_AGENT } from '../../src/research/http';
 
 const lookup = async () => [{ address: '93.184.216.34', family: 4 }];
 
@@ -85,6 +86,15 @@ describe('robotsAllows', () => {
   it('timeout disallows', async () => {
     const fetchPage = async () => ({ ok: false, status: 0, finalUrl: '', title: '', text: '', reason: 'timeout' as const });
     expect(await robotsAllows('https://h.test/x', { fetchPage })).toBe(false);
+  });
+  it('fetches robots.txt with the research identity', async () => {
+    const seen: (string | undefined)[] = [];
+    const fetchPage = async (_u: string, o: { userAgent?: string }) => {
+      seen.push(o.userAgent);
+      return { ok: true, status: 200, finalUrl: '', title: '', text: 'User-agent: *\nDisallow:\n' };
+    };
+    expect(await robotsAllows('https://ua.test/x', { fetchPage })).toBe(true);
+    expect(seen).toEqual([USER_AGENT]);
   });
   it('private and loopback origins are denied with no network call', async () => {
     const o = mk('User-agent: *\nDisallow:\n');

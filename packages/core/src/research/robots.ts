@@ -1,5 +1,5 @@
 import { fetchPage, type FetchPageOpts, type PageResult } from '../tools/fetch-page';
-import { ROBOTS_TOKEN } from './http';
+import { ROBOTS_TOKEN, USER_AGENT } from './http';
 
 export interface RobotsOpts {
   /** Injected into the guarded page fetch (tests). */
@@ -78,7 +78,9 @@ function decide(rules: Rule[], path: string): boolean {
 
 async function load(origin: string, token: string, opts: RobotsOpts): Promise<{ rules: Loaded; ttl: number }> {
   const get = opts.fetchPage ?? fetchPage;
-  const r = await get(`${origin}/robots.txt`, { timeoutMs: 5000, maxBytes: 500_000, fetchImpl: opts.fetch, lookup: opts.lookup });
+  const r = await get(`${origin}/robots.txt`, {
+    timeoutMs: 5000, maxBytes: 500_000, fetchImpl: opts.fetch, lookup: opts.lookup, userAgent: USER_AGENT,
+  });
   if (r.ok) return { rules: parse(r.text, token), ttl: OK_TTL_MS };
   switch (r.reason) {
     case 'blocked_host':

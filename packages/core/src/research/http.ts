@@ -23,7 +23,7 @@ export interface HttpOpts {
   onCall?: CallHook;
 }
 
-/** One identity for every research request. Task 4's page fetches should send this too (fetchPage currently has a fixed UA). */
+/** One identity for every research request: API calls here, and robots.txt and page fetches via fetchPage's `userAgent`. */
 export const USER_AGENT = 'pitchlab-research/0.1';
 /** Product token matched against robots.txt `User-agent` groups. */
 export const ROBOTS_TOKEN = 'pitchlab-research';
@@ -64,7 +64,11 @@ async function notify(opts: HttpOpts, call: Parameters<CallHook>[0]): Promise<vo
   }
 }
 
-/** One request, no redirects, capped body, timeout. Maps 429 to rate_limited, 401/403 to auth. */
+/**
+ * One request, no redirects, capped body, timeout. Maps 429 to rate_limited, 401/403 to auth.
+ * Only for the collectors' fixed API hosts (Reddit, Product Hunt, Apple, yc-oss). It has no SSRF guard, so it must never
+ * be given an untrusted URL; any URL taken from fetched content or model output goes through fetchPage instead.
+ */
 export async function request(
   source: string,
   url: string,

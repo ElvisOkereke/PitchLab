@@ -24,6 +24,8 @@ export interface FetchPageOpts {
   lookup?: (host: string) => Promise<{ address: string; family: number }[]>;
   /** Extra hosts refused on every hop like NEVER_FETCH_HOSTS (subdomains included; case and trailing dots ignored), e.g. a run's pilot site. */
   blockHosts?: readonly string[];
+  /** User-Agent sent on every hop (default BusinessCaseGen). Research missions send their robots.txt identity. */
+  userAgent?: string;
 }
 
 const USER_AGENT = 'BusinessCaseGen/0.1 (research; contact: owner)';
@@ -208,7 +210,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
-        headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,text/plain;q=0.9,*/*;q=0.1' },
+        headers: { 'User-Agent': opts.userAgent ?? USER_AGENT, Accept: 'text/html,text/plain;q=0.9,*/*;q=0.1' },
       });
 
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {

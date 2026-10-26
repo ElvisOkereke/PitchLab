@@ -36,6 +36,10 @@ describe('model config', () => {
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, prospect: 'gemini-3.1-pro' })).toThrow(/prospect/);
   });
 
+  it('requires the research stage to be a claude model (missions use web search)', () => {
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, research: 'gpt-6-sol' })).toThrow(/research.*claude/);
+  });
+
   it('lets pack, outreach and landing run on any family', () => {
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, pack: 'gpt-6-sol', outreach: 'gemini-3.1-pro', landing: 'gpt-6-sol' })).not.toThrow();
   });

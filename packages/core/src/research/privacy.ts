@@ -6,11 +6,12 @@ const PROFILE_URL = new RegExp(
   'gi',
 );
 // github.com/user only; org/repo and issue links are kept.
-const GITHUB_PROFILE = /(?<![\w.@/-])(?:https?:\/\/)?(?:www\.)?github\.com\/[A-Za-z0-9-]+\/?(?![\w/.-])/gi;
+const GITHUB_PROFILE = /(?<![\w.@/-])(?:https?:\/\/)?(?:www\.)?github\.com\/[A-Za-z0-9-]+\/?(?![\w/-]|\.\w)/gi;
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 const REDDIT_USER = /(?<![\w/.-])\/?u\/[A-Za-z0-9_-]{3,20}(?![\w-])/g;
 const AT_HANDLE = /(?<![\w@./])@[A-Za-z_][A-Za-z0-9_]{1,29}(?!\w)/g;
-const POSTED_BY = /\b(posted\s+by:?)\s+([\w.@[\]-]+)(\s+[\w'-]+)?/gi;
+// The name may contain dots (j.smith) but never ends in one, so a following sentence is not taken as a surname.
+const POSTED_BY = /\b(posted\s+by:?)\s+([\w@[\]-]+(?:\.[\w@[\]-]+)*)(\s+[\w'-]+)?/gi;
 const BYLINE_STOP = new Set(['the', 'a', 'an', 'our', 'my', 'your', 'their', 'this', 'someone', 'anonymous']);
 
 function scrubByline(match: string, lead: string, name: string, next: string | undefined): string {
