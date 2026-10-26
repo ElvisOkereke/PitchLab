@@ -74,7 +74,7 @@ npm run web           # terminal 1: the dashboard at http://localhost:3000
 npm run worker        # terminal 2: does the work you queue; leave it running
 ```
 
-Log in. A guided tour starts on your first visit and walks the whole path on the example case. Replay it, or one
+Log in. The **Progress** page tracks idea quality: it compares each benchmark pass with your baseline (see "Track idea quality" in the user guide). A guided tour starts on your first visit and walks the whole path on the example case. Replay it, or one
 chapter, with **Take the tour** in the top bar. Before you can generate a validation pack, fill in your sender details
 in Settings (anti-spam law requires them in every email).
 
@@ -88,6 +88,10 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen validate <case-slug>` | Builds the validation pack and writes it to `output/validation/<slug>/`. `--skip-prospects` skips the paid prospect search; `--refresh` regenerates the pack and landing page; `--redraft` rewrites drafts for prospects you have not contacted. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then queued validation packs. |
+
+| `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another. |
+| `gen bench run` | Queues the 4 benchmark runs (about $12–28 in model calls); the worker executes them. |
+| `gen bench report [passId]` | Prints the scorecard and writes it to `output/bench/`. `--recompute` freezes a new snapshot of a pass with today's data first. |
 
 Also: `resume <runId>`, `export [slug] --all`, `outreach mark|status`, `prospects import`, `config set|get`.
 `npm run gen -- <command> --help` shows every option.

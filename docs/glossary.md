@@ -43,6 +43,9 @@ The background program that does the work in your queued runs and validation pac
 ### Notional spend
 An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.
 
+### Benchmark
+A fixed set of 4 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too. Press Run benchmark on the Progress page, or use `npm run gen -- bench run`.
+
 ## How a run works
 
 ### Run

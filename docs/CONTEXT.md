@@ -61,8 +61,11 @@
   name: PitchLab. Not merged yet.
   Follow-ups + deferred items: `docs/plan-1-followups.md`.
   Roadmap: Plan 1 Core pipeline (CLI) → Plan 2 Dashboard → Plan 3 Validation pack → Plan 4 Continuous + learning + deploy.
+  **Idea-quality benchmark, branch `benchmark`** (spec `docs/superpowers/specs/2026-10-25-idea-quality-roadmap-and-benchmark-design.md`):
+  13-metric scorecard computed from stored rows, frozen `benchmark_passes` snapshots, `gen bench baseline|run|report`,
+  a worker finalise hook and a Progress page with a Run benchmark button. Not merged yet; no live pass run yet.
 - **Repo:** https://github.com/ElvisOkereke/PitchLab (main)
-- **Last updated:** 2026-10-21
+- **Last updated:** 2026-10-26
 
 ## The Goal (in the user's words, summarised)
 Build a repeatable **software-service business case generator**: something run consistently to research and produce
@@ -347,3 +350,11 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   name was removed from it. New test `apps/web/test/docs-links.test.ts`: every relative link in the README and the
   four user-facing docs must resolve. Facts checked against code, not memory. Noted for a public release: no licence
   file yet, and the LLM setup assumes one gateway serving both the Anthropic and the OpenAI formats with one key.
+- **2026-10-26 (benchmark, Task 5):** Progress page on branch `benchmark`. `apps/web/app/(app)/progress/page.tsx` reads
+  `listBenchmarkPasses`, `passProgress` and `passCases`; `ProgressView` (server component) shows the scorecard (newest
+  baseline plus up to 5 newest passes, ok/bad badges, muted for not measured or no data, an "incomplete" badge), the
+  running-pass line with `AutoRefresh` every 10 s, the small-sample note and the "Score these cases" links. The small
+  `RunBenchmarkForm` client component calls `runBenchmarkAction`, which takes no input, calls `queueBenchmarkPass` and
+  maps `busy` and `pass_running` to the core refusal copy. New nav tab, `benchmark` glossary term, one tour step
+  (`decide-progress`, anchor `progress-scorecard`; no tour anchor on the nav tab). Docs: README, user guide "Track
+  idea quality", architecture "Benchmark" and `benchmark_passes`.

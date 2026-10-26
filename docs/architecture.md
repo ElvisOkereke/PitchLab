@@ -24,6 +24,7 @@ packages/core/          @bcg/core: the library, the gen CLI and the worker
   src/case/             case schema, review status, Markdown export
   src/dashboard/        web-safe queries the dashboard imports (board, runs, validation jobs, tour state)
   src/db/               Drizzle schema, client (PGlite or pg), migrations, TLS config, seed
+  src/bench/            idea-quality benchmark: definitions, scorecard metrics, passes, Markdown report
   src/example/          the built-in example case (fixture, ensure, hide, reset)
   src/config/           env schema, model per stage, price table
   src/cli.ts, cli-program.ts, worker.ts
@@ -31,7 +32,7 @@ packages/core/          @bcg/core: the library, the gen CLI and the worker
   drizzle/              SQL migrations
   scripts/              db:copy (PGlite to Postgres) and diagnostic scripts
 apps/web/               @bcg/web: the Next.js 16 dashboard (App Router, Server Actions, React 19)
-  app/                  pages: board, leaderboard, command, runs, settings, case page, login
+  app/                  pages: board, leaderboard, progress, command, runs, settings, case page, login
   actions/              Server Actions (each checks origin and session first, validates with zod)
   components/           UI, including the tour (driver.js) and help tips
   lib/                  auth, env validation, DB pool, queries, tour chapters, glossary
@@ -153,6 +154,24 @@ flowchart TD
 - `gen run` and `gen validate` run in the foreground without the queue. `gen run` creates its run as `running`, so a
   worker never claims it.
 
+## Benchmark
+
+`packages/core/src/bench/` measures idea quality from stored rows only (no model calls). `definitions.ts` holds the
+immutable `bench-v1` seeds and the 13 metric definitions; `scorecard.ts` computes a scorecard over a set of runs
+(example data excluded, at most 200 runs and 3000 ideas, with a note when trimmed); `passes.ts` freezes baselines,
+queues passes and finalises them. A snapshot is stored once in `benchmark_passes` (kind `baseline`, `pass` or
+`recompute`; status `running`, `complete` or `incomplete`) and is never recomputed in place: `gen bench report
+--recompute` adds a new `recompute` row.
+
+- **Queueing:** `queueBenchmarkPass` runs in one transaction under the queue advisory lock. It refuses when a pass is
+  running or any run is queued or running, then inserts the pass and its 4 runs, each with `runs.benchmark_pass_id`
+  set. The dashboard's Progress page and `gen bench run` both call it.
+- **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each item. When every run of a running pass has
+  finished, the pass is frozen with metrics over all its runs: `complete`, or `incomplete` if any run failed. The hook
+  is idempotent and a failure in it never stops the worker.
+- **Dashboard:** `apps/web` imports these modules as web-safe core code; the Progress page only reads passes and queues
+  one through `runBenchmarkAction`.
+
 ## Data model
 
 Drizzle schema in `packages/core/src/db/schema.ts`; migrations in `packages/core/drizzle/`. Grouped by purpose:
@@ -166,6 +185,7 @@ Drizzle schema in `packages/core/src/db/schema.ts`; migrations in `packages/core
 | Owner decisions | `stage_events` (every stage move: move, kill or overturn, with note) |
 | Validation | `validation_packs`, `validation_jobs` (queue: options, status, steps, cost), `landing_pages`, `landing_events` (visits and submits, for the future hosted form) |
 | Outreach | `prospects` (website, domain, email and where it was found, CASL basis, status), `outreach_drafts` (cold, followup1, followup2), `outreach_events` (sent, replied, positive, meeting, not interested, unsubscribe, note), `suppressions` (unsubscribed addresses, lowercased) |
+| Benchmark | `benchmark_passes` (version, label, kind, status, run ids, frozen scorecard JSON, source pass); `runs.benchmark_pass_id` links a run to its pass |
 | Cost logging | `llm_calls` (every model attempt: stage, model, tokens, searches, notional cost, latency, prompt version, error), `data_calls` (calls to data sources such as the free forums and Google Places, with cost) |
 
 Embeddings are `vector(1536)` columns (pgvector). Enums such as `run_status`, `case_stage`, `claim_verified`,
