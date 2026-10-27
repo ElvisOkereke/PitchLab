@@ -80,7 +80,9 @@ It already has one.
   Only problem and pricing entries whose quote was checked against the source text count as evidence. Those show a
   "verified quote" badge; anything else shows "unverified".
 - **Cost:** The form shows the most a mission can cost ("up to $X"), and a typical cost once a mission has finished.
-  The budget is a soft limit: a mission stops starting new steps once it is spent, and the step in progress can run a little over.
+  The budget (0.50 to 25 dollars, default 2) buys more research: a mission plans
+  about 6 queries per dollar (12 to 60). With Pricing ticked, a quarter or more of its web searches go to vendor pricing
+  pages, and paid App Store apps add their listed price. The budget is a soft limit: a mission stops starting new steps once it is spent, and the step in progress can run a little over.
   Missions need `npm run worker` running, and at most 3 can wait at once. Or run `npm run gen -- research "your topic"`.
 - **Background research:** Off until you turn it on in **Settings → Research**. When on, the worker starts one small
   $1 mission at a time, until the daily cap is spent (the day ends at midnight in Toronto).

@@ -229,7 +229,7 @@ How things work:
   unsubscribe) with an optional note. "Interview note" requires a note (what you learned) and counts as an interview
   for the validation checklist. This only records what you did; the system sends nothing.
 - **Research missions:** Library page. They need `npm run worker` running; at most 3 can wait at once. A mission
-  costs up to the budget you set (0.50 to 10 US dollars, default 2), checked between steps. Background research is off
+  costs up to the budget you set (0.50 to 25 US dollars, default 2), checked between steps. Background research is off
   until you tick it in Settings; it uses $1 missions, one at a time, up to the daily cap (default 5, Toronto day).
 - **Queueing a run:** Runs screen. Needs `npm run worker` running, otherwise the run stays queued. At most 3 runs
   can be queued at once. The page refreshes every 10 s while something is queued or running.
