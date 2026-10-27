@@ -167,5 +167,11 @@ describe('gen research', () => {
     await expect(parse(['research', 'x topic', '--countries', 'canada'])).rejects.toThrow(/countries/);
     await expect(parse(['research', 'x topic', '--budget', '0.1'])).rejects.toThrow(/budget/);
     await expect(parse(['research', 'x topic', '--budget', 'lots'])).rejects.toThrow(/budget/);
+    await expect(parse(['research', 'x topic', '--budget', '25.01'])).rejects.toThrow(/budget/);
+  });
+
+  it('accepts a budget up to 25', async () => {
+    const h = await parse(['research', 'x topic', '--budget', '25']);
+    expect(h.research).toHaveBeenCalledWith('x topic', { budget: 25 });
   });
 });

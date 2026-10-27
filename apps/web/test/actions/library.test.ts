@@ -58,9 +58,9 @@ describe('queueMissionAction', () => {
       [{ topic: 'valid topic', kinds: ['trend'] }, 'Pick 1 to 3 kinds.'],
       [{ topic: 'valid topic', kinds: 'problem', countries: 'Canada' }, 'Countries must be two-letter codes or global, up to 10, separated by commas.'],
       [{ topic: 'valid topic', kinds: 'problem', audience: 'robots' }, 'Audience must be business, consumer or both.'],
-      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: '0.1' }, 'Budget must be a number from 0.5 to 10.'],
-      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: '11' }, 'Budget must be a number from 0.5 to 10.'],
-      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: 'abc' }, 'Budget must be a number from 0.5 to 10.'],
+      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: '0.1' }, 'Budget must be a number from 0.5 to 25.'],
+      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: '26' }, 'Budget must be a number from 0.5 to 25.'],
+      [{ topic: 'valid topic', kinds: 'problem', budgetUsd: 'abc' }, 'Budget must be a number from 0.5 to 25.'],
     ];
     for (const [fields, message] of cases) {
       const r = await queueMissionAction({}, form(fields));

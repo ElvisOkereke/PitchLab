@@ -92,7 +92,7 @@ function countriesArg(v: string): string[] {
 }
 function budgetArg(v: string): number {
   const n = Number(v);
-  if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > 10) throw new CliError(`--budget is a dollar amount from 0.5 to 10, got: ${v}`, 2);
+  if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > 25) throw new CliError(`--budget is a dollar amount from 0.5 to 25, got: ${v}`, 2);
   return n;
 }
 
@@ -178,7 +178,7 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--kinds <list>', `comma-separated: ${SLICE_A_KINDS.join(', ')} (default problem,pricing,startup)`, kindsArg)
     .option('--countries <list>', 'comma-separated two-letter codes, e.g. CA,US (or global)', countriesArg)
     .addOption(new Option('--audience <who>', 'who the topic is about').choices(['business', 'consumer', 'both']))
-    .option('--budget <usd>', 'most to spend, 0.5 to 10 (default 2)', budgetArg)
+    .option('--budget <usd>', 'most to spend, 0.5 to 25 (default 2)', budgetArg)
     .action(async (topic: string, opts: ResearchCliOpts) => {
       if (topic === 'status' && Object.keys(opts).length > 0) throw new CliError('gen research status takes no options.', 2);
       process.exitCode = topic === 'status' ? await h.researchStatus() : await h.research(topic, opts);

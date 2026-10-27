@@ -31,8 +31,9 @@ describe('MissionInputSchema', () => {
       topic: 'freight brokers', kinds: ['problem', 'pricing', 'startup'], countries: [], budgetUsd: 2,
     });
     expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 0.4 }).success).toBe(false);
-    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 10.5 }).success).toBe(false);
-    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 10 }).success).toBe(true);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 25.01 }).success).toBe(false);
+    // The ceiling rose from 10 to 25 so a bigger budget can buy more queries (maxQueriesFor).
+    expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 25 }).success).toBe(true);
     expect(MissionInputSchema.safeParse({ topic: 'ab' }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'x'.repeat(201) }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['trend'] }).success).toBe(false);

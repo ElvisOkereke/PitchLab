@@ -172,7 +172,7 @@ describe('LibraryView missions', () => {
     expect([...f.querySelectorAll('input[name="kinds"]')].map((i) => (i as HTMLInputElement).value)).toEqual(['problem', 'startup', 'pricing']);
     for (const n of ['topic', 'countries', 'audience', 'budgetUsd']) expect(f.querySelector(`[name="${n}"]`), n).toBeTruthy();
     const b = f.querySelector<HTMLInputElement>('[name="budgetUsd"]')!;
-    expect([b.min, b.max, b.value]).toEqual(['0.5', '10', '2']);
+    expect([b.min, b.max, b.value]).toEqual(['0.5', '25', '2']);
     expect(f.querySelector<HTMLInputElement>('[name="topic"]')!.maxLength).toBe(200);
   });
 

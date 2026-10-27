@@ -19,7 +19,7 @@ import type { RawItem, SignalSource } from '../tools/sources/types';
 import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
 import { robotsAllows } from './robots';
-import { appReviews, COUNTRIES as APP_STORE_COUNTRIES } from './sources/appreviews';
+import { appPriceToDraft, appReviews, COUNTRIES as APP_STORE_COUNTRIES, type AppInfo } from './sources/appreviews';
 import { productHuntSearch, productHuntToDraft, type ProductHuntItem } from './sources/producthunt';
 import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
 
@@ -29,7 +29,12 @@ import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
  * mission's spend is the sum of its llm_calls and data_calls rows.
  */
 
-export const MAX_QUERIES = 12;
+export const MIN_QUERIES = 12;
+export const MAX_QUERIES = 60;
+/** How many queries a mission may run: more budget buys more research (6 per dollar, 12 to 60). */
+export const maxQueriesFor = (budgetUsd: number): number => Math.min(MAX_QUERIES, Math.max(MIN_QUERIES, Math.round(6 * budgetUsd)));
+/** A web query aimed at a pricing page. */
+const PRICING_QUERY = /pric(e|es|ing)\b|per (month|year|seat|user)|subscription plans?/i;
 /** Web queries stop once mission spend reaches this share of the budget; the rest pays for extraction. */
 export const COLLECT_SHARE = 0.6;
 export const MAX_WARNINGS = 20;
@@ -70,7 +75,7 @@ const SOURCE_HINTS: Record<MissionSource, string> = {
   yc: 'one or two keywords matching what companies in this topic do.',
 };
 
-export type CollectorCtx = { onCall: CallHook; countries: string[] };
+export type CollectorCtx = { onCall: CallHook; countries: string[]; onApp?: (app: AppInfo) => void };
 
 /** All injectable. A missing collector is a source the mission cannot use (and the plan is never offered). */
 export type Collectors = {
@@ -96,7 +101,7 @@ export function buildCollectors(keys: { productHuntToken?: string; stackexchange
   const c: Collectors = {
     appReviews: (q, ctx) => {
       const country = ctx.countries.map((x) => x.toLowerCase()).find((x) => (APP_STORE_COUNTRIES as readonly string[]).includes(x)) ?? 'us';
-      return appReviews(q, { country, limit: 20, onCall: ctx.onCall });
+      return appReviews(q, { country, limit: 20, onCall: ctx.onCall, onApp: ctx.onApp });
     },
     yc: (q, ctx) => ycCompanies({ query: q, limit: API_LIMIT }, { onCall: ctx.onCall }),
     hn: createHnSource(),
@@ -244,6 +249,34 @@ function cleanStructured(d: KnowledgeDraft): KnowledgeDraft {
   return { ...d, title: cleanStored(d.title), summary: cleanStored(d.summary), facts: cleanFacts(d.facts) };
 }
 
+type PlannedQuery = { source: MissionSource; q: string };
+
+/**
+ * Pricing needs real price points, which only pricing pages carry. Guarantees at least max(2, ceil(25% of web queries))
+ * pricing-page web queries by appending deterministic ones built from the topic; the total stays within `max` by
+ * dropping trailing non-pricing web queries.
+ */
+function withPricingQueries(queries: PlannedQuery[], topic: string, max: number): PlannedQuery[] {
+  const subject = capField(stripInvisible(topic), 120);
+  const extras = [`${subject} software pricing plans per month`, `${subject} tool pricing comparison`];
+  const out = [...queries];
+  const isWeb = (x: PlannedQuery) => x.source === 'web';
+  const count = () => out.filter((x) => isWeb(x) && PRICING_QUERY.test(x.q)).length;
+  const need = () => Math.max(2, Math.ceil(0.25 * out.filter(isWeb).length));
+  for (const q of extras) {
+    if (count() >= need()) break;
+    if (out.some((x) => isWeb(x) && x.q === q)) continue;
+    out.push({ source: 'web', q });
+  }
+  while (out.length > max) {
+    let i = out.length - 1;
+    while (i >= 0 && !(isWeb(out[i]!) && !PRICING_QUERY.test(out[i]!.q))) i--;
+    if (i < 0) break;
+    out.splice(i, 1);
+  }
+  return out;
+}
+
 // ---- the mission --------------------------------------------------------------------------------------
 
 export async function runMission(deps: MissionDeps, missionId: string): Promise<'succeeded' | 'failed'> {
@@ -310,13 +343,14 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
 
     // 1. Plan
     if (await overBudget('before planning')) return finish('succeeded');
+    const maxQueries = maxQueriesFor(budget);
     const planPrompt = loadPrompt('library-plan');
     const plan = await router.structured(
       'research',
       {
         system: PLAN_SYSTEM,
         prompt: planPrompt.render({
-          kinds: kindList, countries, audience: m.audience ?? 'any', topic,
+          kinds: kindList, countries, audience: m.audience ?? 'any', topic, maxQueries: String(maxQueries),
           sources: allowed.map((s) => `- \`${s}\`: ${SOURCE_HINTS[s]}`).join('\n'),
         }),
         schema: PlanSchema,
@@ -329,10 +363,11 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const ignored = plan.queries.length - usable.length;
     // The source names come from model output, so they are counted, never echoed.
     if (ignored > 0) warn(`plan: ignored ${ignored} quer${ignored === 1 ? 'y' : 'ies'} for unused sources`);
-    const queries = usable
+    const planned = usable
       .map((q) => ({ source: q.source, q: capField(stripInvisible(q.q), 200) }))
       .filter((q) => q.q !== '' && !seenQ.has(`${q.source}\n${q.q}`) && seenQ.add(`${q.source}\n${q.q}`))
-      .slice(0, MAX_QUERIES);
+      .slice(0, maxQueries);
+    const queries = kinds.includes('pricing') ? withPricingQueries(planned, m.topic, maxQueries) : planned;
     log(`mission ${missionId}: ${queries.length} queries`);
 
     // 2. Collect
@@ -342,7 +377,13 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     let anyOk = false;
     let anyFailed = false;
     const onCall: CallHook = (c) => logDataCall(db, { runId: null, missionId, provider: c.provider, endpoint: c.endpoint, ok: c.ok });
-    const cctx: CollectorCtx = { onCall, countries: m.countries };
+    const cctx: CollectorCtx = {
+      onCall, countries: m.countries,
+      onApp: (app) => {
+        const d = appPriceToDraft(app);
+        if (d) addStructured([d]);
+      },
+    };
     const researchPrompt = loadPrompt('library-research');
     /** Every mission fetch (pages and robots.txt): research identity, and banned hosts refused on every redirect hop. */
     const guardedFetch = (url: string, opts: FetchPageOpts = {}) =>
@@ -425,8 +466,13 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       return loaded > 0 ? 'ok' : failed > 0 ? 'failed' : 'empty';
     };
 
-    // Free sources first (they cost no budget), then web queries while under the collection share.
-    const ordered = [...queries.filter((x) => x.source !== 'web'), ...queries.filter((x) => x.source === 'web')];
+    // Free sources first (they cost no budget), then pricing-page web queries, then other web queries, while under the collection share.
+    const web = queries.filter((x) => x.source === 'web');
+    const ordered = [
+      ...queries.filter((x) => x.source !== 'web'),
+      ...web.filter((x) => PRICING_QUERY.test(x.q)),
+      ...web.filter((x) => !PRICING_QUERY.test(x.q)),
+    ];
     for (const { source, q } of ordered) {
       if (source === 'web' && (await collectionFull())) break;
       try {

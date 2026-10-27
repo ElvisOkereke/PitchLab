@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
-import { buildCollectors, COLLECT_SHARE, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
+import { buildCollectors, COLLECT_SHARE, maxQueriesFor, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
@@ -167,7 +167,7 @@ beforeEach(() => resetRobotsCache());
 describe('runMission', () => {
   it('happy path: plans, collects from two sources plus web, extracts, verifies, embeds and stores', async () => {
     const db = await testDb();
-    const id = await insertMission(db);
+    const id = await insertMission(db, { kinds: ['problem'] }) // problem only: the pricing kind adds web queries (and research calls) of its own;
     const { deps, router, page, hn, appQueries } = happy(db);
 
     expect(await runMission(deps, id)).toBe('succeeded');
@@ -531,7 +531,7 @@ describe('runMission', () => {
 
   it('fails when every source fails and nothing was collected', async () => {
     const db = await testDb();
-    const id = await insertMission(db);
+    const id = await insertMission(db, { kinds: ['problem'] }) // problem only: pricing adds web queries that load nothing but are not failures;
     const appReviews: Collectors['appReviews'] = async () => {
       throw new SourceError('auth', 'appstore', 'appstore: HTTP 401');
     };
@@ -695,5 +695,92 @@ describe('buildCollectors', () => {
     expect(await runMission({ ...deps, router, collectors: { productHunt: async () => [] } }, id)).toBe('succeeded');
     expect(router.calls[0]!.prompt).toMatch(/`producthunt`/);
     expect(router.calls[0]!.prompt).not.toMatch(/reddit/i);
+  });
+
+  describe('effort scales with budget', () => {
+    it('maxQueriesFor clamps round(6 * budget) to 12..60', () => {
+      expect([1, 2, 5, 10, 25].map(maxQueriesFor)).toEqual([12, 12, 30, 60, 60]);
+    });
+
+    it('a $5 mission asks the planner for 30 queries and keeps up to 30', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem'], budgetUsd: '5' });
+      const hn = signalSource('hn', []);
+      const queries = Array.from({ length: 40 }, (_, i) => ({ source: 'hn', q: `invoice pain ${i}` }));
+      const router = mockRouter(db, { plan: { queries } });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: { hn } }, id)).toBe('succeeded');
+      expect(router.calls[0]!.prompt).toMatch(/up to 30 search queries/);
+      expect(hn.queries).toHaveLength(30);
+    });
+  });
+
+  describe('pricing queries', () => {
+    const webPlan = (qs: string[]) => ({ queries: qs.map((q) => ({ source: 'web', q })) });
+    const researchQueries = (router: ReturnType<typeof mockRouter>) =>
+      router.calls.filter((c) => c.kind === 'research').map((c) => /<query>\n([\s\S]*?)\n<\/query>/.exec(c.prompt)![1]!);
+
+    it('appends deterministic pricing queries when the plan has none, and runs them before other web queries', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem', 'pricing'], topic: 'invoice chasing' });
+      const router = mockRouter(db, { plan: webPlan(['late payment forums', 'freelancer cash flow stories']) });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: {} }, id)).toBe('succeeded');
+      expect(researchQueries(router)).toEqual([
+        'invoice chasing software pricing plans per month',
+        'invoice chasing tool pricing comparison',
+        'late payment forums',
+        'freelancer cash flow stories',
+      ]);
+    });
+
+    it('keeps planned pricing queries and moves them first, adding only what is missing', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['pricing'], topic: 'invoice chasing' });
+      const router = mockRouter(db, { plan: webPlan(['forum complaints', 'FreshBooks pricing plans']) });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: {} }, id)).toBe('succeeded');
+      const qs = researchQueries(router);
+      expect(qs[0]).toBe('FreshBooks pricing plans');
+      expect(qs).toHaveLength(3);
+      expect(qs.at(-1)).toBe('forum complaints');
+    });
+
+    it('appends nothing without the pricing kind', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem'], topic: 'invoice chasing' });
+      const router = mockRouter(db, { plan: webPlan(['late payment forums']) });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: {} }, id)).toBe('succeeded');
+      expect(researchQueries(router)).toEqual(['late payment forums']);
+    });
+  });
+
+  describe('App Store prices', () => {
+    const paid = { trackName: 'QuoteMaster', price: 4.99, currency: 'USD', formattedPrice: '$4.99', primaryGenreName: 'Business', trackViewUrl: 'https://apps.apple.com/us/app/quotemaster/id55', country: 'us' };
+
+    it('turns a paid app into a pricing entry with no extract call', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['pricing'] });
+      const router = mockRouter(db, { plan: { queries: [{ source: 'appreviews', q: 'QuoteMaster' }] } });
+      const { deps } = happy(db);
+      const appReviews: Collectors['appReviews'] = async (_q, ctx) => { ctx.onApp?.(paid); return []; };
+      expect(await runMission({ ...deps, router, collectors: { appReviews } }, id)).toBe('succeeded');
+      expect(router.calls.filter((c) => c.stage === 'library_extract')).toEqual([]);
+      const items = await db.select().from(knowledgeItems);
+      expect(items).toHaveLength(1);
+      expect(items[0]!.kind).toBe('pricing');
+      expect((items[0]!.facts as { pricePoints: unknown[] }).pricePoints).toEqual([{ amount: 4.99, currency: 'USD', unit: 'one-time' }]);
+    });
+
+    it('a free app adds nothing', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['pricing'] });
+      const router = mockRouter(db, { plan: { queries: [{ source: 'appreviews', q: 'FreeThing' }] } });
+      const { deps } = happy(db);
+      const appReviews: Collectors['appReviews'] = async (_q, ctx) => { ctx.onApp?.({ ...paid, price: 0, formattedPrice: 'Free' }); return []; };
+      expect(await runMission({ ...deps, router, collectors: { appReviews } }, id)).toBe('succeeded');
+      expect(await db.select().from(knowledgeItems)).toEqual([]);
+    });
   });
 });

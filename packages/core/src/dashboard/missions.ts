@@ -17,7 +17,7 @@ export const MissionInputSchema = z.object({
   kinds: z.array(z.enum(SLICE_A_KINDS)).min(1).max(3).default(['problem', 'pricing', 'startup']),
   countries: z.array(z.string().regex(/^([A-Z]{2}|global)$/)).max(10).default([]),
   audience: z.enum(['business', 'consumer', 'both']).optional(),
-  budgetUsd: z.number().min(0.5).max(10).default(2),
+  budgetUsd: z.number().min(0.5).max(25).default(2),
 });
 export type MissionInput = z.input<typeof MissionInputSchema>;
 

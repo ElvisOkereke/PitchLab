@@ -13,7 +13,7 @@ const KINDS = [
   { value: 'startup', label: 'Startups' },
   { value: 'pricing', label: 'Pricing' },
 ] as const;
-const BUDGET = { min: 0.5, max: 10, step: 0.5, initial: '2' } as const;
+const BUDGET = { min: 0.5, max: 25, step: 0.5, initial: '2' } as const;
 
 /** Start a research mission. A refused mission keeps everything typed (useFormFields). */
 export function MissionForm({ typicalCost }: { typicalCost: number | null }) {

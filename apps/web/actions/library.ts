@@ -16,7 +16,7 @@ const FIELD_MESSAGE: Record<string, string> = {
   kinds: 'Pick 1 to 3 kinds.',
   countries: 'Countries must be two-letter codes or global, up to 10, separated by commas.',
   audience: 'Audience must be business, consumer or both.',
-  budgetUsd: 'Budget must be a number from 0.5 to 10.',
+  budgetUsd: 'Budget must be a number from 0.5 to 25.',
 };
 
 /** "ca, us ,Global," becomes ['CA', 'US', 'global']. */

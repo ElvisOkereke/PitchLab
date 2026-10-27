@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetThrottle, SourceError } from '../../src/research/http';
 import { redditSearch, resetRedditState } from '../../src/research/sources/reddit';
 import { productHuntSearch, productHuntToDraft } from '../../src/research/sources/producthunt';
-import { appReviews } from '../../src/research/sources/appreviews';
+import { appPriceToDraft, appReviews } from '../../src/research/sources/appreviews';
 import { parseFacts } from '../../src/library/kinds';
 import { resetYcCache, ycCompanies, ycToDraft, type YcCompany } from '../../src/research/sources/yc';
 
@@ -173,6 +173,13 @@ describe('appReviews', () => {
     await expect(appReviews('1', { fetch: router(() => ({ body: feed })).impl, sleep, country: 'de' })).rejects.toMatchObject({ code: 'bad_response' });
     await expect(appReviews('1', { fetch: router(() => ({ body: {}, status: 429 })).impl, sleep })).rejects.toMatchObject({ code: 'rate_limited' });
   });
+  it('reports the resolved app (name, price, genre, url) through onApp', async () => {
+    const found = { trackId: 999, trackName: 'QuoteMaster', price: 4.99, currency: 'USD', formattedPrice: '$4.99', primaryGenreName: 'Business', trackViewUrl: 'https://apps.apple.com/ca/app/q/id999' };
+    const { impl } = router((u) => (u.includes('/search') ? { body: { results: [found] } } : { body: feed }));
+    const apps: unknown[] = [];
+    await appReviews('quote app', { fetch: impl, sleep, country: 'ca', onApp: (a) => apps.push(a) });
+    expect(apps).toEqual([{ trackName: 'QuoteMaster', price: 4.99, currency: 'USD', formattedPrice: '$4.99', primaryGenreName: 'Business', trackViewUrl: 'https://apps.apple.com/ca/app/q/id999', country: 'ca' }]);
+  });
   it('resolves a text query to an app id first', async () => {
     const { impl, calls } = router((u) => (u.includes('/search') ? { body: { results: [{ trackId: 999 }] } } : { body: feed }));
     const r = await appReviews('invoice app', { fetch: impl, sleep, country: 'ca' });
@@ -269,5 +276,20 @@ describe('ycToDraft', () => {
     expect(d.facts).toMatchObject({ outcome });
     expect(d.industries).toEqual(['B2B']);
     expect(d.source.sourceType).toBe('yc');
+  });
+});
+
+describe('appPriceToDraft', () => {
+  const app = { trackName: 'QuoteMaster', price: 4.99, currency: 'USD', formattedPrice: '$4.99', primaryGenreName: 'Business', trackViewUrl: 'https://apps.apple.com/us/app/q/id9', country: 'us' };
+  it('maps a paid app to a valid structured pricing draft', () => {
+    const d = appPriceToDraft(app)!;
+    expect(d.kind).toBe('pricing');
+    expect(parseFacts('pricing', d.facts)).toEqual({ product: 'QuoteMaster', pricePoints: [{ amount: 4.99, currency: 'USD', unit: 'one-time' }], buyer: 'Business app users', complaints: [] });
+    expect(d.source).toMatchObject({ url: app.trackViewUrl, sourceType: 'appstore', quoteVerified: false, domain: 'apps.apple.com' });
+    expect(d.countries).toEqual(['US']);
+  });
+  it('returns null for a free app or a missing price', () => {
+    expect(appPriceToDraft({ ...app, price: 0 })).toBeNull();
+    expect(appPriceToDraft({ ...app, price: undefined })).toBeNull();
   });
 });
