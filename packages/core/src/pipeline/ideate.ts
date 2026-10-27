@@ -68,12 +68,42 @@ const lensIdeaSchema = z.object({
   libraryItemIds: z.array(z.string().uuid()).max(10),
 });
 type LensIdea = z.infer<typeof lensIdeaSchema>;
+/** Plain object copy, or null. */
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : null;
+/** A library id as cited: trimmed, surrounding square brackets removed, lower case. */
+const bareId = (s: string) => s.trim().replace(/^\[\s*(.*?)\s*\]$/, '$1').toLowerCase();
+
+/**
+ * Before validation, an over-long v8 text field is cut to its limit and cited library ids are unwrapped and capped at
+ * 10, so an easy overrun never drops a whole idea. Other fields (incumbents, gap, enums, numbers) still validate strictly.
+ */
+function normalizeIdea(raw: unknown): unknown {
+  const idea = asRecord(raw);
+  if (!idea) return raw;
+  const cut = (o: Record<string, unknown>, key: string, max: number) => {
+    const v = o[key];
+    if (typeof v === 'string' && v.length > max) o[key] = v.slice(0, max);
+  };
+  cut(idea, 'revenueMechanics', 400);
+  const value = asRecord(idea.valueToUser);
+  if (value) { cut(value, 'basis', 400); cut(value, 'source', 300); idea.valueToUser = value; }
+  const price = asRecord(idea.priceHint);
+  if (price) { cut(price, 'unit', 60); cut(price, 'basis', 300); cut(price, 'source', 300); idea.priceHint = price; }
+  const barriers = asRecord(idea.barriers);
+  if (barriers) { cut(barriers, 'toStartWhy', 300); cut(barriers, 'toCopyWhy', 300); idea.barriers = barriers; }
+  if (Array.isArray(idea.libraryItemIds)) {
+    idea.libraryItemIds = idea.libraryItemIds.slice(0, 10).map((id) => (typeof id === 'string' ? bareId(id) : id));
+  }
+  return idea;
+}
+
 /**
  * One invalid idea parses to `undefined` (dropped and counted) instead of failing the whole call. The JSON schema the
- * model sees is the strict idea schema (a catch is transparent there).
+ * model sees is the strict idea schema (the preprocess and the catch are transparent there).
  */
 const lensIdeasSchema = z.object({
-  ideas: z.array(lensIdeaSchema.catch(() => undefined as unknown as LensIdea)),
+  ideas: z.array(z.preprocess(normalizeIdea, lensIdeaSchema).catch(() => undefined as unknown as LensIdea)),
 });
 /** Owner ideas never get invented incumbents or gaps (those columns stay null); the money fields are optional. */
 const ownerIdeaSchema = z.object({
@@ -150,6 +180,26 @@ export function selectLenses<L extends { id: string; active: boolean; audience: 
   return shuffled(picked, rng);
 }
 
+/** The run's consumer segments (seeded by run id): ideate shows them and harvest queries the library with them. */
+export function pickConsumerSegments(runId: string): string[] {
+  return shuffled(CONSUMER_SEGMENTS, seededRandom(`${runId}:segments`)).slice(0, SEGMENTS_PER_RUN);
+}
+
+/**
+ * The lens for the one mix re-ask: a consumer lens the run already used; otherwise (never for lens seeds, which keep
+ * exactly their lenses) a seeded active consumer lens from the pool; otherwise the run's first lens. Open and sector
+ * runs always include the available consumer lenses, so the pool step is a fallback.
+ */
+export function pickReaskLens<L extends { id: string; active: boolean; audience: string }>(
+  chosen: L[], all: L[], cfg: Pick<RunConfig, 'seedType' | 'lensIds'>, rng: () => number,
+): L {
+  const fromRun = chosen.find((l) => l.audience === 'consumer');
+  if (fromRun) return fromRun;
+  const pool = all.filter((l) => l.active && l.audience === 'consumer').sort(byId);
+  if (!cfg.lensIds && pool.length) return pool[Math.floor(rng() * pool.length)]!;
+  return chosen[0]!;
+}
+
 export type Mix = { consumerShare: number; models: number; short: { consumer: number; models: BusinessModel[] } };
 
 /** Smallest number of extra consumer ideas that lifts `consumer` of `n` to MIN_CONSUMER_SHARE. */
@@ -194,20 +244,41 @@ function gapInstruction(count: number, consumer: number, models: number, unused:
 }
 
 type Grounded = { basis: string; source?: string };
+/** Citable sources, keyed lower case: a shown library entry's id, url and url as rendered (to the id); a signal url (to itself). */
+type Known = Map<string, string>;
+const RENDERED_URL_MAX = 80; // renderIdeationContext caps each url at 80 characters
+
+/** The id or url a cited source stands for, or null. A cut-off rendered url also matches a longer citation that starts with it. */
+function resolveSource(raw: string | undefined, known: Known, prefixes: [string, string][]): string | null {
+  if (!raw) return null;
+  const s = bareId(raw);
+  if (!s) return null;
+  const hit = known.get(s);
+  if (hit) return hit;
+  return prefixes.find(([prefix]) => s.startsWith(prefix))?.[1] ?? null;
+}
 
 /**
- * A value or price keeps its source only when it is a library id shown to this lens or a signal url of the run;
- * otherwise the source is dropped and the basis is labelled as an assumption (a value needs a source or an assumption).
+ * A value or price keeps its source only when it is a library entry shown to this lens (by id or url; stored as the id)
+ * or a signal url of the run; otherwise the source is dropped and the basis is labelled as an assumption (a value needs
+ * a source or an assumption).
  */
-function ground<T extends Grounded>(v: T, basisMax: number, known: Set<string>): T {
-  const src = v.source?.trim().replace(/^\[(.*)\]$/, '$1');
-  if (src && known.has(src)) return { ...v, source: src };
+function ground<T extends Grounded>(v: T, basisMax: number, known: Known, prefixes: [string, string][] = []): T {
+  const src = resolveSource(v.source, known, prefixes);
+  if (src) return { ...v, source: src };
   const { source: _drop, ...rest } = v;
   const basis = /^\s*assumption\b/i.test(rest.basis) ? rest.basis : `Assumption: ${rest.basis}`.slice(0, basisMax);
   return { ...rest, basis } as T;
 }
 
-type LibraryBlocks = { alreadySold: string; lessons: string; pricing: string; ids: Set<string> };
+type LibraryBlocks = {
+  alreadySold: string; lessons: string; pricing: string;
+  ids: Set<string>;
+  /** Lower-cased id, url and rendered url of each shown entry, to its id. */
+  sources: Known;
+  /** Rendered urls that were cut off (lower case), to the entry id. */
+  prefixes: [string, string][];
+};
 const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [] });
 
 export type IdeateOutput = {
@@ -235,10 +306,14 @@ export async function ideate(
       { runId: run.id, promptVersion: prompt.version },
     );
     const { audience, businessModel, revenueMechanics, valueToUser, priceHint, barriers, ...fields } = out;
+    // Owner ideas cite nothing we can check: any money claim is kept as a stated assumption.
+    const none: Known = new Map();
     const ideaIds = await replaceRunIdeas(db, run.id, [{
       runId: run.id, lensId: null, origin: 'owner', ...fields, functionalGap: null, knownIncumbents: null,
       audience: audience ?? null, businessModel: businessModel ?? null, revenueMechanics: revenueMechanics ?? null,
-      valueToUser: valueToUser ?? null, priceHint: priceHint ?? null, barriers: barriers ?? null, libraryItemIds: null,
+      valueToUser: valueToUser ? ground(valueToUser, 400, none) : null,
+      priceHint: priceHint ? ground(priceHint, 300, none) : null,
+      barriers: barriers ?? null, libraryItemIds: null,
       signalIds: input.signalIds, status: 'candidate',
     }]);
     log('ideate: 1 owner idea');
@@ -268,7 +343,7 @@ export async function ideate(
     : cfg.seedType === 'open'
       ? [...new Set(passed.map((s) => capField(s.sector, 80)).filter(Boolean))].slice(0, MAX_FOCUS_SECTORS)
       : [];
-  const segments = shuffled(CONSUMER_SEGMENTS, seededRandom(`${run.id}:segments`)).slice(0, SEGMENTS_PER_RUN);
+  const segments = pickConsumerSegments(run.id);
   const focusFor = (withSegments: boolean) => {
     const lines = [`Business sectors: ${sectors.length ? sectors.join('; ') : 'any in the market'}`];
     if (withSegments) lines.push(`Consumer segments: ${segments.join('; ')}`);
@@ -281,16 +356,25 @@ export async function ideate(
   const libraryFor = async (lens: LensRow): Promise<LibraryBlocks> => {
     const cached = libraryCache.get(lens.id);
     if (cached) return cached;
-    let blocks: LibraryBlocks = { ...EMPTY_LIBRARY, ids: new Set() };
+    let blocks: LibraryBlocks = { ...EMPTY_LIBRARY, ids: new Set(), sources: new Map(), prefixes: [] };
     try {
       const text = capField(`${lens.pattern} ${seedText || lens.promptHint}`, 1000);
       const [vector] = await router.embed([text], { runId: run.id, promptVersion: 'library-query.v1' });
       if (vector) {
         const ctx = await ideationContext(db, vector, { countries: market.countries, ...LIBRARY_LIMITS });
-        blocks = {
-          ...renderIdeationContext(ctx),
-          ids: new Set([...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing].map((x) => x.id)),
-        };
+        const shown = [...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing];
+        const sources: Known = new Map();
+        const prefixes: [string, string][] = [];
+        for (const e of shown) {
+          sources.set(e.id.toLowerCase(), e.id);
+          const url = e.url.trim().toLowerCase();
+          if (!url) continue;
+          if (!sources.has(url)) sources.set(url, e.id);
+          const rendered = capField(e.url, RENDERED_URL_MAX).toLowerCase();
+          if (!sources.has(rendered)) sources.set(rendered, e.id);
+          if (url.length > RENDERED_URL_MAX) prefixes.push([rendered, e.id]);
+        }
+        blocks = { ...renderIdeationContext(ctx), ids: new Set(shown.map((x) => x.id)), sources, prefixes };
       }
     } catch (err) {
       log(`ideate: library context unavailable for lens ${lens.id} (${errorMessage(err)})`);
@@ -311,7 +395,8 @@ export async function ideate(
   const generate = async (lens: LensRow, count: number, o: { withSegments: boolean; gap: string }): Promise<IdeaInsert[]> => {
     const library = await libraryFor(lens);
     // Titles from earlier lenses in this run, so each lens steers away from buyers/problems already covered.
-    const priorTitles = pending.map((v) => `- ${capField(v.title, 200)}`).join('\n');
+    // Each shows its audience and business model, so later lenses can vary the mix before any re-ask.
+    const priorTitles = pending.map((v) => `- ${capField(v.title, 200)} (${v.audience}, ${v.businessModel})`).join('\n');
     const out = await router.structured(
       'ideate',
       {
@@ -339,7 +424,8 @@ export async function ideate(
     );
     const valid = (out.ideas as (LensIdea | undefined)[]).filter((i): i is LensIdea => !!i);
     dropped += out.ideas.length - valid.length;
-    const known = new Set([...library.ids, ...signalUrls]);
+    const known: Known = new Map(library.sources);
+    for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
     return valid.slice(0, count).map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, ...f }) => {
       const cited = new Set(urls);
       return {
@@ -347,8 +433,8 @@ export async function ideate(
         lensId: lens.id,
         origin: 'generated' as const,
         ...f,
-        valueToUser: ground(valueToUser, 400, known),
-        priceHint: ground(priceHint, 300, known),
+        valueToUser: ground(valueToUser, 400, known, library.prefixes),
+        priceHint: ground(priceHint, 300, known, library.prefixes),
         // Only library entries this lens was shown; invented ids are not stored.
         libraryItemIds: [...new Set(libraryItemIds.filter((id) => library.ids.has(id)))],
         signalIds: passed.filter((s) => cited.has(s.url)).map((s) => s.id),
@@ -372,13 +458,7 @@ export async function ideate(
     const needModels = Math.max(0, minModels - before.models);
     const k = Math.min(REASK_MAX_IDEAS, Math.max(before.short.consumer, needModels, 1));
     const needConsumer = Math.min(k, Math.max(0, Math.ceil(MIN_CONSUMER_SHARE * (n + k) - consumerNow - EPS)));
-    // A consumer lens from the run; otherwise (not for lens seeds) a seeded active consumer lens; else the first lens.
-    const consumerPool = allLenses.filter((l) => l.active && l.audience === 'consumer').sort(byId);
-    const lens = chosen.find((l) => l.audience === 'consumer')
-      ?? (!cfg.lensIds && consumerPool.length
-        ? consumerPool[Math.floor(seededRandom(`${run.id}:reask`)() * consumerPool.length)]
-        : undefined)
-      ?? chosen[0]!;
+    const lens = pickReaskLens(chosen, allLenses, cfg, seededRandom(`${run.id}:reask`));
     try {
       pending.push(...await generate(lens, k, {
         withSegments: true,

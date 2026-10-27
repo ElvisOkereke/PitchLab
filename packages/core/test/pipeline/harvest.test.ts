@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { signals, dataCalls, knowledgeItems, knowledgeSources } from '../../src/db/schema';
 import { CA_US } from '../../src/db/seed';
 import { harvest, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
+import { pickConsumerSegments } from '../../src/pipeline/ideate';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { DEFAULT_WP_SLUGS } from '../../src/tools/sources/wordpress';
 import { fetchPage } from '../../src/tools/fetch-page';
@@ -402,10 +403,10 @@ describe('harvest', () => {
 });
 
 describe('harvest library signals', () => {
-  const lib = async (db: Awaited<ReturnType<typeof testDb>>, o: { url: string; quote?: string; verified?: boolean; voice?: 'operator' | 'neutral' | 'vendor'; kind?: 'problem' | 'pricing'; vec?: number[]; domain?: string; title?: string; countries?: string[] }) => {
+  const lib = async (db: Awaited<ReturnType<typeof testDb>>, o: { url: string; quote?: string; verified?: boolean; voice?: 'operator' | 'neutral' | 'vendor'; kind?: 'problem' | 'pricing'; vec?: number[]; domain?: string; title?: string; countries?: string[]; audience?: 'business' | 'consumer' | 'both' }) => {
     const quote = o.quote ?? `library quote for ${o.url}`;
     const r = await upsertKnowledgeItem(db, {
-      kind: o.kind ?? 'problem', title: o.title ?? `T ${o.url}`, summary: 'S', quote, audience: 'business',
+      kind: o.kind ?? 'problem', title: o.title ?? `T ${o.url}`, summary: 'S', quote, audience: o.audience ?? 'business',
       countries: o.countries ?? ['US'], industries: ['retail'], voice: o.voice ?? 'operator', facts: o.kind === 'pricing' ? {} : { persona: 'p' },
       source: { url: o.url, domain: o.domain ?? new URL(o.url).hostname, sourceType: 'hn', quote, quoteVerified: o.verified ?? true },
     } as never, o.vec ?? unit(0), {});
@@ -553,6 +554,32 @@ describe('harvest library signals', () => {
     expect(queries).toHaveLength(2);
     expect(queries[0]).not.toBe(queries[1]);
     expect(queries[0]).not.toBe('small business and consumer problems');
+  });
+
+  it('open seeds also query the library with the run consumer segments (the ones ideate shows), so consumer entries reach the signals', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const segs = pickConsumerSegments(run.id);
+    const consumerItem = await lib(db, { url: 'https://renters.test/1', audience: 'consumer', vec: unit(3) });
+    const queries: string[] = [];
+    const embed = (t: string[]) => { queries.push(t[0]!); return [t[0]!.includes(segs[0]!) ? unit(3) : unit(0)]; };
+    const router = fakeRouter({ research: { harvest: Array.from({ length: 6 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
+    const out = await harvest(deps(db, router), run);
+    expect(queries).toHaveLength(1);
+    for (const s of segs) expect(queries[0]).toContain(s);
+    const rows = await db.select().from(signals).where(eq(signals.knowledgeItemId, consumerItem));
+    expect(rows).toHaveLength(1);
+    expect(out.signalIds).toContain(rows[0]!.id);
+  });
+
+  it('sector seeds query the library with their sectors only', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['plumbing'] }));
+    const queries: string[] = [];
+    const embed = (t: string[]) => { queries.push(t[0]!); return [unit(0)]; };
+    const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: { extract: [{ signals: [] }] }, embed });
+    await harvest(deps(db, router), run);
+    expect(queries).toEqual(['plumbing']);
   });
 
   it('logs when the library has no matching entries', async () => {

@@ -102,6 +102,21 @@ describe('ideate prompt', () => {
     expect(text).toContain('`toStart`: 1 to 5, lower is easier');
     expect(text).toContain('`toCopy`: 1 to 5, higher is harder');
   });
+  it('states the field limits and asks for bare ids', () => {
+    expect(render()).toContain(
+      'Limits: `revenueMechanics` up to 400 characters, `valueToUser.basis` up to 400, `priceHint.basis` up to 300, ' +
+        '`toStartWhy` and `toCopyWhy` up to 300 each, and at most 10 `libraryItemIds`. Write ids bare, without the square brackets.',
+    );
+  });
+  it('asks for a yearly or monthly price per user, converting usage and percentage pricing, and our revenue per user for free-to-user models', () => {
+    const text = render();
+    expect(text).toContain(
+      '`priceHint` is the equivalent price per user or buyer, with `unit` "year" or "month", even for `usage`, `transaction_fee`, `marketplace` or percentage pricing: convert it and explain the conversion in `basis`.',
+    );
+    expect(text).toContain(
+      'For `ads`, `affiliate` and `data_sales`, where the user pays nothing, set `priceHint` to the revenue we earn per user per year (`unit` "year") and say so in `basis`.',
+    );
+  });
   it('places the fill-the-gap instruction when given', () => {
     expect(render('Fill the gap. X')).toContain('Fill the gap. X');
   });

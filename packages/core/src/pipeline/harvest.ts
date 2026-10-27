@@ -10,6 +10,7 @@ import type { RawItem } from '../tools/sources/types';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { decodeEntities } from '../tools/entities';
 import { logDataCall } from '../tools/data-calls';
+import { pickConsumerSegments } from './ideate';
 import { phrasesFor } from './pain-phrases';
 import type { RunConfig, StageDeps } from './types';
 
@@ -181,7 +182,7 @@ ${wrapUntrusted('idea', idea)}`,
   const libraryQuery = cfg.seedType === 'idea' ? clean(cfg.ideaText ?? '', 500)
     : cfg.seedType === 'sector' ? (cfg.sectors ?? []).join(', ')
     : cfg.seedType === 'lens' ? libraryHints.join(' ')
-    : openSectors.join(', ');
+    : [...openSectors, ...pickConsumerSegments(run.id)].join(', '); // open seeds: the run's consumer segments too (as ideate shows)
   const libraryIds = await librarySignals({ db, router, log }, run.id, cfg.marketId, market.countries, clean(libraryQuery, 1000) || OPEN_LIBRARY_QUERY);
 
   const items: RawItem[] = [];

@@ -77,14 +77,16 @@ For each idea give: title, oneLiner, buyer (who pays, and why that buyer), probl
 - `businessModel`: exactly one of `subscription`, `one_off`, `usage`, `marketplace`, `transaction_fee`, `data_sales`, `ads`, `affiliate`, `licensing`, `freemium`, `service_plus_software`.
 - `revenueMechanics`: who pays, for what, and how often (under 400 characters).
 - `valueToUser`: the dollar value to the user per year. `kind` is `earn` (money earned), `save` (money saved), `time` (time saved) or `risk` (risk avoided, as expected loss). `amountPerYear` is a number. `basis` says how you worked it out; for `time`, state the hours and the hourly rate.
-- `priceHint`: what the user would pay. `amount` is a number, `unit` is the billing unit (for example "month", "year", "one-time", "per transaction", "% of savings"), and `basis` says why that price.
-- Sources: `valueToUser.source` and `priceHint.source` must be the id of a library entry shown above (the id in square brackets) or the exact url of a signal above. Anchor prices and values on <pricing> entries where relevant. If you have no source, leave `source` out and state the assumption in `basis`, starting with "Assumption:".
+- `priceHint`: what the user would pay. `amount` is a number, `unit` is "year" or "month" (or "one-time" for a `one_off` purchase), and `basis` says why that price. `priceHint` is the equivalent price per user or buyer, with `unit` "year" or "month", even for `usage`, `transaction_fee`, `marketplace` or percentage pricing: convert it and explain the conversion in `basis`. For example, 20% of $300 saved a year is $60 per year. For `ads`, `affiliate` and `data_sales`, where the user pays nothing, set `priceHint` to the revenue we earn per user per year (`unit` "year") and say so in `basis`.
+- Sources: `valueToUser.source` and `priceHint.source` must be the id of a library entry shown above (the id inside the square brackets, written without them) or the exact url of a signal above. Anchor prices and values on <pricing> entries where relevant. If you have no source, leave `source` out and state the assumption in `basis`, starting with "Assumption:".
 - `barriers`: both barriers to entry, each scored 1 to 5 with a reason.
   - `toStart`: 1 to 5, lower is easier. How hard it is for the owner to build and launch (data, money, skills, approvals needed). `toStartWhy` gives the reason.
   - `toCopy`: 1 to 5, higher is harder. How hard it is for a competitor to copy once it works (accumulated data, network effects, switching costs, know-how). `toCopyWhy` gives the reason.
   - `soloBuildable`: true if one developer can build the first version.
   "Easy to start, hard to copy" (low `toStart`, high `toCopy`) is preferred; score honestly.
 - `libraryItemIds`: the ids of the library entries (from <already-sold>, <lessons> or <pricing>) this idea relied on, up to 10; empty if none.
+
+Limits: `revenueMechanics` up to 400 characters, `valueToUser.basis` up to 400, `priceHint.basis` up to 300, `toStartWhy` and `toCopyWhy` up to 300 each, and at most 10 `libraryItemIds`. Write ids bare, without the square brackets.
 
 mechanism is how the idea mainly delivers value. Choose exactly one of:
 - `monitoring`: watches something and alerts when it breaks or drifts.

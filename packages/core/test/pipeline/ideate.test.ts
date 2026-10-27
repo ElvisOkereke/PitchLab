@@ -4,7 +4,7 @@ import { gateVerdicts, ideas, lenses, signals } from '../../src/db/schema';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 import {
-  checkMix, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, seededRandom, selectLenses,
+  checkMix, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, pickConsumerSegments, pickReaskLens, seededRandom, selectLenses,
 } from '../../src/pipeline/ideate';
 import { defaultRunConfig, type RunConfig } from '../../src/pipeline/types';
 import { fetchPage } from '../../src/tools/fetch-page';
@@ -427,7 +427,9 @@ describe('ideate', () => {
     expect(p2).toContain('Use at least 3 business models this run has not used yet, from: `one_off`, `usage`, `marketplace`');
     expect(p2).not.toMatch(/from: [^\n]*`subscription`/);
     expect(block(p2, 'focus')).toMatch(/Consumer segments: /);
-    expect(block(p2, 'prior-ideas')).toBe('- T0\n- T1\n- T2\n- T3');
+    expect(block(p2, 'prior-ideas')).toBe(
+      '- T0 (business, subscription)\n- T1 (business, subscription)\n- T2 (business, subscription)\n- T3 (business, subscription)',
+    );
 
     const stored = await t.db.select().from(ideas);
     expect(stored).toHaveLength(7);
@@ -500,18 +502,152 @@ describe('ideate', () => {
     const owner = { title: 'Lead-flow', oneLiner: 'o', buyer: 'agencies', problem: 'p', solution: 's', ...tags };
     const withMoney = { ...owner, audience: 'both', businessModel: 'one_off', revenueMechanics: 'One payment per audit',
       valueToUser: { kind: 'earn', amountPerYear: 5000, basis: 'Assumption: two recovered jobs' },
-      priceHint: { amount: 99, unit: 'one-time', basis: 'Assumption' },
+      priceHint: { amount: 99, unit: 'one-time', basis: 'Agency rate', source: 'https://x.test/a' },
       barriers: { toStart: 1, toStartWhy: 'w', toCopy: 2, toCopyWhy: 'w', soloBuildable: true } };
     const t = await setup(defaultRunConfig({ seedType: 'idea', ideaText: 'Lead-flow verification' }), { structured: { ideate: [owner, withMoney] } });
     await ideate(t.deps, t.run, { signalIds: [] });
     expect((await t.db.select().from(ideas))[0]).toMatchObject({
       audience: null, businessModel: null, revenueMechanics: null, valueToUser: null, priceHint: null, barriers: null, libraryItemIds: null,
     });
-    await ideate(t.deps, t.run, { signalIds: [] });
-    expect((await t.db.select().from(ideas))[0]).toMatchObject({
-      audience: 'both', businessModel: 'one_off', revenueMechanics: 'One payment per audit', priceHint: { amount: 99, unit: 'one-time' },
+    await ideate(t.deps, t.run, { signalIds: t.rows.map((r) => r.id) });
+    const [stored] = await t.db.select().from(ideas);
+    expect(stored).toMatchObject({
+      audience: 'both', businessModel: 'one_off', revenueMechanics: 'One payment per audit',
       barriers: { toStart: 1, toCopy: 2 }, libraryItemIds: null,
     });
+    // Owner money claims are grounded with nothing known: an unsourced or cited value becomes a stated assumption.
+    expect(stored!.valueToUser).toEqual({ kind: 'earn', amountPerYear: 5000, basis: 'Assumption: two recovered jobs' });
+    expect(stored!.priceHint).toEqual({ amount: 99, unit: 'one-time', basis: 'Assumption: Agency rate' });
+  });
+
+  // ---- fix round 1 ----
+
+  it('grounds sources on shown library entries by id (any case, bracketed) or url (full or as rendered), never on another lens\'s entries', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 4 });
+    // Lens 2's embedding fails, so it is shown no library entries at all.
+    const script: FakeScript = {
+      structured: { ideate: [] },
+      embed: (texts) => texts.map((x) => { if (x.includes('pat2')) throw new Error('embed down'); return unit(0); }),
+    };
+    const t = await setup(config, script);
+    await t.db.insert(lenses).values([
+      { id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' },
+      { id: 'tl2', name: 'L2', pattern: 'pat2', promptHint: 'hint2' },
+    ]);
+    const longUrl = `https://prices.example/${'a'.repeat(120)}`;
+    const add = async (kind: 'startup' | 'pricing', facts: unknown, url: string, dim: number) => {
+      const v = unit(0).map(() => 0); v[0] = 0.8; v[dim] = 0.6;
+      return (await upsertKnowledgeItem(t.db, {
+        kind, title: `K${dim}`, summary: 'S', quote: `q${dim}`, audience: 'consumer', countries: ['US'], industries: [], facts,
+        source: { url, domain: new URL(url).hostname, sourceType: 'web', quote: `q${dim}`, quoteVerified: true },
+      }, v, {})).itemId;
+    };
+    const S = await add('startup', { name: 'Rentify', whatItDoes: 'tracks rent', businessModel: 'saas', outcome: 'active' }, 'https://rentify.example/', 1);
+    const P = await add('pricing', { product: 'RentPro', pricePoints: [{ amount: 12, currency: 'USD', unit: 'month' }], buyer: 'renters', complaints: [] }, longUrl, 2);
+    const v = (source: string) => ({ kind: 'save', amountPerYear: 300, basis: 'Two fees a year', source });
+    const ph = (source: string) => ({ amount: 4, unit: 'month', basis: 'Like RentPro', source });
+    script.structured!.ideate!.push(
+      { ideas: [
+        mk(1, [], { title: 'A1', valueToUser: v(`[${S.toUpperCase()}]`), priceHint: ph(longUrl.slice(0, 80)), libraryItemIds: [`[${S.toUpperCase()}]`, P] }).ideas[0],
+        mk(1, [], { title: 'A2', valueToUser: v(` ${S} `), priceHint: ph(longUrl) }).ideas[0],
+      ] },
+      { ideas: [mk(1, [], { title: 'B1', valueToUser: v(S), priceHint: ph(longUrl), libraryItemIds: [S] }).ideas[0], mk(1, [], { title: 'B2' }).ideas[0]] },
+    );
+    await ideate(t.deps, t.run, { signalIds: [] });
+    const stored = await t.db.select().from(ideas);
+    const get = (title: string) => stored.find((i) => i.title === title)!;
+    expect(get('A1').valueToUser).toMatchObject({ source: S, basis: 'Two fees a year' });
+    expect(get('A1').priceHint).toMatchObject({ source: P, basis: 'Like RentPro' });
+    expect(get('A1').libraryItemIds).toEqual([S, P]);
+    expect(get('A2').valueToUser!.source).toBe(S);
+    expect(get('A2').priceHint!.source).toBe(P);
+    expect(get('B1').valueToUser).toEqual({ kind: 'save', amountPerYear: 300, basis: 'Assumption: Two fees a year' });
+    expect(get('B1').priceHint).toEqual({ amount: 4, unit: 'month', basis: 'Assumption: Like RentPro' });
+    expect(get('B1').libraryItemIds).toEqual([]);
+  });
+
+  it('truncates over-long v8 text fields and unwraps bracketed ids instead of dropping the idea', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const script: FakeScript = { structured: { ideate: [] }, embed: (texts) => texts.map(() => unit(0)) };
+    const t = await setup(config, script);
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const S = (await upsertKnowledgeItem(t.db, {
+      kind: 'startup', title: 'K', summary: 'S', quote: 'q', audience: 'consumer', countries: ['US'], industries: [],
+      facts: { name: 'Rentify', whatItDoes: 'tracks rent', businessModel: 'saas', outcome: 'active' },
+      source: { url: 'https://rentify.example/', domain: 'rentify.example', sourceType: 'web', quote: 'q', quoteVerified: true },
+    }, unit(0), {})).itemId;
+    const filler = Array.from({ length: 11 }, (_, i) => `00000000-0000-4000-8000-0000000000${String(i).padStart(2, '0')}`);
+    script.structured!.ideate!.push(mk(1, [], {
+      revenueMechanics: 'r'.repeat(450),
+      valueToUser: { kind: 'save', amountPerYear: 1, basis: `Assumption: ${'b'.repeat(500)}`, source: 's'.repeat(320) },
+      priceHint: { amount: 1, unit: 'u'.repeat(70), basis: `Assumption: ${'p'.repeat(400)}` },
+      barriers: { toStart: 2, toStartWhy: 'w'.repeat(320), toCopy: 4, toCopyWhy: 'c'.repeat(310), soloBuildable: true },
+      libraryItemIds: [`[${S}]`, ...filler],
+    }));
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.dropped).toBe(0);
+    const [row] = await t.db.select().from(ideas);
+    expect(row!.revenueMechanics).toHaveLength(400);
+    expect(row!.valueToUser!.basis).toHaveLength(400);
+    expect(row!.valueToUser!.source).toBeUndefined();
+    expect(row!.priceHint!.unit).toHaveLength(60);
+    expect(row!.priceHint!.basis).toHaveLength(300);
+    expect(row!.barriers!.toStartWhy).toHaveLength(300);
+    expect(row!.barriers!.toCopyWhy).toHaveLength(300);
+    expect(row!.libraryItemIds).toEqual([S]);
+  });
+
+  it('shows each earlier idea\'s audience and business model in <prior-ideas>', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 2 });
+    const first = mk(1, [], { title: 'Side gig ads', audience: 'consumer', businessModel: 'ads' });
+    const t = await setup(config, { structured: { ideate: [first, mk(1, [], { audience: 'business' })] } });
+    await t.db.insert(lenses).values([
+      { id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' },
+      { id: 'tl2', name: 'L2', pattern: 'pat2', promptHint: 'hint2' },
+    ]);
+    await ideate(t.deps, t.run, { signalIds: [] });
+    expect(block(structuredPrompts(t.router)[1]!, 'prior-ideas')).toBe('- Side gig ads (consumer, ads)');
+  });
+
+  it('a sector run\'s re-ask uses one of the run\'s consumer lenses', async () => {
+    const config = defaultRunConfig({ seedType: 'sector', sectors: ['plumbing'], ideaCount: 6 });
+    const biz = () => mk(1, [], { audience: 'business', businessModel: 'subscription' });
+    const t = await setup(config, { structured: { ideate: [...Array.from({ length: 6 }, biz), { ideas: [] }] } });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(t.router);
+    expect(prompts).toHaveLength(7);
+    const reask = prompts[6]!;
+    expect(reask).toContain('Fill the gap.');
+    expect(CONSUMER_LENSES.some((l) => reask.includes(`Pattern: ${l.pattern}`))).toBe(true);
+  });
+});
+
+describe('pickReaskLens', () => {
+  const L = (id: string, audience: 'business' | 'consumer' | 'any', active = true) => ({ id, audience, active });
+  const b0 = L('b0', 'business'); const b1 = L('b1', 'business'); const c0 = L('c0', 'consumer'); const c1 = L('c1', 'consumer');
+  const all = [b0, b1, c0, c1, L('c-off', 'consumer', false)];
+
+  it('prefers a consumer lens the run already used', () => {
+    expect(pickReaskLens([b0, c1, b1], all, { seedType: 'open' }, seededRandom('r'))).toBe(c1);
+  });
+  it('otherwise takes a seeded active consumer lens from the pool (not for lens seeds)', () => {
+    const got = pickReaskLens([b0, b1], all, { seedType: 'sector' }, seededRandom('r'));
+    expect([c0, c1]).toContain(got);
+    expect(pickReaskLens([b0, b1], all, { seedType: 'sector' }, seededRandom('r'))).toBe(got);
+  });
+  it('otherwise the run\'s first lens: lens seeds keep exactly their lenses, and an empty consumer pool falls back too', () => {
+    expect(pickReaskLens([b1, b0], all, { seedType: 'lens', lensIds: ['b1', 'b0'] }, seededRandom('r'))).toBe(b1);
+    expect(pickReaskLens([b1, b0], [b0, b1], { seedType: 'open' }, seededRandom('r'))).toBe(b1);
+  });
+});
+
+describe('pickConsumerSegments', () => {
+  it('is the run\'s seeded 5 consumer segments, the same ones ideate shows', () => {
+    const segs = pickConsumerSegments('run-1');
+    expect(segs).toHaveLength(5);
+    expect(new Set(segs).size).toBe(5);
+    for (const s of segs) expect(CONSUMER_SEGMENTS).toContain(s);
+    expect(pickConsumerSegments('run-1')).toEqual(segs);
   });
 });
 
