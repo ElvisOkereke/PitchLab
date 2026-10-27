@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { CaseSections } from '../case/schema';
+import type { ValueToUser, PriceHint, Barriers } from '../pipeline/business-models';
 import type { RunConfig } from '../pipeline/types';
 import type { ValidationJobOptions } from '../dashboard/validation-jobs';
 import type { StepResult } from '../validation/run';
@@ -39,6 +40,8 @@ export const lenses = pgTable('lenses', {
   promptHint: text('prompt_hint').notNull(),
   active: boolean('active').notNull().default(true),
   version: integer('version').notNull().default(1),
+  /** Who the lens is for: 'business', 'consumer' or 'any'. */
+  audience: text('audience').$type<'business' | 'consumer' | 'any'>().notNull().default('business'),
   createdAt: createdAt(),
 });
 
@@ -133,6 +136,16 @@ export const ideas = pgTable('ideas', {
   functionalGap: text('functional_gap'),
   /** Incumbents ideate says it knows (model claim); null for owner ideas and ideas before tuning-4. */
   knownIncumbents: jsonb('known_incumbents').$type<string[]>(),
+  /** Who pays: 'business', 'consumer' or 'both'; null for ideas from before the generation rebuild. */
+  audience: text('audience'),
+  /** One of BUSINESS_MODELS; null reads as 'subscription'. */
+  businessModel: text('business_model'),
+  revenueMechanics: text('revenue_mechanics'),
+  valueToUser: jsonb('value_to_user').$type<ValueToUser>(),
+  priceHint: jsonb('price_hint').$type<PriceHint>(),
+  barriers: jsonb('barriers').$type<Barriers>(),
+  /** Research library items the idea drew on. */
+  libraryItemIds: uuid('library_item_ids').array(),
   signalIds: uuid('signal_ids').array().notNull(),
   embedding: vector('embedding', { dimensions: 1536 }),
   screenScores: jsonb('screen_scores').$type<unknown>(),

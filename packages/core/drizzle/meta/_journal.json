@@ -71,6 +71,13 @@
       "when": 1793036734073,
       "tag": "0009_research_library",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793141909370,
+      "tag": "0010_generation_rebuild",
+      "breakpoints": true
     }
   ]
 }

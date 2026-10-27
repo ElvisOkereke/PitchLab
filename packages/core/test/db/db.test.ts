@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import { sql, cosineDistance } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
-import { seedDefaults } from '../../src/db/seed';
+import { seedDefaults, CONSUMER_SEGMENTS } from '../../src/db/seed';
 import { cases, claims, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
 
 describe('db', () => {
   it('migrates, seeds idempotently, and supports vector similarity', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    expect(await db.select().from(lenses)).toHaveLength(8);
+    expect(await db.select().from(lenses)).toHaveLength(14);
     expect((await db.select().from(markets))[0].currency).toBe('USD');
     const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
     const v = Array(1536).fill(0);
@@ -16,6 +16,31 @@ describe('db', () => {
     await db.insert(ideas).values({ runId: run.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], embedding: v, status: 'candidate' });
     const rows = await db.select({ sim: sql<number>`1 - (${cosineDistance(ideas.embedding, v)})` }).from(ideas);
     expect(rows[0].sim).toBeCloseTo(1);
+  });
+
+  it('seeds six consumer lenses and leaves the rest as business', async () => {
+    const db = await testDb();
+    await seedDefaults(db);
+    const rows = await db.select().from(lenses);
+    const consumer = rows.filter((l) => l.audience === 'consumer');
+    expect(consumer).toHaveLength(6);
+    expect(consumer.every((l) => l.id.startsWith('consumer-'))).toBe(true);
+    expect(consumer.map((l) => l.id)).toEqual(expect.arrayContaining(['consumer-earn-side', 'consumer-save-auto']));
+    expect(rows.filter((l) => l.audience === 'business')).toHaveLength(8);
+    expect(CONSUMER_SEGMENTS.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('stores the new idea money and barrier fields', async () => {
+    const db = await testDb();
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
+    const [idea] = await db.insert(ideas).values({
+      runId: run.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], status: 'candidate',
+      audience: 'consumer', businessModel: 'freemium', revenueMechanics: 'free tier, paid upgrade',
+      valueToUser: { kind: 'save', amountPerYear: 300, basis: 'x' }, priceHint: { amount: 5, unit: 'month', basis: 'y' },
+      barriers: { toStart: 2, toStartWhy: 'a', toCopy: 3, toCopyWhy: 'b', soloBuildable: true }, libraryItemIds: [],
+    }).returning();
+    expect(idea).toMatchObject({ audience: 'consumer', businessModel: 'freemium', libraryItemIds: [] });
+    expect(idea.barriers?.soloBuildable).toBe(true);
   });
 
   it('stores the needs_review claim status with a review note', async () => {

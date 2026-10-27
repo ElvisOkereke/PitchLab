@@ -67,8 +67,61 @@ export const LENSES = [
   },
 ];
 
+const CONSUMER = 'consumer' as const;
+
+export const CONSUMER_LENSES = [
+  {
+    id: 'consumer-earn-side',
+    name: 'Earn on the side',
+    audience: CONSUMER,
+    pattern: 'Help an individual earn extra income from a skill, asset or spare time they already have',
+    promptHint: 'Find people in the signals who want extra income from something they already own or can do, and propose a product that gets them paid, with a clear take rate or fee.',
+  },
+  {
+    id: 'consumer-save-auto',
+    name: 'Save money automatically',
+    audience: CONSUMER,
+    pattern: 'Cut an individual’s recurring bills or fees without ongoing effort, priced as a small cut of the savings or a low flat fee',
+    promptHint: 'Spot recurring costs people overpay for (bills, subscriptions, fees, insurance) and propose a product that finds and captures the saving automatically.',
+  },
+  {
+    id: 'consumer-life-stage',
+    name: 'Life-stage pain',
+    audience: CONSUMER,
+    pattern: 'A predictable life event (new baby, move, divorce, retirement, caring for a parent) creates a burst of paperwork, cost or stress',
+    promptHint: 'Find the pain that arrives with a specific life stage or event and propose a focused product that people will pay for at exactly that moment.',
+  },
+  {
+    id: 'consumer-creator-solo',
+    name: 'Creator and solo-worker tools',
+    audience: CONSUMER,
+    pattern: 'Freelancers, creators and gig workers run a business of one and pay for tools out of their own pocket',
+    promptHint: 'Find chores that creators, freelancers and gig workers do by hand (invoicing, taxes, scheduling, audience growth) and propose a tool they would pay for personally.',
+  },
+  {
+    id: 'consumer-leapfrog',
+    name: 'Leapfrog markets',
+    audience: CONSUMER,
+    pattern: 'A proven product from one country, adapted to a market where it does not yet exist or fits badly',
+    promptHint: 'Look for a product that works well in one market and is missing or poorly served in another, and propose a local version that individuals there would pay for.',
+  },
+  {
+    id: 'consumer-ai-chore',
+    name: 'AI assistant for a personal chore',
+    audience: CONSUMER,
+    pattern: 'A dull personal task (forms, disputes, planning, booking, comparison shopping) done by an AI assistant for a fee',
+    promptHint: 'Find tedious personal chores in the signals that an AI assistant could finish end to end, and propose a paid product that does the whole job for one person.',
+  },
+];
+
+export const CONSUMER_SEGMENTS = [
+  'new parents', 'students', 'renters', 'first-time homebuyers', 'retirees',
+  'freelancers', 'gig workers', 'content creators', 'immigrants and newcomers', 'pet owners',
+  'caregivers of aging parents', 'small landlords', 'job seekers', 'hobbyists', 'people moving house',
+];
+
 /** Idempotent; never overwrites rows (lenses are editable in Settings). */
 export async function seedDefaults(db: Db): Promise<void> {
   await db.insert(markets).values(CA_US).onConflictDoNothing({ target: markets.id });
-  await db.insert(lenses).values(LENSES).onConflictDoNothing({ target: lenses.id });
+  await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES]).onConflictDoNothing({ target: lenses.id });
 }

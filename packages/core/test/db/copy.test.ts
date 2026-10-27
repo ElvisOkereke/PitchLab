@@ -91,7 +91,7 @@ describe('copyDatabase', () => {
     const dst = await testDb();
     await dst.insert(lenses).values({ id: 'extra', name: 'x', pattern: 'p', promptHint: 'h' });
     const r = await copyDatabase(src, dst);
-    expect(r.find((t) => t.table === 'lenses')).toMatchObject({ source: 8, inserted: 0, target: 9, ok: false });
+    expect(r.find((t) => t.table === 'lenses')).toMatchObject({ source: 14, inserted: 0, target: 15, ok: false });
     expect(r.filter((t) => !t.ok).map((t) => t.table)).toEqual(['lenses']);
   });
 
