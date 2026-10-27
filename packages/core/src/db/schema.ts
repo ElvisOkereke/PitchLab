@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import type { CaseSections } from '../case/schema';
-import type { ValueToUser, PriceHint, Barriers } from '../pipeline/business-models';
+import type { ValueToUser, PriceHint, Barriers, IdeaAudience, BusinessModel } from '../pipeline/business-models';
 import type { RunConfig } from '../pipeline/types';
 import type { ValidationJobOptions } from '../dashboard/validation-jobs';
 import type { StepResult } from '../validation/run';
@@ -137,9 +137,9 @@ export const ideas = pgTable('ideas', {
   /** Incumbents ideate says it knows (model claim); null for owner ideas and ideas before tuning-4. */
   knownIncumbents: jsonb('known_incumbents').$type<string[]>(),
   /** Who pays: 'business', 'consumer' or 'both'; null for ideas from before the generation rebuild. */
-  audience: text('audience'),
+  audience: text('audience').$type<IdeaAudience>(),
   /** One of BUSINESS_MODELS; null reads as 'subscription'. */
-  businessModel: text('business_model'),
+  businessModel: text('business_model').$type<BusinessModel>(),
   revenueMechanics: text('revenue_mechanics'),
   valueToUser: jsonb('value_to_user').$type<ValueToUser>(),
   priceHint: jsonb('price_hint').$type<PriceHint>(),

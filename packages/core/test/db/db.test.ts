@@ -27,7 +27,10 @@ describe('db', () => {
     expect(consumer.every((l) => l.id.startsWith('consumer-'))).toBe(true);
     expect(consumer.map((l) => l.id)).toEqual(expect.arrayContaining(['consumer-earn-side', 'consumer-save-auto']));
     expect(rows.filter((l) => l.audience === 'business')).toHaveLength(8);
-    expect(CONSUMER_SEGMENTS.length).toBeGreaterThanOrEqual(12);
+    expect(CONSUMER_SEGMENTS).toHaveLength(17);
+    expect(new Set(CONSUMER_SEGMENTS).size).toBe(CONSUMER_SEGMENTS.length);
+    for (const l of consumer) expect(l.promptHint).toMatch(/individual/);
+    expect(consumer.find((l) => l.id === 'consumer-ai-chore')?.promptHint).toMatch(/attention/);
   });
 
   it('stores the new idea money and barrier fields', async () => {

@@ -44,4 +44,21 @@ describe('valueMultiple', () => {
     expect(valueMultiple(value, price(5, 'per use'), 20)).toBe(12);
     expect(valueMultiple(value, price(0, 'month'))).toBeNull();
   });
+  it.each([
+    ['per seat/month', 12], ['user/month', 12], ['/mo', 12], ['annually', 1], ['yearly', 1], ['lifetime', 1],
+    ['bi-weekly', 26], ['biweekly', 26], ['fortnight', 26], ['quarterly', 4], ['semi-annual', 2], ['half-year', 2],
+  ])('unit %s uses %i periods', (unit, n) => {
+    expect(valueMultiple(value, price(10, unit))).toBeCloseTo(1200 / (10 * n));
+  });
+  it.each(['every 2 weeks', 'per 3 months', 'per 6 months', 'per year, billed monthly', '$10/month billed annually', 'seat'])(
+    'unit %s is null', (unit) => { expect(valueMultiple(value, price(10, unit))).toBeNull(); });
+  it('does not match once/flat inside other words', () => {
+    expect(valueMultiple(value, price(10, 'conference'))).toBeNull();
+  });
+  it('rejects negative and infinite prices', () => {
+    expect(valueMultiple(value, price(-5, 'month'))).toBeNull();
+    expect(valueMultiple(value, price(Infinity, 'month'))).toBeNull();
+    expect(PriceHintSchema.safeParse(price(Infinity, 'month')).success).toBe(false);
+    expect(ValueToUserSchema.safeParse({ ...value, amountPerYear: Infinity }).success).toBe(false);
+  });
 });
