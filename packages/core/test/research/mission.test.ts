@@ -746,6 +746,30 @@ describe('buildCollectors', () => {
       expect(qs.at(-1)).toBe('forum complaints');
     });
 
+    it('a 12-query all-web plan without pricing queries reaches at least 25% pricing within the cap', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['pricing'], topic: 'invoice chasing' });
+      const router = mockRouter(db, { plan: webPlan(Array.from({ length: 12 }, (_, i) => `forum thread ${i}`)) });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: {} }, id)).toBe('succeeded');
+      const qs = researchQueries(router);
+      const pricing = qs.filter((q) => /pricing|price/.test(q));
+      expect(pricing.length).toBeGreaterThanOrEqual(Math.ceil(0.25 * qs.length));
+      expect(pricing.length).toBeGreaterThanOrEqual(3);
+      expect(qs.length).toBeLessThanOrEqual(12);
+    });
+
+    it('a full-cap plan with no web queries stays within the cap', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem', 'pricing'], topic: 'invoice chasing' });
+      const hn = signalSource('hn', []);
+      const router = mockRouter(db, { plan: { queries: Array.from({ length: 12 }, (_, i) => ({ source: 'hn', q: `pain ${i}` })) } });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: { hn } }, id)).toBe('succeeded');
+      expect(hn.queries.length + researchQueries(router).length).toBeLessThanOrEqual(12);
+      expect(researchQueries(router).length).toBeGreaterThanOrEqual(2);
+    });
+
     it('appends nothing without the pricing kind', async () => {
       const db = await testDb();
       const id = await insertMission(db, { kinds: ['problem'], topic: 'invoice chasing' });

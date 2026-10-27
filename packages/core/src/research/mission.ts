@@ -253,26 +253,46 @@ type PlannedQuery = { source: MissionSource; q: string };
 
 /**
  * Pricing needs real price points, which only pricing pages carry. Guarantees at least max(2, ceil(25% of web queries))
- * pricing-page web queries by appending deterministic ones built from the topic; the total stays within `max` by
- * dropping trailing non-pricing web queries.
+ * pricing-page web queries by appending as many deterministic ones built from the topic as needed; the total stays within `max` by
+ * dropping trailing non-pricing web queries, then trailing non-web queries.
  */
 function withPricingQueries(queries: PlannedQuery[], topic: string, max: number): PlannedQuery[] {
   const subject = capField(stripInvisible(topic), 120);
-  const extras = [`${subject} software pricing plans per month`, `${subject} tool pricing comparison`];
+  const templates = [
+    `${subject} software pricing plans per month`,
+    `${subject} tool pricing comparison`,
+    `${subject} app subscription price`,
+    `best ${subject} tools pricing`,
+    `${subject} pricing page cost per user`,
+    `${subject} alternatives pricing tiers`,
+    `how much does ${subject} software cost per month`,
+    `${subject} free vs paid plan pricing`,
+    `${subject} annual plan price`,
+    `${subject} enterprise and small business pricing`,
+  ];
   const out = [...queries];
   const isWeb = (x: PlannedQuery) => x.source === 'web';
-  const count = () => out.filter((x) => isWeb(x) && PRICING_QUERY.test(x.q)).length;
+  const isPricingWeb = (x: PlannedQuery) => isWeb(x) && PRICING_QUERY.test(x.q);
+  const count = () => out.filter(isPricingWeb).length;
   const need = () => Math.max(2, Math.ceil(0.25 * out.filter(isWeb).length));
-  for (const q of extras) {
+  for (const q of templates) {
     if (count() >= need()) break;
     if (out.some((x) => isWeb(x) && x.q === q)) continue;
     out.push({ source: 'web', q });
   }
+  // Fit the cap: drop trailing non-pricing web queries first, then the lowest-priority (last) non-web queries.
+  // Dropping non-pricing web queries only lowers the requirement, so the pricing share stays met.
+  const dropLast = (pred: (x: PlannedQuery) => boolean): boolean => {
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (pred(out[i]!)) {
+        out.splice(i, 1);
+        return true;
+      }
+    }
+    return false;
+  };
   while (out.length > max) {
-    let i = out.length - 1;
-    while (i >= 0 && !(isWeb(out[i]!) && !PRICING_QUERY.test(out[i]!.q))) i--;
-    if (i < 0) break;
-    out.splice(i, 1);
+    if (!dropLast((x) => isWeb(x) && !isPricingWeb(x)) && !dropLast((x) => !isWeb(x))) break;
   }
   return out;
 }
