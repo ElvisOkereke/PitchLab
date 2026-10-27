@@ -4,7 +4,7 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 
 ## Set up the research library (Phase 2)
 
-- [ ] **Product Hunt developer token (free).** Used for new products, what they charge, and how they did.
+- [x] **Product Hunt developer token (free).** Done 2026-10-27. Used for new products, what they charge, and how they did.
   1. Sign in and open https://www.producthunt.com/v2/oauth/applications
   2. Create an application. The redirect URL can be `https://localhost:3000/callback`.
   3. Use the **Developer Token** (not the API key or secret) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
