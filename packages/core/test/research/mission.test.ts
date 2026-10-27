@@ -54,6 +54,7 @@ type Script = {
   planCost?: number;
   researchCost?: number;
   extractCost?: number;
+  extractError?: Error;
 };
 
 function mockRouter(db: Db, script: Script): ModelRouter & { calls: Call[] } {
@@ -78,6 +79,7 @@ function mockRouter(db: Db, script: Script): ModelRouter & { calls: Call[] } {
         return req.schema.parse(script.plan);
       }
       await logCall(stage, ctx, script.extractCost ?? 0.01);
+      if (script.extractError) throw script.extractError;
       const make = script.extract ?? defaultEntry;
       const entries = sourcesIn(req.prompt).flatMap((s) => {
         const e = make(s);
@@ -309,7 +311,7 @@ describe('runMission', () => {
   describe('budget allocation', () => {
     const webPage = (i: number) => `https://site${i}.example/post`;
     const webText = (i: number) => `Founder number ${i} says late client payments wreck the cash flow every single month for the agency.`;
-    function setup(db: Db, over: { researchCost: number; extractCost?: number; webCount: number; freeFirst?: boolean; hnItems?: number }) {
+    function setup(db: Db, over: { researchCost: number; extractCost?: number; extractError?: Error; webCount: number; freeFirst?: boolean; hnItems?: number }) {
       const events: string[] = [];
       const hnBase = signalSource('hn', Array.from({ length: over.hnItems ?? 1 }, (_, i) =>
         item('hn', `https://news.ycombinator.com/item?id=${i + 1}`, `${HN_TEXT} Variant ${i}.`)));
@@ -323,6 +325,7 @@ describe('runMission', () => {
         research: Array.from({ length: over.webCount }, (_, i) => ({ text: 'x', sources: [{ url: webPage(i), title: 't', citedText: 'c' }] })),
         researchCost: over.researchCost,
         extractCost: over.extractCost,
+        extractError: over.extractError,
       });
       const pages: Record<string, string> = {};
       for (let i = 0; i < over.webCount; i++) pages[webPage(i)] = webText(i);
@@ -362,6 +365,14 @@ describe('runMission', () => {
       // plan 0.01, then web calls at 0.25 each: 0.01, 0.26, 0.51 -> a 3rd call starts, after it 0.76 >= 0.6 stops
       expect(COLLECT_SHARE).toBe(0.6);
       expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(3);
+    });
+
+    it('fails when web is capped by the collection share and every extract call throws', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { budgetUsd: '1', kinds: ['problem', 'startup'] });
+      const { deps } = setup(db, { researchCost: 0.25, extractCost: 0.001, extractError: new Error('boom'), webCount: 6, freeFirst: true });
+      expect(await runMission(deps, id)).toBe('failed');
+      expect((await mission(db, id)).error).toBe('Extraction failed for every batch.');
     });
 
     it('stops extraction between batches once spend reaches the budget', async () => {

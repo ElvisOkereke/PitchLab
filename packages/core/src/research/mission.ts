@@ -267,10 +267,10 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
   let collectionHit = false;
   const budget = Number(m.budgetUsd);
   /** True (and records the warning once) when the mission's recorded spend has reached its budget. */
-  const overBudget = async (): Promise<boolean> => {
+  const overBudget = async (stage: string): Promise<boolean> => {
     if (!budgetHit && (await missionSpend(db, missionId)) >= budget) {
       budgetHit = true;
-      log(`mission ${missionId}: budget reached during extraction`);
+      log(`mission ${missionId}: budget reached ${stage}`);
     }
     return budgetHit;
   };
@@ -309,7 +309,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const topic = wrapUntrusted('topic', capField(m.topic, 200));
 
     // 1. Plan
-    if (await overBudget()) return finish('succeeded');
+    if (await overBudget('before planning')) return finish('succeeded');
     const planPrompt = loadPrompt('library-plan');
     const plan = await router.structured(
       'research',
@@ -471,7 +471,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     let batchesOk = 0;
     let batchesFailed = 0;
     for (let i = 0; i < texts.length; i += EXTRACT_BATCH) {
-      if (await overBudget()) break;
+      if (await overBudget('during extraction')) break;
       const batch = texts.slice(i, i + EXTRACT_BATCH);
       const shown = batch.map((t) => stripInvisible(t.title ? `${t.title}\n${t.text}` : t.text));
       const blocks = shown.map((s, j) => `Source ${j + 1}:\n${wrapUntrusted('source', capField(s, SOURCE_TEXT_CAP))}`).join('\n\n');
@@ -509,7 +509,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     if (invalid > 0) warn(`extract: ${invalid} invalid draft${invalid === 1 ? '' : 's'} dropped`);
 
     const drafts = [...extracted, ...structured];
-    if (drafts.length === 0 && !budgetHit && !collectionHit) {
+    if (drafts.length === 0 && !budgetHit) {
       if (!anyOk && anyFailed) return finish('failed', 'Every source failed; nothing was collected.');
       if (texts.length > 0 && batchesOk === 0 && batchesFailed > 0) return finish('failed', 'Extraction failed for every batch.');
     }
