@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
-import { buildCollectors, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
+import { buildCollectors, COLLECT_SHARE, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
@@ -52,6 +52,8 @@ type Script = {
   research?: { text: string; sources: Source[] }[];
   extract?: (s: { n: number; text: string }) => Entry | Entry[] | null;
   planCost?: number;
+  researchCost?: number;
+  extractCost?: number;
 };
 
 function mockRouter(db: Db, script: Script): ModelRouter & { calls: Call[] } {
@@ -75,7 +77,7 @@ function mockRouter(db: Db, script: Script): ModelRouter & { calls: Call[] } {
         if (script.plan instanceof Error) throw script.plan;
         return req.schema.parse(script.plan);
       }
-      await logCall(stage, ctx, 0.01);
+      await logCall(stage, ctx, script.extractCost ?? 0.01);
       const make = script.extract ?? defaultEntry;
       const entries = sourcesIn(req.prompt).flatMap((s) => {
         const e = make(s);
@@ -85,7 +87,7 @@ function mockRouter(db: Db, script: Script): ModelRouter & { calls: Call[] } {
     },
     async research(stage, req, ctx) {
       calls.push({ stage, kind: 'research', prompt: req.prompt, ctx, maxSearches: req.maxSearches });
-      await logCall(stage, ctx, 0.01);
+      await logCall(stage, ctx, script.researchCost ?? 0.01);
       return research.shift() ?? { text: '', sources: [] };
     },
     async embed(texts, ctx) {
@@ -298,9 +300,78 @@ describe('runMission', () => {
     expect(m.warnings).toEqual(['Budget reached; stopped early.']);
     expect(Number(m.costUsd)).toBeCloseTo(2.25, 6);
     expect(m.itemsAdded).toBe(0);
-    expect(hn.queries).toEqual([]);
-    expect(appQueries).toEqual([]);
+    // Free sources are not gated by the budget, so they still run; the web query and extraction do not.
+    expect(hn.queries).toEqual(['invoices']);
+    expect(appQueries).toEqual(['q']);
     expect(router.calls.map((c) => c.stage)).toEqual(['research']);
+  });
+
+  describe('budget allocation', () => {
+    const webPage = (i: number) => `https://site${i}.example/post`;
+    const webText = (i: number) => `Founder number ${i} says late client payments wreck the cash flow every single month for the agency.`;
+    function setup(db: Db, over: { researchCost: number; extractCost?: number; webCount: number; freeFirst?: boolean; hnItems?: number }) {
+      const events: string[] = [];
+      const hnBase = signalSource('hn', Array.from({ length: over.hnItems ?? 1 }, (_, i) =>
+        item('hn', `https://news.ycombinator.com/item?id=${i + 1}`, `${HN_TEXT} Variant ${i}.`)));
+      const hn = { ...hnBase, search: async (q: string) => { events.push('hn'); return hnBase.search(q, {} as never); } } as typeof hnBase;
+      const ycQueries: string[] = [];
+      const yc: Collectors['yc'] = async (q) => { events.push('yc'); ycQueries.push(q); return []; };
+      const web = Array.from({ length: over.webCount }, (_, i) => ({ source: 'web', q: `web ${i}` }));
+      const free = [{ source: 'hn', q: 'late payment' }, { source: 'yc', q: 'invoicing' }];
+      const router = mockRouter(db, {
+        plan: { queries: over.freeFirst ? [...free, ...web] : [...web, ...free] },
+        research: Array.from({ length: over.webCount }, (_, i) => ({ text: 'x', sources: [{ url: webPage(i), title: 't', citedText: 'c' }] })),
+        researchCost: over.researchCost,
+        extractCost: over.extractCost,
+      });
+      const pages: Record<string, string> = {};
+      for (let i = 0; i < over.webCount; i++) pages[webPage(i)] = webText(i);
+      const page = mockFetchPage(pages);
+      const research = router.research.bind(router);
+      router.research = async (...a) => { events.push('web'); return research(...a); };
+      const deps: MissionDeps = { db, router, fetchPage: page.fn, collectors: { hn, yc }, log: () => {} };
+      return { deps, router, hn: hnBase, ycQueries, events };
+    }
+
+    it('reproduces the live failure: free sources and extraction still happen when web spend eats the budget', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { budgetUsd: '1', kinds: ['problem', 'startup'] });
+      const { deps, router, hn, ycQueries } = setup(db, { researchCost: 0.25, webCount: 6 });
+      expect(await runMission(deps, id)).toBe('succeeded');
+      expect(hn.queries).toEqual(['late payment']);
+      expect(ycQueries).toEqual(['invoicing']);
+      expect(router.calls.some((c) => c.stage === 'library_extract')).toBe(true);
+      const m = await mission(db, id);
+      expect(m.itemsAdded).toBeGreaterThan(0);
+      expect(m.warnings).toContain('Budget reached; stopped early.');
+    });
+
+    it('runs every free source before any web research call', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { budgetUsd: '5', kinds: ['problem', 'startup'] });
+      const { deps, events } = setup(db, { researchCost: 0.01, webCount: 2 });
+      await runMission(deps, id);
+      expect(events).toEqual(['hn', 'yc', 'web', 'web']);
+    });
+
+    it('stops starting web queries once spend reaches the collection share of the budget', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { budgetUsd: '1', kinds: ['problem', 'startup'] });
+      const { deps, router } = setup(db, { researchCost: 0.25, webCount: 6, freeFirst: true });
+      await runMission(deps, id);
+      // plan 0.01, then web calls at 0.25 each: 0.01, 0.26, 0.51 -> a 3rd call starts, after it 0.76 >= 0.6 stops
+      expect(COLLECT_SHARE).toBe(0.6);
+      expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(3);
+    });
+
+    it('stops extraction between batches once spend reaches the budget', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { budgetUsd: '1', kinds: ['problem', 'startup'] });
+      const { deps, router } = setup(db, { researchCost: 0.01, extractCost: 0.6, webCount: 2, freeFirst: true, hnItems: 30 });
+      await runMission(deps, id);
+      expect(router.calls.filter((c) => c.stage === 'library_extract')).toHaveLength(2); // 32 texts = 4 batches; stops after the 2nd (0.6 then 1.2 >= 1)
+      expect((await mission(db, id)).warnings).toContain('Budget reached; stopped early.');
+    });
   });
 
   it('counts data-call spend toward the budget', async () => {

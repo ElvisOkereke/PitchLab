@@ -30,6 +30,8 @@ import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
  */
 
 export const MAX_QUERIES = 12;
+/** Web queries stop once mission spend reaches this share of the budget; the rest pays for extraction. */
+export const COLLECT_SHARE = 0.6;
 export const MAX_WARNINGS = 20;
 export const EXTRACT_BATCH = 8;
 export const SOURCE_TEXT_CAP = 6000;
@@ -262,21 +264,30 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     if (!warnings.includes(w) && warnings.length < MAX_WARNINGS) warnings.push(w);
   };
   let budgetHit = false;
+  let collectionHit = false;
   const budget = Number(m.budgetUsd);
   /** True (and records the warning once) when the mission's recorded spend has reached its budget. */
   const overBudget = async (): Promise<boolean> => {
     if (!budgetHit && (await missionSpend(db, missionId)) >= budget) {
       budgetHit = true;
-      log(`mission ${missionId}: budget reached`);
+      log(`mission ${missionId}: budget reached during extraction`);
     }
     return budgetHit;
+  };
+  /** True (and records the warning once) when web collection has used its share of the budget. */
+  const collectionFull = async (): Promise<boolean> => {
+    if (!collectionHit && (await missionSpend(db, missionId)) >= COLLECT_SHARE * budget) {
+      collectionHit = true;
+      log(`mission ${missionId}: collection budget reached`);
+    }
+    return collectionHit;
   };
   const ctx = (promptVersion: string): CallCtx => ({ runId: null, missionId, promptVersion });
   let itemsAdded = 0;
   let itemsMerged = 0;
 
   const finish = async (status: 'succeeded' | 'failed', error?: string): Promise<'succeeded' | 'failed'> => {
-    const list = budgetHit ? [BUDGET_WARNING, ...warnings].slice(0, MAX_WARNINGS) : warnings;
+    const list = budgetHit || collectionHit ? [BUDGET_WARNING, ...warnings].slice(0, MAX_WARNINGS) : warnings;
     await db
       .update(researchMissions)
       .set({ status, costUsd: spendSql(missionId), itemsAdded, itemsMerged, warnings: list, error: error ?? null, finishedAt: now() })
@@ -414,8 +425,10 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       return loaded > 0 ? 'ok' : failed > 0 ? 'failed' : 'empty';
     };
 
-    for (const { source, q } of queries) {
-      if (await overBudget()) break;
+    // Free sources first (they cost no budget), then web queries while under the collection share.
+    const ordered = [...queries.filter((x) => x.source !== 'web'), ...queries.filter((x) => x.source === 'web')];
+    for (const { source, q } of ordered) {
+      if (source === 'web' && (await collectionFull())) break;
       try {
         switch (source) {
           case 'web': {
@@ -496,7 +509,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     if (invalid > 0) warn(`extract: ${invalid} invalid draft${invalid === 1 ? '' : 's'} dropped`);
 
     const drafts = [...extracted, ...structured];
-    if (drafts.length === 0 && !budgetHit) {
+    if (drafts.length === 0 && !budgetHit && !collectionHit) {
       if (!anyOk && anyFailed) return finish('failed', 'Every source failed; nothing was collected.');
       if (texts.length > 0 && batchesOk === 0 && batchesFailed > 0) return finish('failed', 'Extraction failed for every batch.');
     }
