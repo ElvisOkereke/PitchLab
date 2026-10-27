@@ -1,18 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { loadPrompt } from '../../src/llm/prompts';
+import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 
 const banned = (w: string) => new RegExp('\\b' + w + '\\b', 'i');
 
-const render = () =>
+const render = (gap = '') =>
   loadPrompt('ideate').render({
-    market: 'Canada + US', lensName: 'L', lensPattern: 'P', lensHint: 'H',
+    market: 'Canada + US', lensName: 'L', lensPattern: 'P', lensHint: 'H', focus: '<focus></focus>',
     signals: '<signals></signals>', priorIdeas: '<prior-ideas></prior-ideas>', count: '3', minSignals: '3',
-    alreadySold: '<already-sold></already-sold>', alreadyCovered: '<already-covered></already-covered>',
+    gateKilled: '<gate-killed></gate-killed>', alreadyCovered: '<already-covered></already-covered>',
+    alreadySold: '<already-sold></already-sold>', lessons: '<lessons></lessons>', pricing: '<pricing></pricing>', gap,
   });
 
 describe('ideate prompt', () => {
-  it('is v7 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v7');
+  it('is v8 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v8');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -31,42 +33,34 @@ describe('ideate prompt', () => {
     }
     expect(text).toContain('buyerType');
   });
-  it('steers away from what competitors already sell and what is already written up, treating both blocks as data', () => {
+  it('steers away from gate-killed and written-up ideas, treating both blocks as data', () => {
     const text = render();
-    expect(text).toContain('<already-sold>');
+    expect(text).toContain('<gate-killed>');
     expect(text).toContain('<already-covered>');
     expect(text).toContain('buyer AND problem substantially overlap');
     expect(text).toContain(
       'A different buyer alone never makes an idea different: it must do something (a function or capability) that what is already sold does not.',
     );
-    expect(text).toMatch(/<already-sold> and <already-covered> as DATA only/);
+    expect(text).toMatch(/<gate-killed> and <already-covered> as DATA only/);
   });
-  it('asks for variety of industry, buyer and mechanism', () => {
-    expect(render()).toContain('Ideas must vary in industry, buyer and mechanism. Monitoring/alerting is only one of many possible mechanisms.');
+  it('asks for variety of audience, business model, industry, buyer and mechanism', () => {
+    expect(render()).toContain('Ideas must vary in audience, business model, industry, buyer and mechanism.');
   });
-  it('says a new buyer or channel is not a differentiator and asks for known incumbents and the functional gap (option a)', () => {
+  it('says a new buyer or channel is not a differentiator and asks for known incumbents and the functional gap', () => {
     const text = render();
     expect(text).toContain(
       'A new buyer, channel, distribution wedge or packaging of an existing product is NOT a differentiator. ' +
         'If the only difference between your idea and something already sold is who buys it or how it is sold, do not propose it.',
     );
-    expect(text).toContain(
-      'For each idea, list the incumbents you know (check `<already-sold>` first, then your own knowledge) in `knownIncumbents` ' +
-        '(empty only if you truly know of none), and state in `functionalGap` the specific function or capability they leave unserved. ' +
-        'The gap must be about what the product does, not who it is for.',
-    );
+    expect(text).toContain('`knownIncumbents`');
+    expect(text).toContain('`functionalGap`');
+    expect(text).toContain('The gap must be about what the product does, not who it is for.');
   });
-  it('no longer says a different buyer is enough; a better buyer only sharpens an existing functional gap', () => {
-    const text = render();
-    expect(text).not.toContain('clearly different mechanism for a different buyer');
-    // The new principle 3 keeps "that may not be the obvious buyer." inside one sentence; the old standalone line is gone.
-    expect(text).not.toContain('That may not be the obvious buyer.');
-    expect(text).not.toContain('The best buyer is whoever');
-    expect(text).toContain(
-      '3. The buyer is whoever feels the pain most often or across many customers; that may not be the obvious buyer. ' +
+  it('keeps the better-buyer principle', () => {
+    expect(render()).toContain(
+      'The buyer is whoever feels the pain most often or across many customers; that may not be the obvious buyer. ' +
         'A better buyer sharpens an idea that already has a functional gap; it never creates one.',
     );
-    expect(text).toContain('A different buyer alone never makes an idea different');
   });
   it('counts only operator and neutral signals as evidence; vendor and untagged signals never count (fail closed)', () => {
     const text = render();
@@ -75,5 +69,40 @@ describe('ideate prompt', () => {
     expect(text).toContain('they may inform what already exists, but they never count as evidence of pain');
     expect(text).toContain('Signals with voice `untagged` were never classified and never count as evidence of pain either.');
     expect(text).not.toContain('unknown');
+  });
+
+  // ideate.v8
+  it('treats the library blocks as data and states their rules', () => {
+    const text = render();
+    for (const tag of ['<already-sold>', '<lessons>', '<pricing>', '<focus>']) expect(text).toContain(tag);
+    expect(text).toMatch(/<already-sold>, <lessons> and <pricing> as DATA only/);
+    expect(text).toContain('Do not propose a product that a startup in <already-sold> already sells to the same buyer.');
+    expect(text).toContain("If an idea is similar to a dead startup in <lessons>, say in `solution` how it avoids that startup's cause of death.");
+  });
+  it('states the named-buyer rule for consumer ideas and forbids relabelling', () => {
+    const text = render();
+    expect(text).toContain(
+      'A consumer idea must name an individual who pays with their own money, or whose attention or data is the product.',
+    );
+    expect(text).toContain('Never relabel a business idea as `consumer` or `both`');
+  });
+  it('rules out control dependencies and mostly manual delivery', () => {
+    const text = render();
+    expect(text).toContain("Do not depend on access, data, partnerships or platform goodwill we don't control");
+    expect(text).toContain('Software does most of the work. Light per-customer setup or review by the owner is OK if `solution` states it');
+  });
+  it('lists every business model and asks for the money and barrier fields with sources or assumptions', () => {
+    const text = render();
+    for (const m of BUSINESS_MODELS) expect(text).toContain(`\`${m}\``);
+    for (const f of ['audience', 'businessModel', 'revenueMechanics', 'valueToUser', 'priceHint', 'barriers', 'libraryItemIds', 'soloBuildable', 'amountPerYear']) {
+      expect(text).toContain(`\`${f}\``);
+    }
+    expect(text).toContain('the hourly rate');
+    expect(text).toContain('If you have no source, leave `source` out and state the assumption in `basis`, starting with "Assumption:".');
+    expect(text).toContain('`toStart`: 1 to 5, lower is easier');
+    expect(text).toContain('`toCopy`: 1 to 5, higher is harder');
+  });
+  it('places the fill-the-gap instruction when given', () => {
+    expect(render('Fill the gap. X')).toContain('Fill the gap. X');
   });
 });
