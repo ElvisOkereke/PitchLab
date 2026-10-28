@@ -17,7 +17,10 @@ export type GlossaryTerm =
   | 'researchMission'
   | 'businessModel'
   | 'valueMultiple'
-  | 'barriers';
+  | 'barriers'
+  | 'archivedCopy'
+  | 'socialShare'
+  | 'fetchSuccess';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -96,5 +99,17 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   barriers: {
     label: 'Barriers',
     text: 'Two 1 to 5 scores on an idea: how hard it is for someone to start it (1 is easy) and how hard it is for a rival to copy it (5 is hard). The best ideas are easy to start and hard to copy.',
+  },
+  archivedCopy: {
+    label: 'Archived copy',
+    text: 'A saved copy of a web page from the Internet Archive (the Wayback Machine). PitchLab uses one only when the live page refuses it or does not answer, robots.txt allows it, and the copy is no more than three years old. The entry says it came from an archived copy and shows the date of the copy.',
+  },
+  socialShare: {
+    label: 'Social share',
+    text: 'The share of sources in the library that come from community sites, such as Hacker News, Stack Exchange, GitHub, Product Hunt, app stores and YouTube comments, where people describe problems in their own words. A higher share means more real voices and fewer company pages.',
+  },
+  fetchSuccess: {
+    label: 'Fetch success',
+    text: 'How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, or in the local browser). The sites that fail most are listed with their main reason.',
   },
 };

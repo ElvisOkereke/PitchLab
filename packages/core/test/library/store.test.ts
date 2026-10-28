@@ -48,6 +48,20 @@ describe('upsertKnowledgeItem', () => {
     expect(it?.title).toBe(d.title);
     expect(it?.sourceCount).toBe(3);
   });
+  it('getLibraryItem returns each source via, snapshotAt and expiresAt', async () => {
+    const db = await testDb();
+    const snap = new Date('2025-03-04T12:00:00Z');
+    const a = await upsertKnowledgeItem(db, draft({ source: { url: 'https://a.example/1', domain: 'a.example', sourceType: 'web', quote: 'q one', quoteVerified: true, via: 'archive', snapshotAt: snap } }), unit(0), {});
+    await upsertKnowledgeItem(db, draft({ source: { url: 'https://www.youtube.com/watch?v=abc', domain: 'youtube.com', sourceType: 'youtube', quote: 'q two', quoteVerified: true } }), near(0.95), {});
+    const srcs = (await getLibraryItem(db, a.itemId))!.sources;
+    const arch = srcs.find((s) => s.url === 'https://a.example/1')!;
+    expect(arch.via).toBe('archive');
+    expect(arch.snapshotAt?.toISOString()).toBe(snap.toISOString());
+    expect(arch.expiresAt).toBeNull();
+    const yt = srcs.find((s) => s.sourceType === 'youtube')!;
+    expect(yt.via).toBe('direct');
+    expect(yt.expiresAt).toBeInstanceOf(Date);
+  });
   it('same url twice adds one source', async () => {
     const db = await testDb();
     const d = draft();

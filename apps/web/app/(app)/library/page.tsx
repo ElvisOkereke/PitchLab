@@ -1,5 +1,6 @@
 import { backgroundSpendToday, getResearchSettings, listMissions, typicalMissionCost } from '@bcg/core/dashboard/missions';
 import { getLibraryItem, libraryCoverage, searchLibrary } from '@bcg/core/library/store';
+import { fetchStats } from '@bcg/core/research/fetch-log';
 import { LibraryView } from '@/components/library-view';
 import { requireOwner } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
@@ -11,9 +12,10 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
   const query = parseLibraryQuery(await searchParams);
   const db = getDb();
   const now = new Date();
-  const [results, coverage, item, missions, typicalCost, research, backgroundSpend] = await Promise.all([
+  const [results, coverage, fetches, item, missions, typicalCost, research, backgroundSpend] = await Promise.all([
     searchLibrary(db, libraryFilter(query)),
     libraryCoverage(db),
+    fetchStats(db, { days: 30 }),
     query.item ? getLibraryItem(db, query.item) : Promise.resolve(null),
     listMissions(db, 20),
     typicalMissionCost(db),
@@ -26,6 +28,7 @@ export default async function LibraryPage({ searchParams }: { searchParams: Prom
       rows={results.rows}
       total={results.total}
       coverage={coverage}
+      fetches={fetches}
       item={item}
       missions={missions}
       typicalCost={typicalCost}

@@ -11,6 +11,12 @@ export function formatDateTime(d: Date | null | undefined): string {
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }
 
+/** `2026-10-19` in Toronto time; `an unknown date` for null or an invalid date. */
+export function formatDate(d: Date | null | undefined): string {
+  const t = formatDateTime(d);
+  return t === '–' ? 'an unknown date' : t.slice(0, 10);
+}
+
 /** "just now", "5 min ago", "3 h ago", "2 d ago" (future instants read as "just now"). */
 export function relativeTime(at: Date, now: Date): string {
   const s = Math.floor((now.getTime() - at.getTime()) / 1000);

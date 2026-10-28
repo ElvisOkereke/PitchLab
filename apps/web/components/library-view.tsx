@@ -1,7 +1,9 @@
 import type { MissionView, ResearchSettings } from '@bcg/core/dashboard/missions';
 import type { LibraryCoverage, LibraryRow } from '@bcg/core/library/store';
+import type { FetchStats } from '@bcg/core/research/fetch-log';
 import Link from 'next/link';
 import { LIBRARY_AGES, LIBRARY_AUDIENCES, LIBRARY_KINDS, LIBRARY_STATUSES, LIBRARY_VOICES, libraryHref, type LibraryQuery } from '@/lib/library-query';
+import { outcomeLabel, VIA_LABEL } from '@/lib/fetch-labels';
 import { formatDateTime, relativeTime, usd } from '@/lib/time';
 import { AutoRefresh } from './auto-refresh';
 import { HelpTip } from './help-tip';
@@ -23,6 +25,7 @@ export type LibraryViewProps = {
   rows: LibraryRow[];
   total: number;
   coverage: LibraryCoverage;
+  fetches: FetchStats;
   item: LibraryItemDetail | null;
   missions: MissionView[];
   typicalCost: number | null;
@@ -143,6 +146,10 @@ function Coverage({ coverage }: { coverage: LibraryCoverage }) {
           Countries: <strong>{coverage.countries.length}</strong> (target: 10 or more) {badge(countriesOk)}
         </li>
         <li>Quotes verified: {pct(coverage.verifiedQuoteShare)}</li>
+        <li>
+          Social share: <strong>{pct(coverage.socialShare)}</strong> of sources come from community sites such as Hacker News, Stack Exchange, GitHub or YouTube
+          <HelpTip term="socialShare" />
+        </li>
         <li>By kind: {tally(coverage.byKind)}</li>
         <li>By source: {tally(coverage.bySourceType)}</li>
         <li>By voice: {tally(coverage.byVoice)}</li>
@@ -150,6 +157,62 @@ function Coverage({ coverage }: { coverage: LibraryCoverage }) {
           Newest {coverage.newest ? formatDateTime(coverage.newest) : '–'} · oldest {coverage.oldest ? formatDateTime(coverage.oldest) : '–'}
         </li>
       </ul>
+    </section>
+  );
+}
+
+const ofTotal = (ok: number, total: number) => (total === 0 ? '–' : `${ok} of ${total} (${Math.round((ok / total) * 100)}%)`);
+
+/** How well page fetching has worked over the last 30 days: overall, by route, the outcomes, and the sites that fail most. */
+function FetchDiagnostics({ fetches }: { fetches: FetchStats }) {
+  const outcomes = Object.entries(fetches.byOutcome).filter(([k]) => k !== 'ok').sort((a, b) => b[1] - a[1]);
+  return (
+    <section aria-labelledby="fetch-title" className="card" data-testid="fetch-diagnostics">
+      <div className="label-row">
+        <h2 id="fetch-title">Page fetching, last 30 days</h2>
+        <HelpTip term="fetchSuccess" />
+      </div>
+      {fetches.total === 0 ? (
+        <p className="muted">No page fetches logged yet — they appear after your next mission.</p>
+      ) : (
+        <>
+          <p>
+            Fetch success: <strong>{ofTotal(fetches.ok, fetches.total)}</strong> of the pages you tried to read came through.
+          </p>
+          <ul className="plain stack">
+            {(Object.keys(VIA_LABEL) as (keyof FetchStats['byVia'])[]).map((v) => (
+              <li key={v}>
+                {VIA_LABEL[v]}: {ofTotal(fetches.byVia[v].ok, fetches.byVia[v].total)}
+              </li>
+            ))}
+          </ul>
+          {outcomes.length > 0 ? (
+            <p className="muted small">What went wrong: {outcomes.map(([k, n]) => `${outcomeLabel(k)} ${n}`).join(' · ')}</p>
+          ) : null}
+          {fetches.topFailing.length > 0 ? (
+            <div className="scroll-x" data-testid="fetch-failing">
+              <table className="stacked">
+                <thead>
+                  <tr>
+                    <th scope="col">Site</th>
+                    <th scope="col">Failed fetches</th>
+                    <th scope="col">Main reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {fetches.topFailing.map((r) => (
+                    <tr key={r.domain}>
+                      <td data-label="Site">{r.domain}</td>
+                      <td data-label="Failed fetches">{r.failures}</td>
+                      <td data-label="Main reason">{outcomeLabel(r.topOutcome)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </>
+      )}
     </section>
   );
 }
@@ -234,7 +297,7 @@ function Missions({ missions, typicalCost, research, backgroundSpend }: Pick<Lib
 }
 
 /** The Library: search and filter the stored research, read one entry, see coverage, and start research missions. */
-export function LibraryView({ query, rows, total, coverage, item, missions, typicalCost, research, backgroundSpend, now }: LibraryViewProps) {
+export function LibraryView({ query, rows, total, coverage, fetches, item, missions, typicalCost, research, backgroundSpend, now }: LibraryViewProps) {
   const filtered = Boolean(query.q || query.kind || query.audience || query.country || query.voice || query.source || query.age || query.status !== 'active');
   return (
     <main className="library-page">
@@ -246,6 +309,7 @@ export function LibraryView({ query, rows, total, coverage, item, missions, typi
       {item ? <LibraryItem item={item} query={query} /> : null}
       <Results query={query} rows={rows} total={total} now={now} empty={!filtered && total === 0} />
       <Coverage coverage={coverage} />
+      <FetchDiagnostics fetches={fetches} />
       <Missions missions={missions} typicalCost={typicalCost} research={research} backgroundSpend={backgroundSpend} />
     </main>
   );

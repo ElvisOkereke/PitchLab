@@ -1,7 +1,7 @@
 import type { LibraryRow, SourceRow } from '@bcg/core/library/store';
 import { rejectItemAction, restoreItemAction } from '@/actions/library';
 import { libraryHref, type LibraryQuery } from '@/lib/library-query';
-import { formatDateTime } from '@/lib/time';
+import { formatDate, formatDateTime } from '@/lib/time';
 import { ExternalLink } from './external-link';
 
 export type LibraryItemDetail = LibraryRow & { facts: unknown; sources: SourceRow[] };
@@ -39,6 +39,9 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
             <ExternalLink url={s.url} />{' '}
             <span className="muted small">
               {s.sourceType} · {s.publishedAt ? `published ${formatDateTime(s.publishedAt)}` : `fetched ${formatDateTime(s.fetchedAt)}`}
+              {s.via === 'archive' ? ` · from an archived copy (${formatDate(s.snapshotAt)})` : ''}
+              {s.via === 'browser' ? ' · rendered in the local browser' : ''}
+              {s.expiresAt ? ` · expires on ${formatDate(s.expiresAt)}` : ''}
             </span>
           </li>
         ))}

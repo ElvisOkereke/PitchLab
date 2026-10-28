@@ -31,6 +31,12 @@ const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] 
   ['browser', 'Local browser (Chromium)', ['installed', 'not installed']],
 ];
 
+const HINT_ID: Partial<Record<keyof WorkerStatus['providers'], string>> = { youtube: 'conn-youtube', browser: 'conn-browser' };
+const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
+  youtube: 'Optional. Add YOUTUBE_API_KEY to your .env file, then restart npm run worker.',
+  browser: 'Optional, for pages that need JavaScript. Install it with npx playwright install chromium, run in packages/core.',
+};
+
 function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string }) {
   if (ok === null) return <span className="badge badge-muted">unknown (worker not seen)</span>;
   return <span className={`badge ${ok ? 'badge-ok' : 'badge-warn'}`}>{ok ? yes : no}</span>;
@@ -74,11 +80,15 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
       <section aria-labelledby="connections-title" className="card" data-testid="connections" data-tour="settings-connections">
         <h2 id="connections-title">Connections</h2>
         <ul className="plain stack">
-          {PROVIDERS.map(([k, label, words]) => (
-            <li key={k}>
-              <span className="name">{label}</span> <Badge ok={data.worker ? data.worker.providers[k] : null} yes={words?.[0] ?? 'connected'} no={words?.[1] ?? 'not set'} />
-            </li>
-          ))}
+          {PROVIDERS.map(([k, label, words]) => {
+            const ok = data.worker ? data.worker.providers[k] : null;
+            return (
+              <li key={k} data-testid={HINT_ID[k]}>
+                <span className="name">{label}</span> <Badge ok={ok} yes={words?.[0] ?? 'connected'} no={words?.[1] ?? 'not set'} />
+                {ok === false && HINT[k] ? <span className="muted small"> {HINT[k]}</span> : null}
+              </li>
+            );
+          })}
           <li>
             <span className="name">Database</span> <Badge ok={data.database} yes="connected" no="not reachable" />
           </li>

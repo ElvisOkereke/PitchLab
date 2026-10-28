@@ -1,5 +1,6 @@
 import type { MissionView } from '@bcg/core/dashboard/missions';
 import type { LibraryCoverage, LibraryRow } from '@bcg/core/library/store';
+import type { FetchStats } from '@bcg/core/research/fetch-log';
 import { cleanup, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LibraryViewProps } from '@/components/library-view';
@@ -33,6 +34,16 @@ function coverage(o: Partial<LibraryCoverage> = {}): LibraryCoverage {
     problemIndependentShare: 0.75, verifiedQuoteShare: 0.5, socialShare: 0.4, countries: ['US', 'CA', 'GB'], industries: ['retail', 'hvac'], newest: NOW, oldest: new Date('2026-09-01T00:00:00Z'), ...o,
   };
 }
+function fetches(o: Partial<FetchStats> = {}): FetchStats {
+  return {
+    total: 20, ok: 15, okRate: 0.75,
+    byVia: { direct: { total: 16, ok: 11 }, archive: { total: 3, ok: 3 }, browser: { total: 1, ok: 1 } },
+    byOutcome: { ok: 15, http_403: 3, thin_text: 1, timeout: 1 },
+    topFailing: [{ domain: 'blocky.example', failures: 3, topOutcome: 'http_403' }, { domain: 'spa.example', failures: 1, topOutcome: 'thin_text' }],
+    ...o,
+  };
+}
+const NO_FETCHES: FetchStats = { total: 0, ok: 0, okRate: null, byVia: { direct: { total: 0, ok: 0 }, archive: { total: 0, ok: 0 }, browser: { total: 0, ok: 0 } }, byOutcome: {}, topFailing: [] };
 function mission(o: Partial<MissionView> = {}): MissionView {
   return {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', topic: 'late invoices', kinds: ['problem'], countries: [], audience: null, origin: 'owner', status: 'succeeded',
@@ -41,7 +52,7 @@ function mission(o: Partial<MissionView> = {}): MissionView {
 }
 function props(o: Partial<LibraryViewProps> = {}): LibraryViewProps {
   return {
-    query: { q: '', status: 'active', page: 1 }, rows: [row()], total: 1, coverage: coverage(), item: null, missions: [], typicalCost: null,
+    query: { q: '', status: 'active', page: 1 }, rows: [row()], total: 1, coverage: coverage(), fetches: fetches(), item: null, missions: [], typicalCost: null,
     research: { background: false, dailyCapUsd: 5 }, backgroundSpend: 0, now: NOW, ...o,
   };
 }
@@ -105,8 +116,8 @@ describe('LibraryView entry detail', () => {
   const item = {
     ...row(), facts: { persona: 'shop owner', pricePoints: [{ amount: 10, currency: 'USD', unit: 'month' }], frequencyOrCost: '<b>weekly</b>' },
     sources: [
-      { id: 's1', url: 'https://news.example/post/1', domain: 'news.example', sourceType: 'hn', publishedAt: new Date('2026-10-18T00:00:00Z'), fetchedAt: NOW, quote: 'I spend Fridays chasing invoices', quoteVerified: true, voice: 'operator' as const },
-      { id: 's2', url: 'javascript:alert(1)', domain: 'bad.example', sourceType: 'web', publishedAt: null, fetchedAt: NOW, quote: null, quoteVerified: false, voice: null },
+      { id: 's1', url: 'https://news.example/post/1', domain: 'news.example', sourceType: 'hn', publishedAt: new Date('2026-10-18T00:00:00Z'), fetchedAt: NOW, quote: 'I spend Fridays chasing invoices', quoteVerified: true, voice: 'operator' as const, via: 'direct' as const, snapshotAt: null, expiresAt: null },
+      { id: 's2', url: 'javascript:alert(1)', domain: 'bad.example', sourceType: 'web', publishedAt: null, fetchedAt: NOW, quote: null, quoteVerified: false, voice: null, via: 'direct' as const, snapshotAt: null, expiresAt: null },
     ],
   };
 
@@ -126,6 +137,25 @@ describe('LibraryView entry detail', () => {
     expect(within(form as HTMLElement).getByRole('button', { name: 'Reject' })).toBeTruthy();
     expect(form.querySelector('input[name="id"]')!.getAttribute('value')).toBe(ID);
     expect(form.querySelector('input[name="returnTo"]')!.getAttribute('value')).toBe(`/library?item=${ID}`);
+  });
+
+  it('says where each source came from: archived copy with its date, local browser, YouTube expiry', () => {
+    const base = { id: 'x', url: 'https://a.example/p', domain: 'a.example', sourceType: 'web', publishedAt: null, fetchedAt: NOW, quote: null, quoteVerified: false, voice: null, via: 'direct' as const, snapshotAt: null, expiresAt: null };
+    const withSources = {
+      ...item,
+      sources: [
+        { ...base, id: 'a1', via: 'archive' as const, snapshotAt: new Date('2025-03-04T12:00:00Z') },
+        { ...base, id: 'a2', url: 'https://b.example/p', via: 'browser' as const },
+        { ...base, id: 'a3', url: 'https://www.youtube.com/watch?v=abc', sourceType: 'youtube', expiresAt: new Date('2026-11-19T12:00:00Z') },
+        { ...base, id: 'a4', url: 'https://c.example/p' },
+      ],
+    };
+    const { getByTestId } = render(<LibraryView {...props({ item: withSources, query: { q: '', status: 'active', page: 1, item: ID } })} />);
+    const lis = [...getByTestId('library-detail').querySelectorAll('ul li')].map((li) => li.textContent!);
+    expect(lis[0]).toMatch(/from an archived copy \(.*2025.*\)/);
+    expect(lis[1]).toContain('rendered in the local browser');
+    expect(lis[2]).toMatch(/expires on .*2026/);
+    expect(lis[3]).not.toMatch(/archived|local browser|expires/);
   });
 
   it('a rejected entry offers Restore instead', () => {
@@ -150,6 +180,53 @@ describe('LibraryView coverage', () => {
   it('shows a dash when there is nothing to measure yet', () => {
     const { getByTestId } = render(<LibraryView {...props({ coverage: coverage({ problemIndependentShare: null, verifiedQuoteShare: null, countries: [] }) })} />);
     expect(getByTestId('library-coverage').textContent).toMatch(/operator or neutral voice.*–/i);
+  });
+});
+
+describe('LibraryView fetch diagnostics', () => {
+  it('shows the 30-day success rate, success by route, readable outcomes and the worst domains', () => {
+    const { getByTestId } = render(<LibraryView {...props()} />);
+    const t = getByTestId('fetch-diagnostics').textContent!;
+    expect(t).toMatch(/last 30 days/i);
+    expect(t).toMatch(/15 of 20.*75%/);
+    expect(t).toMatch(/direct.*11 of 16.*69%/i);
+    expect(t).toMatch(/archived copy.*3 of 3.*100%/i);
+    expect(t).toMatch(/local browser.*1 of 1/i);
+    expect(t).toContain('blocked (403)');
+    expect(t).toContain('too little text (needs JavaScript)');
+    expect(t).toContain('timed out');
+    expect(t).not.toContain('http_403');
+    const rows = [...getByTestId('fetch-failing').querySelectorAll('tbody tr')].map((r) => r.textContent!);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toContain('blocky.example');
+    expect(rows[0]).toContain('blocked (403)');
+  });
+
+  it('shows social share, and a dash when there is nothing to measure', () => {
+    const a = render(<LibraryView {...props()} />);
+    expect(a.getByTestId('library-coverage').textContent).toMatch(/social share.*40%/i);
+    a.unmount();
+    const b = render(<LibraryView {...props({ coverage: coverage({ socialShare: null }) })} />);
+    expect(b.getByTestId('library-coverage').textContent).toMatch(/social share.*–/i);
+  });
+
+  it('says so when no pages have been fetched yet', () => {
+    const { getByTestId } = render(<LibraryView {...props({ fetches: NO_FETCHES })} />);
+    const d = getByTestId('fetch-diagnostics');
+    expect(d.textContent).toContain('No page fetches logged yet — they appear after your next mission.');
+    expect(d.querySelector('table')).toBeNull();
+  });
+
+  it('renders a hostile domain as text', () => {
+    const domain = '<img src=x onerror=alert(1)>';
+    const { getByTestId } = render(<LibraryView {...props({ fetches: fetches({ topFailing: [{ domain, failures: 2, topOutcome: 'network' }] }) })} />);
+    expect(getByTestId('fetch-failing').textContent).toContain(domain);
+    expect(getByTestId('fetch-failing').querySelector('img')).toBeNull();
+  });
+
+  it('an outcome the page does not know is shown as plain words', () => {
+    const { getByTestId } = render(<LibraryView {...props({ fetches: fetches({ byOutcome: { ok: 1, weird_new: 2 } }) })} />);
+    expect(getByTestId('fetch-diagnostics').textContent).toContain('weird new');
   });
 });
 

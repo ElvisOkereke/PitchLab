@@ -82,7 +82,43 @@ describe('SettingsView', () => {
     const items = Object.fromEntries([...c.querySelectorAll('li')].map((li) => [li.querySelector('.name')!.textContent, li.querySelector('.badge')!.textContent]));
     expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', YouTube: 'not set', 'Local browser (Chromium)': 'not installed', Database: 'connected' });
     expect(c.textContent).not.toMatch(/reddit/i);
-    expect(c.textContent).not.toMatch(/postgres|key|secret|:\/\//i);
+    expect([...c.querySelectorAll('.badge')].map((b) => b.textContent).join(' ')).not.toMatch(/postgres|key|secret|:\/\//i);
+  });
+
+  it('YouTube: connected when the worker says so, otherwise how to add the key (the name only, never a value)', () => {
+    const w = data().worker!;
+    const on = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, youtube: true } } })} />);
+    expect(within(on.getByTestId('conn-youtube')).getByText('connected')).toBeTruthy();
+    expect(on.getByTestId('conn-youtube').textContent).not.toContain('YOUTUBE_API_KEY');
+    on.unmount();
+    const off = render(<SettingsView data={data()} />);
+    const t = off.getByTestId('conn-youtube').textContent!;
+    expect(t).toContain('not set');
+    expect(t).toContain('YOUTUBE_API_KEY');
+    expect(t).toMatch(/\.env/);
+    expect(t).toMatch(/restart/i);
+  });
+
+  it('Local browser: installed, or not installed with the install command and where to run it', () => {
+    const w = data().worker!;
+    const on = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, browser: true } } })} />);
+    const ton = on.getByTestId('conn-browser').textContent!;
+    expect(ton).toContain('installed');
+    expect(ton).not.toContain('not installed');
+    expect(ton).not.toContain('npx playwright');
+    on.unmount();
+    const off = render(<SettingsView data={data()} />);
+    const t = off.getByTestId('conn-browser').textContent!;
+    expect(t).toContain('not installed');
+    expect(t).toContain('npx playwright install chromium');
+    expect(t).toContain('packages/core');
+  });
+
+  it('shows no setup hints before the worker has been seen', () => {
+    const { getByTestId } = render(<SettingsView data={data({ worker: null })} />);
+    expect(getByTestId('conn-youtube').textContent).toContain('unknown');
+    expect(getByTestId('conn-youtube').textContent).not.toContain('YOUTUBE_API_KEY');
+    expect(getByTestId('conn-browser').textContent).not.toContain('npx playwright');
   });
 
   it('models come from the worker heartbeat, else the defaults labelled as such', () => {

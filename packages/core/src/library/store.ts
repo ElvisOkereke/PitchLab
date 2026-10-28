@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, cosineDistance, count, desc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
-import { knowledgeItems, knowledgeSources } from '../db/schema';
+import { knowledgeItems, knowledgeSources, type FETCH_VIAS } from '../db/schema';
 import type { KnowledgeDraft, KnowledgeVoice } from './kinds';
 
 /** Web-safe: drizzle-orm, schema, kinds and node:crypto only (server-side). Bound parameters only. */
@@ -43,6 +43,11 @@ export type SourceRow = {
   quote: string | null;
   quoteVerified: boolean;
   voice: KnowledgeVoice | null;
+  via: (typeof FETCH_VIAS)[number];
+  /** The archive snapshot time when via is archive. */
+  snapshotAt: Date | null;
+  /** When a YouTube source is deleted (30 days after it was fetched). */
+  expiresAt: Date | null;
 };
 
 /** Lowercase, runs of non-letter/non-digit become one space (same rule as pipeline/verify normalize, kept local to stay web-safe). */
@@ -219,6 +224,7 @@ export async function getLibraryItem(db: Db, id: string): Promise<(LibraryRow & 
     id: knowledgeSources.id, url: knowledgeSources.url, domain: knowledgeSources.domain, sourceType: knowledgeSources.sourceType,
     publishedAt: knowledgeSources.publishedAt, fetchedAt: knowledgeSources.fetchedAt, quote: knowledgeSources.quote,
     quoteVerified: knowledgeSources.quoteVerified, voice: knowledgeSources.voice,
+    via: knowledgeSources.via, snapshotAt: knowledgeSources.snapshotAt, expiresAt: knowledgeSources.expiresAt,
   }).from(knowledgeSources).where(eq(knowledgeSources.itemId, id)).orderBy(asc(knowledgeSources.fetchedAt), asc(knowledgeSources.id));
   return { ...(row as LibraryRow & { facts: unknown }), sources };
 }
