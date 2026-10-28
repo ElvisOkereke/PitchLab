@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { parse } from 'tldts';
 import { z } from 'zod';
 import { ideationContext, renderIdeationContext } from '../library/context';
-import { gateVerdicts, ideas, signals, type SignalVoice } from '../db/schema';
+import { gateVerdicts, ideas, markets, signals, type SignalVoice } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
@@ -119,6 +119,9 @@ export async function gate(
     return r;
   });
 
+  // The run's market countries scope the library startups shown to the generic check (as ideate does).
+  const [market] = await db.select().from(markets).where(eq(markets.id, run.config.marketId));
+  const countries = market?.countries;
   const competitorsPrompt = loadPrompt('competitors');
   const gatePrompt = loadPrompt('gate');
   const gateModel = router.modelFor('gate');
@@ -149,7 +152,7 @@ export async function gate(
     const sourceUrls = research.sources.map((s) => s.url);
     // Library startups already sold near this idea (needs the idea's embedding): extra evidence for the generic check.
     const alreadySold = idea.embedding
-      ? renderIdeationContext(await ideationContext(db, idea.embedding, { alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0 })).alreadySold
+      ? renderIdeationContext(await ideationContext(db, idea.embedding, { countries, alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0 })).alreadySold
       : 'none found';
     const judged = await router.structured(
       'gate',

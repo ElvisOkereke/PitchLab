@@ -55,6 +55,7 @@ describe('valueMultiple', () => {
   it('does not match once/flat inside other words, but does match them as words', () => {
     expect(valueMultiple(value, price(10, 'flatten'))).toBeNull();
     expect(valueMultiple(value, price(10, 'inflate'))).toBeNull();
+    expect(valueMultiple(value, price(10, 'sconce'))).toBeNull();
     expect(valueMultiple(value, price(10, 'flat fee'))).toBeCloseTo(120);
   });
   it('rejects negative and infinite prices', () => {

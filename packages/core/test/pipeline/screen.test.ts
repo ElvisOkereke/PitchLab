@@ -361,6 +361,31 @@ describe('screen', () => {
       expect((await getIdea(db, c1.id)).status).toBe('advanced');
     });
 
+    it('needs no swap when a consumer winner already exists', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const c = await insertIdea(db, run.id, { audience: 'consumer', businessModel: 'ads' });
+      const b = await insertIdea(db, run.id, { audience: 'business', businessModel: 'usage' });
+      const c2 = await insertIdea(db, run.id, { audience: 'both', businessModel: 'affiliate' });
+      const router = fakeRouter({ structured: { screen: [scores(5), scores(4), scores(3)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: [c.id, b.id, c2.id] });
+      expect(out.ideaIds).toEqual([c.id, b.id]);
+    });
+
+    it('the swap respects the per-model cap: a consumer loser whose model is at the cap is passed over', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 3 }));
+      const b1 = await insertIdea(db, run.id, { title: 'B1', audience: 'business', businessModel: 'subscription' });
+      const b2 = await insertIdea(db, run.id, { title: 'B2', audience: 'business', businessModel: 'subscription' });
+      const b3 = await insertIdea(db, run.id, { title: 'B3', audience: 'business', businessModel: 'usage' });
+      const cCapped = await insertIdea(db, run.id, { title: 'C-capped', audience: 'consumer', businessModel: 'subscription' });
+      const cOk = await insertIdea(db, run.id, { title: 'C-ok', audience: 'consumer', businessModel: 'ads' });
+      const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(4), scores(3), scores(2)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: [b1, b2, b3, cCapped, cOk].map((i) => i.id) });
+      expect(out.ideaIds).toEqual([b1.id, b2.id, cOk.id]);
+      expect((await getIdea(db, cCapped.id)).status).toBe('screened_out');
+    });
+
     it('does not swap when the consumer candidate fails a threshold, or none is needed', async () => {
       const db = await testDb();
       const past = await insertRun(db, defaultRunConfig({ seedType: 'open' }));

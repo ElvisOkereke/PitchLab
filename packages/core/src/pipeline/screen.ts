@@ -7,7 +7,6 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
 import { ideaBlock } from './idea-text';
-import type { ideas as ideasTable } from '../db/schema';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_WINNER_SIMILARITY = 0.8;
@@ -90,7 +89,7 @@ async function skipReason(db: Db, s: Scored, perModel: Map<string, number>, adva
 }
 
 /** The idea block plus the new money and barrier fields, each capped; lines for absent fields are left out. */
-function screenIdeaText(idea: typeof ideasTable.$inferSelect): string {
+function screenIdeaText(idea: typeof ideas.$inferSelect): string {
   const lines = [ideaBlock(idea)];
   if (idea.audience) lines.push(`Audience: ${idea.audience}`);
   if (idea.businessModel) lines.push(`Business model: ${idea.businessModel}`);

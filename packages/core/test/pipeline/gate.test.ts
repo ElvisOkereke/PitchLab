@@ -61,6 +61,21 @@ describe('gate.v3', () => {
     expect(prompt).toMatch(/generic:[^\n]*already-sold/);
   });
 
+  it('scopes the already-sold startups to the run market countries', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await upsertKnowledgeItem(db, {
+      kind: 'startup', title: 'German', summary: 'S', quote: 'q', audience: 'business', countries: ['DE'], industries: [],
+      facts: { name: 'Deutschco', whatItDoes: 'does it', businessModel: 'saas', outcome: 'active' },
+      source: { url: 'https://de.example/p', domain: 'de.example', sourceType: 'web', quote: 'q', quoteVerified: true },
+    }, unit(0), {});
+    const idea = await insertIdea(db, run.id, { embedding: unit(0) });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
+    expect(/<already-sold>\n([\s\S]*?)\n<\/already-sold>/.exec(prompt)![1]).toBe('none found');
+  });
+
   it('says none found when the library has nothing or the idea has no embedding', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
