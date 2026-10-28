@@ -125,7 +125,7 @@ function maintenanceScheduler(db: Db, log: (m: string) => void): () => Promise<v
       }
       if (Date.now() < nextDue) return;
       const m = await runMaintenance(db);
-      const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
+      const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims + m.prunedQuotaRows;
       if (total > 0) log(`maintenance: ${total} old records cleaned up`);
       const now = new Date();
       if (m.errors.length) {

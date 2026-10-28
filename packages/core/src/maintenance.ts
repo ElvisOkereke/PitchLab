@@ -22,7 +22,7 @@ export type MaintenanceResult = {
 };
 
 /**
- * Housekeeping: prune the fetch log, delete expired sources (and entries left empty), redact expired YouTube data. Idempotent.
+ * Housekeeping: prune the fetch log, delete expired sources (and entries left empty), redact expired YouTube data, prune old YouTube quota rows. Idempotent.
  * Each step runs in its own transaction and is isolated: a failing step is reported in `errors` and the others still run.
  */
 export async function runMaintenance(db: Db, now: Date = new Date()): Promise<MaintenanceResult> {
