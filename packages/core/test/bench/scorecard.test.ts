@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'realNeed', 'customerReturn', 'margin', 'wastedEntrants', 'ownerVerdict', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'costPerCase'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -323,5 +323,93 @@ describe('computeScorecard: exclusions and empty sets', () => {
       expect(sc.metrics.some((m) => /NaN|Infinity|undefined/.test(m.display))).toBe(false);
       expect(Object.values(sc.extra).every((x) => x === null || Number.isFinite(x))).toBe(true);
     }
+  });
+});
+
+const bar = (toStart: number, toCopy: number) => ({ toStart, toStartWhy: 'w', toCopy, toCopyWhy: 'w', soloBuildable: true });
+const richCase = async (db: Db, runId: string, buyer: Record<string, unknown>, ideaOver: Partial<Parameters<typeof insertIdea>[2]> = {}) =>
+  insertCase(db, (await insertIdea(db, runId, ideaOver)).id, { sections: { numbers: { results: { buyer, unit: { grossMarginPct: 70 } } } } as unknown as CaseSections });
+
+describe('computeScorecard: consumer, model and barrier metrics', () => {
+  it('consumerShare counts consumer or both over ideas with an audience; meets at 30%', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r, { audience: 'consumer' });
+    await insertIdea(db, r, { audience: 'both' });
+    await insertIdea(db, r, { audience: 'business' });
+    await insertIdea(db, r, { audience: 'business' });
+    await insertIdea(db, r); // old idea: no audience, not counted
+    await insertIdea(db, r, { audience: 'consumer', origin: 'owner' }); // owner idea: not generated
+    const m = metric(await computeScorecard(db, [r]), 'consumerShare');
+    expect(m).toMatchObject({ status: 'measured', value: 0.5, display: '50% (2 of 4)', meets: true });
+    const r2 = await newRun(db);
+    for (const a of ['consumer', 'business', 'business', 'business'] as const) await insertIdea(db, r2, { audience: a });
+    expect(metric(await computeScorecard(db, [r2]), 'consumerShare')).toMatchObject({ value: 0.25, meets: false });
+  });
+
+  it('old data with no audience, model or barriers is no_data for all three', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r);
+    await caseWith(db, r, 3, 70);
+    const sc = await computeScorecard(db, [r]);
+    for (const id of ['consumerShare', 'modelVariety', 'easyStartHardCopy'] as const) {
+      expect(metric(sc, id)).toMatchObject({ status: 'no_data', value: null, meets: null });
+      expect(metric(sc, id).note).toBeTruthy();
+    }
+  });
+
+  it('modelVariety averages distinct models per run over runs with at least one model', async () => {
+    const db = await testDb();
+    const a = await newRun(db);
+    const b = await newRun(db);
+    const empty = await newRun(db);
+    await insertIdea(db, empty);
+    for (const m of ['subscription', 'ads', 'ads', 'one_off', 'usage'] as const) await insertIdea(db, a, { businessModel: m });
+    for (const m of ['subscription', 'affiliate'] as const) await insertIdea(db, b, { businessModel: m });
+    await insertIdea(db, b, { businessModel: 'ads', origin: 'owner' });
+    const m = metric(await computeScorecard(db, [a, b, empty]), 'modelVariety');
+    expect(m).toMatchObject({ status: 'measured', value: 3, display: '3.0 per run', meets: false });
+    expect(metric(await computeScorecard(db, [a]), 'modelVariety')).toMatchObject({ value: 4, meets: true });
+  });
+
+  it('easyStartHardCopy counts cases with toStart <= 2 and toCopy >= 4 over cases with barriers', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await richCase(db, r, { roiMultiple: 3 }, { barriers: bar(2, 4) });
+    await richCase(db, r, { roiMultiple: 3 }, { barriers: bar(1, 5) });
+    await richCase(db, r, { roiMultiple: 3 }, { barriers: bar(3, 5) });
+    await richCase(db, r, { roiMultiple: 3 }, { barriers: bar(2, 3) });
+    await richCase(db, r, { roiMultiple: 3 }); // no barriers: not counted
+    const m = metric(await computeScorecard(db, [r]), 'easyStartHardCopy');
+    expect(m).toMatchObject({ status: 'measured', value: 0.5, display: '50% (2 of 4)', meets: true });
+  });
+
+  it('customerReturn prefers valueMultiple, falls back to roiMultiple, and skips pays-nothing cases', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await richCase(db, r, { valueMultiple: 4, roiMultiple: 1 }); // value wins: meets
+    await richCase(db, r, { valueMultiple: 1.5, roiMultiple: 9 }); // value wins: fails
+    await richCase(db, r, { roiMultiple: 5 }); // old case: fallback
+    await richCase(db, r, { valueMultiple: null, valueMultipleNote: 'You pay nothing.', roiMultiple: 0 }); // excluded
+    const m = metric(await computeScorecard(db, [r]), 'customerReturn');
+    expect(m.status).toBe('measured');
+    expect(m.display).toBe('67% (2 of 3), median 4.00×');
+    expect(m.meets).toBe(false);
+    expect(m.note).toMatch(/pays? nothing/i);
+    expect(metric(await computeScorecard(db, [r]), 'margin').display).toContain('4 of 4');
+  });
+
+  it('customerReturn is no_data when every case is a pays-nothing case', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await richCase(db, r, { valueMultiple: null, valueMultipleNote: 'You pay nothing.' });
+    expect(metric(await computeScorecard(db, [r]), 'customerReturn')).toMatchObject({ status: 'no_data', value: null });
+  });
+
+  it('demandEvidence stays not measured', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ status: 'not_measured', display: 'not measured yet (Phase 2)' });
   });
 });

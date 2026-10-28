@@ -37,11 +37,13 @@ export function ProgressView({
   running,
   scoreCases,
   costNote,
+  runCount,
 }: {
   passes: PassRow[];
   running: RunningPass | null;
   scoreCases: ScoreCases | null;
   costNote: string;
+  runCount?: number;
 }) {
   // The list is newest first and the oldest baseline is the canonical one (baseline-0), as in `gen bench report`.
   const baseline = passes.filter((p) => p.kind === 'baseline').at(-1) ?? null;
@@ -58,7 +60,7 @@ export function ProgressView({
       ) : (
         <section aria-labelledby="bench-run-title" className="card">
           <h2 id="bench-run-title">Run benchmark</h2>
-          <RunBenchmarkForm costNote={costNote} />
+          <RunBenchmarkForm costNote={costNote} runCount={runCount} />
         </section>
       )}
       <div className="scroll-x" data-tour="progress-scorecard">

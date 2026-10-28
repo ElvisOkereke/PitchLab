@@ -41,6 +41,11 @@ const ROI_BAR = 3;
 const MARGIN_BAR = 60;
 const WASTED_TARGET = 0.3;
 const OWNER_VERDICT_TARGET = 3.5;
+const CONSUMER_SHARE_TARGET = 0.3;
+const MODEL_VARIETY_TARGET = 4;
+const EASY_START_TARGET = 0.5;
+const EASY_START_MAX = 2;
+const HARD_COPY_MIN = 4;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -135,14 +140,17 @@ type Data = {
   history: number[];
   buyerCounts: number[];
   cited: { total: number; yes: number };
-  caseRows: { roi: number | null; gm: number | null }[];
+  /** roi is valueMultiple (else roiMultiple); skip marks a user-pays-nothing case, left out of customer return. */
+  caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null }[];
+  audience: { total: number; consumer: number };
+  modelCounts: number[];
   gut: number[];
   entrants: { total: number; wasted: number };
   cost: number;
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, caseRows: [], gut: [], entrants: { total: 0, wasted: 0 }, cost: 0,
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], entrants: { total: 0, wasted: 0 }, cost: 0,
 });
 
 function extraOf(d: Data, runCount: number): Scorecard['extra'] {
@@ -151,7 +159,7 @@ function extraOf(d: Data, runCount: number): Scorecard['extra'] {
     ideas: d.ideaCount,
     cases: d.caseRows.length,
     scoredCases: d.gut.length,
-    medianRoi: median(d.caseRows.flatMap((c) => (c.roi === null ? [] : [c.roi]))),
+    medianRoi: median(d.caseRows.flatMap((c) => (c.roi === null || c.skip ? [] : [c.roi]))),
     newVsHistory: d.history.length ? mean(d.history) : null,
   };
 }
@@ -171,9 +179,11 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const within = await nearestSims(db, embedded.ids, embedded.ids);
   const history = await nearestSims(db, embedded.ids, historyIds.ids);
 
-  const [[ideaCountRow], buyerRows, [citedRow], caseRows, [entrantRow], [llm], [dat]] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], caseRows, [entrantRow], [llm], [dat]] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
+    db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
+    db.select({ runId: ideas.runId, n: countDistinct(ideas.businessModel) }).from(ideas).where(and(generated, isNotNull(ideas.businessModel))).groupBy(ideas.runId),
     (() => {
       const cited = db.selectDistinct({ sid: sql<string>`unnest(${ideas.signalIds})`.as('sid') }).from(ideas).where(generated).as('cited');
       return db.select({
@@ -185,6 +195,10 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       id: cases.id,
       roi: sectionNumber(sql`'{numbers,results,buyer,roiMultiple}'`),
       gm: sectionNumber(sql`'{numbers,results,unit,grossMarginPct}'`),
+      vm: sectionNumber(sql`'{numbers,results,buyer,valueMultiple}'`),
+      vmKey: sql<boolean>`coalesce((${cases.sections} #> '{numbers,results,buyer}') ? 'valueMultiple', false)`,
+      vmNote: sql<boolean>`coalesce(jsonb_typeof(${cases.sections} #> '{numbers,results,buyer,valueMultipleNote}') = 'string', false)`,
+      barriers: ideas.barriers,
     })
       .from(cases)
       .innerJoin(ideas, eq(ideas.id, cases.ideaId))
@@ -222,7 +236,22 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     history,
     buyerCounts: [...perRun.values()].map((s) => s.size),
     cited: { total: Number(citedRow?.total ?? 0), yes: Number(citedRow?.yes ?? 0) },
-    caseRows: caseRows.map((c) => ({ roi: num(c.roi), gm: num(c.gm) })),
+    audience: {
+      total: audienceRows.reduce((t, r) => t + Number(r.n), 0),
+      consumer: audienceRows.filter((r) => r.audience === 'consumer' || r.audience === 'both').reduce((t, r) => t + Number(r.n), 0),
+    },
+    modelCounts: modelRows.map((r) => Number(r.n)),
+    caseRows: caseRows.map((c) => {
+      const vm = num(c.vm);
+      const skip = vm === null && c.vmKey === true && c.vmNote === true;
+      const b = c.barriers;
+      return {
+        roi: vm !== null ? vm : num(c.roi),
+        gm: num(c.gm),
+        skip,
+        easyHard: b ? b.toStart <= EASY_START_MAX && b.toCopy >= HARD_COPY_MIN : null,
+      };
+    }),
     gut: gutRows.map((g) => g.value),
     entrants: { total: Number(entrantRow?.total ?? 0), wasted: Number(entrantRow?.wasted ?? 0) },
     cost: Number(llm?.sum ?? 0) + Number(dat?.sum ?? 0),
@@ -235,7 +264,10 @@ function buildMetrics(d: Data): MetricResult[] {
   const share = (k: number, n: number, meets: (v: number) => boolean, suffix = ''): Row =>
     measured(k / n, `${pctText(k, n, meets)} (${k} of ${n})${suffix}`, meets(k / n));
   const nCases = d.caseRows.length;
-  const rois = d.caseRows.flatMap((c) => (c.roi === null ? [] : [c.roi]));
+  const returnCases = d.caseRows.filter((c) => !c.skip);
+  const skipped = nCases - returnCases.length;
+  const rois = returnCases.flatMap((c) => (c.roi === null ? [] : [c.roi]));
+  const withBarriers = d.caseRows.filter((c) => c.easyHard !== null);
   const medianRoi = median(rois);
 
   const rows: Partial<Record<MetricId, Row>> = {
@@ -251,9 +283,21 @@ function buildMetrics(d: Data): MetricResult[] {
     })(),
     realNeed: d.cited.total === 0 ? noData('No generated idea in this set cites a signal.')
       : share(d.cited.yes, d.cited.total, (v) => v >= REAL_NEED_TARGET),
+    consumerShare: d.audience.total === 0 ? noData('No generated idea in this set has an audience.')
+      : share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
+    modelVariety: d.modelCounts.length === 0 ? noData('No run in this set has ideas with a business model.') : (() => {
+      const v = mean(d.modelCounts);
+      return measured(v, `${v.toFixed(1)} per run`, v >= MODEL_VARIETY_TARGET);
+    })(),
+    easyStartHardCopy: withBarriers.length === 0 ? noData('No case in this set has barrier scores.')
+      : share(withBarriers.filter((c) => c.easyHard).length, withBarriers.length, (v) => v >= EASY_START_TARGET),
     customerReturn: nCases === 0 ? noData(NO_CASES)
-      : share(d.caseRows.filter((c) => c.roi !== null && c.roi >= ROI_BAR).length, nCases, (v) => v === 1,
-        medianRoi === null ? ', no median' : `, median ${medianRoi.toFixed(2)}×`),
+      : returnCases.length === 0 ? noData('Every case here is one where the user pays nothing, so there is no return to measure.')
+      : {
+        ...share(returnCases.filter((c) => c.roi !== null && c.roi >= ROI_BAR).length, returnCases.length, (v) => v === 1,
+          medianRoi === null ? ', no median' : `, median ${medianRoi.toFixed(2)}×`),
+        ...(skipped > 0 ? { note: `${skipped} case${skipped === 1 ? '' : 's'} where the user pays nothing left out.` } : {}),
+      },
     margin: nCases === 0 ? noData(NO_CASES)
       : share(d.caseRows.filter((c) => c.gm !== null && c.gm >= MARGIN_BAR).length, nCases, (v) => v === 1),
     wastedEntrants: d.entrants.total === 0 ? noData('No generated idea in this set reached the gate.')

@@ -33,6 +33,7 @@ export default async function ProgressPage() {
         running={running}
         scoreCases={finished && cases ? { label: finished.label, cases } : null}
         costNote={BENCHMARKS[CURRENT_BENCHMARK].costNote}
+        runCount={BENCHMARKS[CURRENT_BENCHMARK].seeds.length}
       />
       {running ? <AutoRefresh everyMs={REFRESH_MS} /> : null}
     </main>

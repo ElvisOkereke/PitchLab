@@ -14,7 +14,10 @@ export type GlossaryTerm =
   | 'notionalSpend'
   | 'benchmark'
   | 'library'
-  | 'researchMission';
+  | 'researchMission'
+  | 'businessModel'
+  | 'valueMultiple'
+  | 'barriers';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -72,7 +75,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   benchmark: {
     label: 'Benchmark',
-    text: 'A fixed set of 4 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too.',
+    text: 'A fixed set of 5 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too.',
   },
   library: {
     label: 'Library',
@@ -81,5 +84,17 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   researchMission: {
     label: 'Research mission',
     text: 'A research job on a topic you choose. The worker searches public sources, adds what it finds to the library and shows the cost first. You set the budget, and a mission stops starting new steps once it is spent.',
+  },
+  businessModel: {
+    label: 'Business model',
+    text: 'The way an idea earns money, such as a subscription, a one-off sale, a fee per transaction, ads or affiliate links. Ideas are written with one of these models, and an idea from before this existed reads as a subscription.',
+  },
+  valueMultiple: {
+    label: 'Value multiple',
+    text: 'How much a year of the product is worth to the person who pays, divided by what it costs them for a year. A multiple of 3× means they get three times the price back. Ideas where the user pays nothing, such as ad-funded ones, have none.',
+  },
+  barriers: {
+    label: 'Barriers',
+    text: 'Two 1 to 5 scores on an idea: how hard it is for someone to start it (1 is easy) and how hard it is for a rival to copy it (5 is hard). The best ideas are easy to start and hard to copy.',
   },
 };

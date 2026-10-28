@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { benchmarkPasses, runs, scores } from '../../src/db/schema';
-import { BENCHMARKS } from '../../src/bench/definitions';
+import { BENCHMARKS, CURRENT_BENCHMARK } from '../../src/bench/definitions';
 import {
   BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, passCases, passProgress, queueBenchmarkPass, recomputePass, saveBaseline, previewBaseline,
 } from '../../src/bench/passes';
@@ -70,18 +70,18 @@ describe('baseline preview and owner-verdict copy', () => {
 });
 
 describe('queueBenchmarkPass', () => {
-  it('inserts the bench-v1 runs even when MAX_QUEUED would block', async () => {
+  it('inserts the current benchmark runs even when MAX_QUEUED would block', async () => {
     const db = await testDb();
     const q = await queueBenchmarkPass(db);
     expect(q.ok).toBe(true);
     if (!q.ok) return;
-    expect(MAX_QUEUED).toBeLessThan(4);
-    expect(q.pass).toMatchObject({ status: 'running', kind: 'pass', label: 'bench-v1 #1', version: 'bench-v1', metrics: null });
+    expect(MAX_QUEUED).toBeLessThan(5);
+    expect(q.pass).toMatchObject({ status: 'running', kind: 'pass', label: 'bench-v2 #1', version: 'bench-v2', metrics: null });
     const rows = await db.select().from(runs).where(eq(runs.benchmarkPassId, q.pass.id));
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows.map((r) => r.id).sort()).toEqual([...q.pass.runIds].sort());
     for (const r of rows) expect(r.status).toBe('queued');
-    const expected = BENCHMARKS['bench-v1'].seeds.map((s) => defaultRunConfig({ ...s, marketId: QUEUE_MARKET_ID, ideaCount: 12, advanceCount: 3 }));
+    const expected = BENCHMARKS[CURRENT_BENCHMARK].seeds.map((s) => defaultRunConfig({ ...s, marketId: QUEUE_MARKET_ID, ideaCount: 12, advanceCount: 3 }));
     expect(rows.map((r) => r.config)).toEqual(expect.arrayContaining(expected));
   });
 
@@ -100,7 +100,7 @@ describe('queueBenchmarkPass', () => {
     const db = await testDb();
     await queued(db);
     expect(await queueBenchmarkPass(db)).toEqual({ ok: false, reason: 'pass_running' });
-    expect(await db.select().from(runs)).toHaveLength(4);
+    expect(await db.select().from(runs)).toHaveLength(5);
     expect(BENCH_REFUSAL).toEqual({
       busy: 'Wait until the queue is empty before running the benchmark.',
       pass_running: 'A benchmark pass is already running.',
@@ -112,7 +112,7 @@ describe('queueBenchmarkPass', () => {
     const p = await queued(db);
     await setStatus(db, p.runIds, 'succeeded');
     await finalizeBenchmarkPasses(db);
-    expect((await queued(db)).label).toBe('bench-v1 #2');
+    expect((await queued(db)).label).toBe('bench-v2 #2');
   });
 });
 
@@ -135,7 +135,7 @@ describe('finalizeBenchmarkPasses', () => {
     expect(await finalizeBenchmarkPasses(db)).toBe(1);
     const [row] = await listBenchmarkPasses(db);
     expect(row).toMatchObject({ status: 'complete' });
-    expect(row!.metrics?.extra.runs).toBe(4);
+    expect(row!.metrics?.extra.runs).toBe(5);
     expect(row!.completedAt).toBeInstanceOf(Date);
     expect(await finalizeBenchmarkPasses(db)).toBe(0);
   });
@@ -148,8 +148,8 @@ describe('finalizeBenchmarkPasses', () => {
     expect(await finalizeBenchmarkPasses(db)).toBe(1);
     const [row] = await listBenchmarkPasses(db);
     expect(row!.status).toBe('incomplete');
-    expect(row!.metrics?.notes).toContain('1 of 4 runs failed');
-    expect(row!.metrics?.extra.runs).toBe(4);
+    expect(row!.metrics?.notes).toContain('1 of 5 runs failed');
+    expect(row!.metrics?.extra.runs).toBe(5);
   });
 });
 
@@ -171,7 +171,7 @@ describe('frozen passes and recompute', () => {
     expect(re.ok).toBe(true);
     if (!re.ok) return;
     expect(re.pass).toMatchObject({ kind: 'recompute', sourcePassId: p.id, status: 'complete' });
-    expect(re.pass.label).toMatch(/^bench-v1 #1 \(recomputed \d{4}-\d\d-\d\d\)$/);
+    expect(re.pass.label).toMatch(/^bench-v2 #1 \(recomputed \d{4}-\d\d-\d\d\)$/);
     expect([...re.pass.runIds].sort()).toEqual([...p.runIds].sort());
     expect(re.pass.metrics?.extra.scoredCases).toBe(1);
     expect(await listBenchmarkPasses(db)).toHaveLength(2);
@@ -196,7 +196,7 @@ describe('frozen passes and recompute', () => {
     const re2 = await recomputePass(db, p.id);
     if (!re2.ok) throw new Error('recompute2');
     expect(re2.pass.status).toBe('incomplete');
-    expect(re2.pass.metrics?.notes).toContain('1 of 4 runs failed');
+    expect(re2.pass.metrics?.notes).toContain('1 of 5 runs failed');
   });
 
   it('recompute refuses unknown and running passes', async () => {
@@ -214,13 +214,13 @@ describe('listing and progress', () => {
     const p = await queued(db);
     await setStatus(db, p.runIds.slice(0, 1), 'succeeded');
     await setStatus(db, p.runIds.slice(1, 2), 'failed');
-    expect(await passProgress(db, p.id)).toEqual({ queued: 2, running: 0, succeeded: 1, failed: 1 });
+    expect(await passProgress(db, p.id)).toEqual({ queued: 3, running: 0, succeeded: 1, failed: 1 });
     await setStatus(db, p.runIds, 'succeeded');
     await finalizeBenchmarkPasses(db);
     await saveBaseline(db);
     await saveBaseline(db, { force: true });
     const all = await listBenchmarkPasses(db);
-    expect(all.map((r) => r.label)).toEqual(['baseline-1', 'baseline-0', 'bench-v1 #1']);
+    expect(all.map((r) => r.label)).toEqual(['baseline-1', 'baseline-0', 'bench-v2 #1']);
     expect(await listBenchmarkPasses(db, 2)).toHaveLength(2);
   });
 });

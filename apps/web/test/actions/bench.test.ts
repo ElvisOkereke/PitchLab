@@ -20,9 +20,9 @@ beforeEach(async () => {
 });
 
 describe('runBenchmarkAction', () => {
-  it('queues 4 runs as a running pass and revalidates the pages that show them', async () => {
+  it('queues 5 runs as a running pass and revalidates the pages that show them', async () => {
     expect(await runBenchmarkAction({}, new FormData())).toEqual({ ok: true });
-    expect(await state.db.select().from(runs)).toHaveLength(4);
+    expect(await state.db.select().from(runs)).toHaveLength(5);
     const [pass] = await state.db.select().from(benchmarkPasses);
     expect(pass!.status).toBe('running');
     expect(request.revalidated).toEqual(expect.arrayContaining(['/progress', '/runs', '/command']));
@@ -31,7 +31,7 @@ describe('runBenchmarkAction', () => {
   it('refuses a second press while a pass is running, and queues nothing more', async () => {
     await runBenchmarkAction({}, new FormData());
     expect(await runBenchmarkAction({}, new FormData())).toEqual({ error: BENCH_REFUSAL.pass_running });
-    expect(await state.db.select().from(runs)).toHaveLength(4);
+    expect(await state.db.select().from(runs)).toHaveLength(5);
   });
 
   it('refuses while other runs are waiting', async () => {

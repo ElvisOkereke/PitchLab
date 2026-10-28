@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { BENCHMARKS, CURRENT_BENCHMARK, METRIC_DEFS } from '../../src/bench/definitions';
-import { CA_US, LENSES } from '../../src/db/seed';
+import { CA_US, CONSUMER_LENSES, LENSES } from '../../src/db/seed';
 import { testDb } from '../helpers/db';
 import { benchmarkPasses, runs } from '../../src/db/schema';
 
@@ -21,12 +21,25 @@ describe('bench definitions', () => {
       advanceCount: 3,
       costNote: 'about $12–28 in model calls (4 runs at about $3–7 each)',
     });
-    expect(CURRENT_BENCHMARK).toBe('bench-v1');
+  });
+
+  it('bench-v2 is frozen and current', () => {
+    expect(BENCHMARKS['bench-v2'], 'bench-v2 is immutable; add bench-v3 instead').toEqual({
+      seeds: [
+        ...BENCHMARKS['bench-v1'].seeds,
+        { seedType: 'lens', lensIds: ['consumer-earn-side', 'consumer-save-auto'] },
+      ],
+      ideaCount: 12,
+      advanceCount: 3,
+      costNote: 'about $15–35 in model calls (5 runs at about $3–7 each)',
+    });
+    expect(BENCHMARKS['bench-v2'].seeds).toHaveLength(5);
+    expect(CURRENT_BENCHMARK).toBe('bench-v2');
   });
 
   it('every sector and lens id exists in the seed data', () => {
-    const lensIds = new Set(LENSES.map((l) => l.id));
-    for (const s of BENCHMARKS['bench-v1'].seeds) {
+    const lensIds = new Set([...LENSES, ...CONSUMER_LENSES].map((l) => l.id));
+    for (const v of ['bench-v1', 'bench-v2'] as const) for (const s of BENCHMARKS[v].seeds) {
       if (s.seedType === 'sector') for (const x of s.sectors) expect(CA_US.sectors).toContain(x);
       if (s.seedType === 'lens') for (const x of s.lensIds) expect(lensIds.has(x)).toBe(true);
     }
@@ -39,7 +52,7 @@ describe('bench definitions', () => {
     ]);
     expect(new Set(METRIC_DEFS.map((m) => m.id)).size).toBe(13);
     const phased = Object.fromEntries(METRIC_DEFS.filter((m) => m.phase).map((m) => [m.id, m.phase]));
-    expect(phased).toEqual({ consumerShare: 3, modelVariety: 3, demandEvidence: 2, easyStartHardCopy: 3 });
+    expect(phased).toEqual({ demandEvidence: 2 });
   });
 });
 
