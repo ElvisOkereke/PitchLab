@@ -81,6 +81,7 @@ describe('business-model display details', () => {
     const text = container.textContent ?? '';
     expect(text).toContain('Annual revenue per user');
     expect(text).toContain('Users');
+    expect(text).toContain('Breakeven users');
     expect(text).toContain('user pays nothing (ad/affiliate funded)');
   });
   it('shows the setup fee for service plus software', () => {

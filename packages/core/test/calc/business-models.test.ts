@@ -63,6 +63,7 @@ describe('value multiple per model (value / what the user pays)', () => {
     ['transaction_fee', models[5]![1], 1500, 2],
     ['data_sales', models[7]![1], 6000, 2],
     ['licensing', models[8]![1], 16000, 2],
+    ['one_off', models[6]![1], 196, 2],
     ['service_plus_software (subscription only)', models[9]![1], 2400, 2],
     ['ads (user pays nothing)', models[2]![1], 600, null],
     ['affiliate (user pays nothing)', models[3]![1], 600, null],
@@ -72,6 +73,13 @@ describe('value multiple per model (value / what the user pays)', () => {
     expect(r.buyer.valueMultiple).toBe(expected);
     if (expected === null) expect(r.buyer.valueMultipleNote).toBe('user pays nothing (ad/affiliate funded)');
     else expect(r.buyer.valueMultipleNote).toBeUndefined();
+  });
+  it('ads and freemium formulas say user, others say buyer', () => {
+    const ads = computeNumbers(withRev(models[2]![1])).formulas.join('\n');
+    expect(ads).toContain('Monthly price per user');
+    expect(ads).toContain('Monthly delivery cost per user');
+    expect(ads).toContain('Breakeven users');
+    expect(computeNumbers(withRev(models[1]![1])).formulas.join('\n')).toContain('Monthly price per buyer');
   });
   it('freemium keeps roiMultiple on the revenue basis', () => {
     const r = computeNumbers(withRev(models[4]![1], { valueToUserPerYear: s(600) }));
@@ -104,6 +112,7 @@ describe('value multiple per model (value / what the user pays)', () => {
     expect(r.market.annualRevenuePotential).toBe(1200000);
     expect(r.market.year1Revenue).toBe(20000);
     expect(r.formulas).toContain('Year 1 includes a one-time setup fee of $800 per buyer');
+    expect(r.formulas).toContain('Year 1 revenue = $1,200,000 × 0.01 + 10 buyers × $800 setup = $20,000');
   });
   it('value wording: ROI and payback lines say value to the user, problem-cost lines are omitted', () => {
     const r = computeNumbers({ ...base, problemCost: [{ label: 'x', quantity: s(1), unitCost: s(1), perYear: s(1) }], valueToUserPerYear: s(600) });

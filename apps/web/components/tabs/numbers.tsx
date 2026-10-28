@@ -40,7 +40,7 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
       ? ([['Setup fee per buyer (year 1 only)', money(r.buyer.setupFeePerBuyer)]] as [string, string][])
       : []),
     ['Gross margin', orNone(r.unit.grossMarginPct, (n) => `${n}%`)],
-    ['Breakeven buyers', r.breakevenBuyers === null ? `none (${r.breakevenReason ?? 'unknown'})` : String(r.breakevenBuyers)],
+    [perUser ? 'Breakeven users' : 'Breakeven buyers', r.breakevenBuyers === null ? `none (${r.breakevenReason ?? 'unknown'})` : String(r.breakevenBuyers)],
   ];
   return (
     <div className="tab tab-numbers">

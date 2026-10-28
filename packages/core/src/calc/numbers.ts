@@ -181,6 +181,7 @@ export function computeNumbers(i: NumberInputs): NumberResults {
     breakevenBuyers = Math.max(0, Math.ceil(fin(fixedRaw / marginPerBuyer) - 1e-9));
   }
 
+  const who = i.revenue?.model === 'ads' || i.revenue?.model === 'freemium' ? 'user' : 'buyer';
   const formulas: string[] = [
     modelRevenue ? modelRevenue.formula : `Annual price = ${usd(amount)} × ${plain(units)} × ${plain(periods)} = ${usd(annualPriceRaw)}`,
     ...(valueGiven !== null
@@ -205,17 +206,19 @@ export function computeNumbers(i: NumberInputs): NumberResults {
     payback === null
       ? `Payback: n/a (annual ${valueGiven !== null ? 'value to the user is' : 'savings are'} ${usd(annualSavingsRaw)})`
       : `Payback = annual price ${usd(annualPriceRaw)} ÷ (annual ${valueGiven !== null ? 'value to the user' : 'savings'} ${usd(annualSavingsRaw)} ÷ 12) = ${payback} months`,
-    `Monthly price per buyer = ${usd(annualPriceRaw)} / 12 = ${usd(monthlyPriceRaw)}`,
-    `Monthly delivery cost per buyer = ${usd(deliveryRaw)}`,
+    `Monthly price per ${who} = ${usd(annualPriceRaw)} / 12 = ${usd(monthlyPriceRaw)}`,
+    `Monthly delivery cost per ${who} = ${usd(deliveryRaw)}`,
     grossMarginPct === null
       ? `Gross margin: n/a (monthly price is ${usd(monthlyPriceRaw)})`
       : `Gross margin = (monthly price ${usd(monthlyPriceRaw)} − delivery ${usd(deliveryRaw)}) ÷ ${usd(monthlyPriceRaw)} = ${grossMarginPct}%`,
     `Annual revenue potential = ${plain(reachable)} × ${usd(annualPriceRaw)} = ${usd(potentialRaw)}`,
-    `Year 1 revenue = ${usd(potentialRaw)} × ${plain(capture)} = ${usd(year1Raw)}`,
+    modelRevenue?.setup !== undefined
+      ? `Year 1 revenue = ${usd(potentialRaw)} × ${plain(capture)} + ${plain(fin(reachable * capture))} buyers × ${usd(setupRaw)} setup = ${usd(year1Raw)}`
+      : `Year 1 revenue = ${usd(potentialRaw)} × ${plain(capture)} = ${usd(year1Raw)}`,
     ...(modelRevenue?.setup !== undefined ? [`Year 1 includes a one-time setup fee of ${usd(setupRaw)} per buyer`] : []),
     breakevenBuyers === null
-      ? `Breakeven buyers: none (${breakevenReason})`
-      : `Breakeven buyers = ceil(${usd(fixedRaw)} / (${usd(monthlyPriceRaw)} - ${usd(deliveryRaw)})) = ${breakevenBuyers}`,
+      ? `Breakeven ${who}s: none (${breakevenReason})`
+      : `Breakeven ${who}s = ceil(${usd(fixedRaw)} / (${usd(monthlyPriceRaw)} - ${usd(deliveryRaw)})) = ${breakevenBuyers}`,
   ];
 
   return {
