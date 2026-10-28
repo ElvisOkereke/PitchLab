@@ -60,7 +60,7 @@ It already has one.
   say unknown until the worker has run once.
 - **Good:** LLM API connected. If it says not set, put your key in `LLM_API_KEY` in `.env` and restart the worker.
   For YouTube, put a free key in `YOUTUBE_API_KEY` and restart the worker. For the local browser, run
-  `npx playwright install chromium` in `packages/core`.
+  `npx playwright-core install chromium` in `packages/core`.
 
 ### Fill in who your emails come from
 

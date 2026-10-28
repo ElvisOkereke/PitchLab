@@ -188,7 +188,8 @@ describe('LibraryView fetch diagnostics', () => {
     const { getByTestId } = render(<LibraryView {...props()} />);
     const t = getByTestId('fetch-diagnostics').textContent!;
     expect(t).toMatch(/last 30 days/i);
-    expect(t).toMatch(/15 of 20.*75%/);
+    expect(t).toContain('Pages read: 15 of 20 (75%)');
+    expect(t).not.toMatch(/pages you tried to read/);
     expect(t).toMatch(/direct.*11 of 16.*69%/i);
     expect(t).toMatch(/archived copy.*3 of 3.*100%/i);
     expect(t).toMatch(/local browser.*1 of 1/i);

@@ -2,7 +2,7 @@
 // Searches every file the browser can download (apps/web/.next/static) for the secrets this app holds and for
 // server-only markers. Prints file names and labels only, never a value. Exit 0 = no hits, 1 = hits, 2 = no build.
 //   Secrets (process env first, else the repo-root .env, read only to search): SESSION_SECRET, OWNER_PASSWORD_HASH,
-//   DATABASE_URL and its password, LLM_API_KEY, ACCEPT_PASSWORD when set.
+//   DATABASE_URL and its password, LLM_API_KEY, YOUTUBE_API_KEY, ACCEPT_PASSWORD when set.
 //   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:, playwright (the optional local browser is core-only)
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -53,6 +53,7 @@ export function bundleNeedles(env = loadEnv()) {
     DATABASE_URL: env.DATABASE_URL,
     'DATABASE_URL password': env.DATABASE_URL ? dbPassword(env.DATABASE_URL) : undefined,
     LLM_API_KEY: env.LLM_API_KEY,
+    YOUTUBE_API_KEY: env.YOUTUBE_API_KEY,
     ACCEPT_PASSWORD: env.ACCEPT_PASSWORD,
   };
   const needles = [];

@@ -100,7 +100,7 @@ missions** card.
   allowed the page, PitchLab asks the Internet Archive (Wayback Machine) for a snapshot, at most 1 request per second. A
   429 from the archive turns it off for the rest of that mission.
 - **Local browser (optional):** pages that fetch fine but hold under 800 readable characters (usually pages that need
-  JavaScript) can be rendered in a local Chromium. Install it once with `npx playwright install chromium`, run in
+  JavaScript) can be rendered in a local Chromium. Install it once with `npx playwright-core install chromium`, run in
   `packages/core` (about 150 to 300 MB). It identifies itself as PitchLab, sends GET requests only, blocks images, media
   and fonts, waits at most 20 seconds, and can only reach the network through a local guard that refuses private
   addresses. Without it, missions run as before. Settings → Connections shows whether it is installed.

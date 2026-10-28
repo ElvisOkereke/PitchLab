@@ -85,6 +85,20 @@ describe('SettingsView', () => {
     expect([...c.querySelectorAll('.badge')].map((b) => b.textContent).join(' ')).not.toMatch(/postgres|key|secret|:\/\//i);
   });
 
+  it('the whole Connections section holds no secret-shaped text in any state (variable names are fine)', () => {
+    const w = data().worker!;
+    const allOn = Object.fromEntries(Object.keys(w.providers).map((k) => [k, true])) as typeof w.providers;
+    const secretShaped = /postgres(ql)?:|:\/\/[^\s]*@|AIza[0-9A-Za-z_-]{10,}|sk-[A-Za-z0-9]{8,}|ghp_[A-Za-z0-9]{8,}|Bearer\s/;
+    for (const d of [data(), data({ worker: { ...w, providers: allOn } }), data({ worker: null, database: false })]) {
+      const { getByTestId, unmount } = render(<SettingsView data={d} />);
+      const t = getByTestId('connections').textContent!;
+      expect(t).not.toMatch(secretShaped);
+      unmount();
+    }
+    const off = render(<SettingsView data={data()} />);
+    expect(off.getByTestId('connections').textContent).toContain('YOUTUBE_API_KEY');
+  });
+
   it('YouTube: connected when the worker says so, otherwise how to add the key (the name only, never a value)', () => {
     const w = data().worker!;
     const on = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, youtube: true } } })} />);
@@ -110,7 +124,7 @@ describe('SettingsView', () => {
     const off = render(<SettingsView data={data()} />);
     const t = off.getByTestId('conn-browser').textContent!;
     expect(t).toContain('not installed');
-    expect(t).toContain('npx playwright install chromium');
+    expect(t).toContain('npx playwright-core install chromium');
     expect(t).toContain('packages/core');
   });
 

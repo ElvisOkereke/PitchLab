@@ -8,7 +8,7 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
   1. Sign in and open https://www.producthunt.com/v2/oauth/applications
   2. Create an application. The redirect URL can be `https://localhost:3000/callback`.
   3. Use the **Developer Token** (not the API key or secret) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
-- [ ] After merging, restart `npm run worker`. It applies the database update, which missions and the heartbeat need.
+- [ ] After merging, restart `npm run worker`. It applies the database update, which missions and the heartbeat need. Until the worker is restarted on the new code, Settings → Connections may show YouTube as "not set" and Chromium as "not installed".
 - [ ] After adding the token, restart `npm run worker`. Settings → Connections shows Product Hunt as connected.
 - [ ] If PitchLab starts earning money, email hello@producthunt.com for commercial API permission (the developer token is for non-commercial use).
 - [ ] Turn on **Background research** in Settings when ready.
@@ -22,8 +22,8 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
   3. Go to Credentials, create an **API key**, and restrict it to YouTube Data API v3.
   4. Add it to `.env` as `YOUTUBE_API_KEY=…`, restart `npm run worker`, and check that Settings → Connections shows YouTube as connected.
   Comments are kept for 30 days and then deleted.
-- [ ] **Local browser (optional).** In `packages/core` run `npx playwright install chromium` (about 150 to 300 MB on the Y: drive). It helps with pages that need JavaScript. Chromium may already be installed on this computer (in `%LOCALAPPDATA%\ms-playwright`); if so, Settings → Connections shows "installed" once the worker has run.
-- [ ] After the key and Chromium are set up, run two $5 missions and compare **Fetch success** and **Social share** on the Library page with what they were before.
+- [ ] **Local browser (optional).** In `packages/core` run `npx playwright-core install chromium` (about 150 to 300 MB, installed to `%LOCALAPPDATA%\ms-playwright`, usually on C:). It helps with pages that need JavaScript. Settings → Connections shows whether it is installed (once the worker has run).
+- [ ] After the key and Chromium are set up, run two $5 missions and compare **Pages read** (Page fetching card) and **Social share** on the Library page with what they were before.
 
 ## Use the app
 

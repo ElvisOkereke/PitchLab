@@ -84,7 +84,7 @@ type Importer = () => Promise<unknown>;
 
 /**
  * playwright-core's Chromium, or null when the package cannot be imported or its Chromium executable is not on disk
- * (the owner installs it with `npx playwright install chromium`). Never throws.
+ * (the owner installs it with `npx playwright-core install chromium`, run in packages/core). Never throws.
  */
 export async function loadBrowser(deps: { importer?: Importer } = {}): Promise<BrowserLike | null> {
   try {

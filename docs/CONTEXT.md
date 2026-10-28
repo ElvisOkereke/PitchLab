@@ -13,9 +13,9 @@
   that runs draw verified evidence from. Missions start from the Library page or `gen research`; background research is
   off by default (cap $5 per Toronto day, $1 missions). Sources: HN, GitHub, Stack Exchange, app reviews, Product Hunt,
   YC list, web pages. **Reddit is dropped** (site terms; owner decision).
+  Design: `docs/superpowers/specs/2026-10-26-research-library-design.md`.
   **Research reach (branch `reach`):** YouTube comments (optional key, 30-day expiry), archive fallback, optional local
   Chromium for thin pages, fetch diagnostics on the Library page. Design: `docs/superpowers/specs/2026-10-28-research-reach-design.md`. Owner to-dos are in `docs/OWNER-TODO.md`.
-  Design: `docs/superpowers/specs/2026-10-26-research-library-design.md`.
 - **Phase:** **Plan 1 complete; tuning-2 (branch `tuning-2`) run live 2026-10-17, results in `docs/runs/2026-10-17-run-3.md`.**
   Open run: 5 reached the gate, **0 passed** (§12.2 not met; run 2: 1); `generic` killed 4 of 5. Lead-capture gate
   entrants fell from 3/5 to 1/5, but repeat ideas (benchmark idea, a run-2 gate kill) still reach the gate: the

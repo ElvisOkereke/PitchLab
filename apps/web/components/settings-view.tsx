@@ -34,7 +34,7 @@ const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] 
 const HINT_ID: Partial<Record<keyof WorkerStatus['providers'], string>> = { youtube: 'conn-youtube', browser: 'conn-browser' };
 const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
   youtube: 'Optional. Add YOUTUBE_API_KEY to your .env file, then restart npm run worker.',
-  browser: 'Optional, for pages that need JavaScript. Install it with npx playwright install chromium, run in packages/core.',
+  browser: 'Optional, for pages that need JavaScript. Install it with npx playwright-core install chromium, run in packages/core.',
 };
 
 function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string }) {

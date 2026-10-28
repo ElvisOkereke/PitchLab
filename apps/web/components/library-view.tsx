@@ -177,7 +177,7 @@ function FetchDiagnostics({ fetches }: { fetches: FetchStats }) {
       ) : (
         <>
           <p>
-            Fetch success: <strong>{ofTotal(fetches.ok, fetches.total)}</strong> of the pages you tried to read came through.
+            Pages read: <strong>{ofTotal(fetches.ok, fetches.total)}</strong>
           </p>
           <ul className="plain stack">
             {(Object.keys(VIA_LABEL) as (keyof FetchStats['byVia'])[]).map((v) => (
