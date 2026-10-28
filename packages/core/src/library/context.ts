@@ -3,8 +3,9 @@ import type { Db } from '../db/client';
 import { knowledgeItems } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import { parseFacts } from './kinds';
+import { itemLive, liveSource } from './live';
 
-/** Web-safe: drizzle-orm, schema, kinds and llm/untrusted (no imports) only. Bound parameters only. */
+/** Web-safe: drizzle-orm, schema, kinds, live and llm/untrusted (no imports) only. Bound parameters only. */
 
 export type CtxStartup = { id: string; name: string; whatItDoes: string; outcome: string; why?: string; url: string };
 export type CtxPricing = { id: string; product: string; pricePoints: { amount: number; currency: string; unit: string }[]; buyer: string; url: string };
@@ -20,12 +21,14 @@ const OVERFETCH = 3;
 const clamp = (v: number | undefined, dflt: number): number =>
   Math.min(Math.max(v !== undefined && Number.isFinite(v) ? Math.floor(v) : dflt, 0), HARD_MAX);
 
-const urlExpr = sql<string>`coalesce((select s.url from knowledge_sources s where s.item_id = knowledge_items.id order by s.fetched_at, s.id limit 1), '')`;
+// Expired sources are never used: the link is the oldest live source, and entries whose sources have all expired are skipped.
+const urlExpr = (now: Date) => sql<string>`coalesce((select s.url from knowledge_sources s where s.item_id = knowledge_items.id and ${liveSource(now)} order by s.fetched_at, s.id limit 1), '')`;
 
-async function fetchKind(db: Db, kind: 'startup' | 'pricing', queryVector: number[], countries: string[] | undefined, extra: SQL | undefined, limit: number) {
+async function fetchKind(db: Db, kind: 'startup' | 'pricing', queryVector: number[], countries: string[] | undefined, extra: SQL | undefined, limit: number, now: Date) {
   if (limit === 0) return [];
   const conds: (SQL | undefined)[] = [
     eq(knowledgeItems.status, 'active'),
+    itemLive(now),
     eq(knowledgeItems.kind, kind),
     sql`${knowledgeItems.embedding} is not null`,
     extra,
@@ -34,7 +37,7 @@ async function fetchKind(db: Db, kind: 'startup' | 'pricing', queryVector: numbe
     const arr = sql`array[${sql.join(countries.map((c) => sql`${c}`), sql`, `)}]::text[]`;
     conds.push(sql`(${knowledgeItems.countries} && ${arr} or 'global' = any(${knowledgeItems.countries}) or cardinality(${knowledgeItems.countries}) = 0)`);
   }
-  return db.select({ id: knowledgeItems.id, facts: knowledgeItems.facts, url: urlExpr })
+  return db.select({ id: knowledgeItems.id, facts: knowledgeItems.facts, url: urlExpr(now) })
     .from(knowledgeItems).where(and(...conds))
     .orderBy(asc(cosineDistance(knowledgeItems.embedding, queryVector)), asc(knowledgeItems.id))
     .limit(limit * OVERFETCH);
@@ -54,16 +57,17 @@ function startups(rows: { id: string; facts: unknown; url: string }[]): CtxStart
 export async function ideationContext(
   db: Db,
   queryVector: number[],
-  opts: { countries?: string[]; alreadySoldMax?: number; lessonsMax?: number; pricingMax?: number },
+  opts: { countries?: string[]; alreadySoldMax?: number; lessonsMax?: number; pricingMax?: number; now?: Date },
 ): Promise<IdeationContext> {
+  const now = opts.now ?? new Date();
   const soldMax = clamp(opts.alreadySoldMax, DEFAULT_SOLD);
   const lessonsMax = clamp(opts.lessonsMax, DEFAULT_LESSONS);
   const pricingMax = clamp(opts.pricingMax, DEFAULT_PRICING);
   const outcomeIn = (vals: string[]) => sql`${knowledgeItems.facts}->>'outcome' in (${sql.join(vals.map((v) => sql`${v}`), sql`, `)})`;
 
-  const soldRows = await fetchKind(db, 'startup', queryVector, opts.countries, outcomeIn(['active', 'acquired', 'public']), soldMax);
-  const lessonRows = await fetchKind(db, 'startup', queryVector, opts.countries, outcomeIn(['dead']), lessonsMax);
-  const pricingRows = await fetchKind(db, 'pricing', queryVector, opts.countries, undefined, pricingMax);
+  const soldRows = await fetchKind(db, 'startup', queryVector, opts.countries, outcomeIn(['active', 'acquired', 'public']), soldMax, now);
+  const lessonRows = await fetchKind(db, 'startup', queryVector, opts.countries, outcomeIn(['dead']), lessonsMax, now);
+  const pricingRows = await fetchKind(db, 'pricing', queryVector, opts.countries, undefined, pricingMax, now);
 
   const lessonsAll = startups(lessonRows);
   const lessons = [...lessonsAll.filter((l) => l.why), ...lessonsAll.filter((l) => !l.why)].slice(0, lessonsMax);

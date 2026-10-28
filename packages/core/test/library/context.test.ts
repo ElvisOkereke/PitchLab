@@ -3,6 +3,7 @@ import { testDb, unit } from '../helpers/db';
 import { upsertKnowledgeItem, rejectItem } from '../../src/library/store';
 import type { KnowledgeDraft } from '../../src/library/kinds';
 import { ideationContext, renderIdeationContext } from '../../src/library/context';
+import { knowledgeSources } from '../../src/db/schema';
 
 const near = (s: number, dim = 1): number[] => { const v = unit(0).map(() => 0); v[0] = s; v[dim] = Math.sqrt(1 - s * s); return v; };
 let n = 0;
@@ -61,6 +62,17 @@ describe('ideationContext', () => {
     await add(db, 'startup', st('Why', 'dead', 'bad unit economics'), near(0.5, 2));
     const c = await ideationContext(db, unit(0), { lessonsMax: 1 });
     expect(c.lessons.map((l) => l.name)).toEqual(['Why']);
+  });
+
+  it('skips entries whose only sources have expired, and never links an expired source', async () => {
+    const db = await testDb();
+    const old = new Date(Date.now() - 40 * 864e5);
+    const yt = (v: string) => ({ url: `https://www.youtube.com/watch?v=${v}`, domain: 'www.youtube.com', sourceType: 'youtube', quoteVerified: false });
+    await upsertKnowledgeItem(db, { kind: 'startup', title: 'Gone', summary: 's', audience: 'business', countries: ['US'], industries: [], facts: st('Gone', 'active'), source: yt('gonegonegon') }, near(0.9, 1), { now: old });
+    const mixed = await upsertKnowledgeItem(db, { kind: 'startup', title: 'Mixed', summary: 's', audience: 'business', countries: ['US'], industries: [], facts: st('Mixed', 'active'), source: yt('mixedmixedm') }, near(0.8, 2), { now: old });
+    await db.insert(knowledgeSources).values({ itemId: mixed.itemId, url: 'https://mixed.example/', domain: 'mixed.example', sourceType: 'web' });
+    const c = await ideationContext(db, unit(0), {});
+    expect(c.alreadySold.map((s) => [s.name, s.url])).toEqual([['Mixed', 'https://mixed.example/']]);
   });
 });
 

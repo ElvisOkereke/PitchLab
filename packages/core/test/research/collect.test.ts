@@ -132,6 +132,26 @@ describe('collectPage', () => {
     expect(await e.rows()).toEqual(['archive:thin_text', 'direct:http_404']);
   });
 
+  it('logs every archive attempt under the original page\'s domain (archive.org never tops the failing domains)', async () => {
+    const cases: Partial<ArchiveClient>[] = [
+      {}, // fetched
+      { snapshot: vi.fn(async () => null) },
+      { fetch: vi.fn(async () => bad(503)) },
+      { snapshot: vi.fn(async () => { throw new SourceError('rate_limited', 'archive'); }) },
+      { snapshot: vi.fn(async () => { throw new Error('boom'); }) },
+    ];
+    for (const archive of cases) {
+      const s = await setup({ direct: bad(404), archive });
+      await collectPage(URL_, s.ctx);
+      const rows = (await s.ctx.db.select().from(pageFetches)).filter((r) => r.via === 'archive');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.urlDomain).toBe('site.example');
+    }
+    const blocked = await setup({ direct: bad(404), robots: (u) => !u.includes('web.archive.org') });
+    await collectPage(URL_, blocked.ctx);
+    expect((await blocked.ctx.db.select().from(pageFetches)).map((r) => `${r.via}:${r.urlDomain}`).sort()).toEqual(['archive:site.example', 'direct:site.example']);
+  });
+
   it('a browser that throws leaves the thin text', async () => {
     const s = await setup({ direct: okPage('tiny'), browser: { render: async () => { throw new Error('boom'); } } });
     expect(await collectPage(URL_, s.ctx)).toMatchObject({ text: 'tiny', via: 'direct' });

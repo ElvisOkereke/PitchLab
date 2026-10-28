@@ -4,7 +4,7 @@ import { testDb, unit } from '../helpers/db';
 import { knowledgeItems, knowledgeSources } from '../../src/db/schema';
 import type { KnowledgeDraft } from '../../src/library/kinds';
 import {
-  contentHash, upsertKnowledgeItem, rejectItem, restoreItem, searchLibrary, getLibraryItem, libraryCoverage, retrieveForRun,
+  contentHash, upsertKnowledgeItem, rejectItem, restoreItem, searchLibrary, getLibraryItem, libraryCoverage, retrieveForRun, countEligibleForRun,
 } from '../../src/library/store';
 
 /** Unit vector with cosine `s` to unit(0). */
@@ -322,5 +322,41 @@ describe('retrieveForRun', () => {
     const rows = await retrieveForRun(db, unit(0), { limit: 10, countries: ['US'] });
     expect(rows.map((r) => r.title).sort()).toEqual(['any', 'glob', 'us']);
     expect(await retrieveForRun(db, unit(0), { limit: 10, kinds: ['pricing'] })).toHaveLength(0);
+  });
+});
+
+describe('expired sources are never used or shown (before maintenance runs)', () => {
+  const ytSrc = (url: string, quote: string) => ({ url, domain: 'www.youtube.com', sourceType: 'youtube', quote, quoteVerified: true });
+  const longAgo = new Date(Date.now() - 40 * 864e5);
+  it('hides expired sources and expired-only entries from listing, item view, coverage and run retrieval', async () => {
+    const db = await testDb();
+    const ytQuote = 'Expired comment text that must not be shown anywhere.';
+    // A: YouTube only, expired. B: web (unverified) + an expired YouTube source whose quote the entry adopted. C: YouTube, live.
+    const a = await upsertKnowledgeItem(db, draft({ title: 'expired only', quote: 'qa', source: ytSrc('https://www.youtube.com/watch?v=aaaaaaaaaaa', 'Another expired comment, long enough.') }), unit(0), { now: longAgo });
+    const bDraft = draft({ title: 'mixed', quote: 'qb', source: unverifiedSource('https://web.example/b', 'web.example', 'web') });
+    const b = await upsertKnowledgeItem(db, bDraft, near(0.5, 1), {});
+    await upsertKnowledgeItem(db, { ...bDraft, source: ytSrc('https://www.youtube.com/watch?v=bbbbbbbbbbb', ytQuote) }, near(0.5, 1), { now: longAgo });
+    expect((await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, b.itemId)))[0]!.quote).toBe(ytQuote);
+    const c = await upsertKnowledgeItem(db, draft({ title: 'live', quote: 'qc', source: ytSrc('https://www.youtube.com/watch?v=ccccccccccc', 'A live comment that is long enough.') }), near(0.4, 2), {});
+
+    const listed = await searchLibrary(db, {});
+    expect(listed.rows.map((r) => r.title).sort()).toEqual(['live', 'mixed']);
+    expect(listed.total).toBe(2);
+    const bRow = listed.rows.find((r) => r.id === b.itemId)!;
+    expect(bRow).toMatchObject({ quote: null, quoteVerified: false, sourceCount: 1 });
+    expect((await searchLibrary(db, { sourceType: 'youtube' })).rows.map((r) => r.title)).toEqual(['live']);
+
+    expect(await getLibraryItem(db, a.itemId)).toBeNull();
+    const bItem = (await getLibraryItem(db, b.itemId))!;
+    expect(bItem.sources.map((s) => s.sourceType)).toEqual(['web']);
+    expect(JSON.stringify(bItem)).not.toContain('Expired comment');
+    expect((await getLibraryItem(db, c.itemId))!.sources).toHaveLength(1);
+
+    const cov = await libraryCoverage(db);
+    expect(cov.byKind).toEqual({ problem: 2 });
+    expect(cov.bySourceType).toEqual({ web: 1, youtube: 1 });
+
+    expect((await retrieveForRun(db, unit(0), { limit: 10 })).map((r) => r.id)).toEqual([c.itemId]);
+    expect(await countEligibleForRun(db, {})).toBe(1);
   });
 });

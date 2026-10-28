@@ -328,6 +328,49 @@ describe('30-day expiry end to end', () => {
     expect(c2.quote).toBeNull();
   });
 
+  it('a signal promoted 29 days after the fetch, and a claim on a case written then, are redacted at fetch + 31 days', async () => {
+    const q = 'Chasing unpaid invoices takes me six hours every week for real.';
+    const stored = await upsertKnowledgeItem(db, draftFor(q), unit(1), { now: NOW });
+    const day29 = new Date(NOW.getTime() + 29 * DAY);
+    const [sig] = await db.insert(signals).values({
+      marketId: 'ca-us', source: 'youtube', url: YT_URL, title: 'Why invoicing hurts', quote: q, quoteHash: 'yt29',
+      knowledgeItemId: stored.itemId, embedding: unit(2), createdAt: day29,
+    }).returning();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 }));
+    const kase = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: day29 });
+    await db.insert(claims).values({ caseId: kase.id, section: 'signal', text: 't', sourceUrl: YT_URL, quote: q });
+
+    expect(await runMaintenance(db, new Date(NOW.getTime() + 29.5 * DAY))).toMatchObject({ redactedSignals: 0, redactedClaims: 0 });
+    const r = await runMaintenance(db, new Date(NOW.getTime() + 31 * DAY));
+    expect(r).toMatchObject({ expiredSources: 1, redactedSignals: 1, redactedClaims: 1, errors: [] });
+    expect((await db.select().from(signals).where(eq(signals.id, sig!.id)))[0]!.quote).toBe('[expired YouTube data]');
+    expect((await db.select().from(claims))[0]).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+  });
+
+  it('re-collecting the same video with a different comment does not refresh the stored comment\'s expiry', async () => {
+    const qA = 'Chasing unpaid invoices takes me six hours every week for real.';
+    const qB = 'A different comment on the same video about late payers.';
+    const first = await upsertKnowledgeItem(db, draftFor(qA), unit(1), { now: NOW });
+    const d = draftFor(qA);
+    const again = await upsertKnowledgeItem(db, { ...d, source: { ...d.source, quote: qB } }, unit(1), { now: new Date(NOW.getTime() + 20 * DAY) });
+    expect(again.itemId).toBe(first.itemId);
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src!.quote).toBe(qA);
+    expect(src!.fetchedAt.getTime()).toBe(NOW.getTime());
+    expect(src!.expiresAt!.getTime()).toBe(NOW.getTime() + 30 * DAY);
+  });
+
+  it('an unverified-to-verified upgrade of the same video takes the new comment and restarts its 30 days', async () => {
+    const q = 'Chasing unpaid invoices takes me six hours every week for real.';
+    const d = draftFor(q);
+    await upsertKnowledgeItem(db, { ...d, source: { ...d.source, quote: 'not verbatim', quoteVerified: false } }, unit(1), { now: NOW });
+    const later = new Date(NOW.getTime() + 20 * DAY);
+    await upsertKnowledgeItem(db, d, unit(1), { now: later });
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src).toMatchObject({ quote: q, quoteVerified: true });
+    expect(src!.expiresAt!.getTime()).toBe(later.getTime() + 30 * DAY);
+  });
+
   it('re-collecting refreshes fetchedAt and expiresAt, so the source survives past the first expiry', async () => {
     const q = 'Chasing unpaid invoices takes me six hours every week for real.';
     const first = await upsertKnowledgeItem(db, draftFor(q), unit(1), { now: NOW });

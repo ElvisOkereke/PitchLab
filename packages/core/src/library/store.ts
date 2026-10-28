@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import { and, asc, cosineDistance, count, desc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, cosineDistance, count, desc, eq, gt, ilike, inArray, isNull, not, or, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { knowledgeItems, knowledgeSources, type FETCH_VIAS } from '../db/schema';
 import type { KnowledgeDraft, KnowledgeVoice } from './kinds';
+import { itemLive, itemQuoteExpired, liveSource } from './live';
 
-/** Web-safe: drizzle-orm, schema, kinds and node:crypto only (server-side). Bound parameters only. */
+/** Web-safe: drizzle-orm, schema, kinds, live and node:crypto only (server-side). Bound parameters only. */
 
 export const MERGE_SIMILARITY = 0.9;
 export const PAGE_SIZE = 50;
@@ -85,6 +86,9 @@ export async function upsertKnowledgeItem(
     // A later verified quote for the same url replaces an unverified one (with its voice); a verified row is never downgraded.
     const upgrade = sql`(excluded.quote_verified and not ${knowledgeSources.quoteVerified})`;
     const upgraded = (col: SQL, current: SQL) => sql`(case when ${upgrade} then ${col} else ${current} end)`;
+    // The stored quote is (re)collected now only when it is the incoming text, or is replaced by it (upgrade).
+    const recollected = sql`(${upgrade} or ${knowledgeSources.quote} is not distinct from excluded.quote)`;
+    const refreshed = (col: SQL, current: SQL) => sql`(case when ${recollected} then ${col} else ${current} end)`;
     const addSource = (itemId: string) =>
       tx.insert(knowledgeSources).values({
         itemId, url: d.source.url, domain: d.source.domain, sourceType: d.source.sourceType,
@@ -99,8 +103,12 @@ export async function upsertKnowledgeItem(
           voice: upgraded(sql`coalesce(excluded.voice, ${knowledgeSources.voice})`, sql`${knowledgeSources.voice}`),
           via: upgraded(sql`excluded.via`, sql`${knowledgeSources.via}`),
           snapshotAt: upgraded(sql`excluded.snapshot_at`, sql`${knowledgeSources.snapshotAt}`),
-          // Re-collecting a YouTube source restarts its 30 days, whether or not the quote changed.
-          ...(isYoutube ? { fetchedAt: sql`excluded.fetched_at`, expiresAt: sql`excluded.expires_at` } : {}),
+          // Re-collecting a YouTube source restarts its 30 days only when the stored comment is the one just fetched: another
+          // comment on the same video does not extend a comment that was not re-fetched.
+          ...(isYoutube ? {
+            fetchedAt: refreshed(sql`excluded.fetched_at`, sql`${knowledgeSources.fetchedAt}`),
+            expiresAt: refreshed(sql`excluded.expires_at`, sql`${knowledgeSources.expiresAt}`),
+          } : {}),
         },
       });
 
@@ -162,15 +170,22 @@ export async function restoreItem(db: Db, id: string): Promise<boolean> {
 }
 
 const toDate = (v: unknown): Date | null => (v == null ? null : v instanceof Date ? v : new Date(v as string));
-const sourceCountExpr = sql<number>`(select count(*) from knowledge_sources s where s.item_id = knowledge_items.id)`.mapWith(Number);
-const newestExpr = sql<Date | null>`(select max(coalesce(s.published_at, s.fetched_at)) from knowledge_sources s where s.item_id = knowledge_items.id)`.mapWith(toDate);
+// Read-side expressions count and show live (unexpired) sources only; see ./live.
+const sourceCountExpr = (now: Date) =>
+  sql<number>`(select count(*) from knowledge_sources s where s.item_id = knowledge_items.id and ${liveSource(now)})`.mapWith(Number);
+const newestExpr = (now: Date) =>
+  sql<Date | null>`(select max(coalesce(s.published_at, s.fetched_at)) from knowledge_sources s where s.item_id = knowledge_items.id and ${liveSource(now)})`.mapWith(toDate);
+const quoteExpr = (now: Date) => sql<string | null>`(case when ${itemQuoteExpired(now)} then null else ${knowledgeItems.quote} end)`;
+const quoteVerifiedExpr = (now: Date) => sql<boolean>`(${knowledgeItems.quoteVerified} and not ${itemQuoteExpired(now)})`;
+/** Live-source condition for queries that join knowledge_sources directly. */
+const liveJoined = (now: Date) => or(isNull(knowledgeSources.expiresAt), gt(knowledgeSources.expiresAt, now));
 
-const rowShape = {
+const rowShape = (now: Date) => ({
   id: knowledgeItems.id, kind: knowledgeItems.kind, title: knowledgeItems.title, summary: knowledgeItems.summary,
-  quote: knowledgeItems.quote, quoteVerified: knowledgeItems.quoteVerified, audience: knowledgeItems.audience,
+  quote: quoteExpr(now), quoteVerified: quoteVerifiedExpr(now), audience: knowledgeItems.audience,
   countries: knowledgeItems.countries, industries: knowledgeItems.industries, voice: knowledgeItems.voice,
-  status: knowledgeItems.status, sourceCount: sourceCountExpr, newestSourceAt: newestExpr, updatedAt: knowledgeItems.updatedAt,
-};
+  status: knowledgeItems.status, sourceCount: sourceCountExpr(now), newestSourceAt: newestExpr(now), updatedAt: knowledgeItems.updatedAt,
+});
 
 export type LibraryFilter = {
   text?: string;
@@ -188,8 +203,8 @@ export type LibraryFilter = {
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-export async function searchLibrary(db: Db, f: LibraryFilter): Promise<{ rows: LibraryRow[]; total: number }> {
-  const conds: (SQL | undefined)[] = [];
+export async function searchLibrary(db: Db, f: LibraryFilter, now: Date = new Date()): Promise<{ rows: LibraryRow[]; total: number }> {
+  const conds: (SQL | undefined)[] = [itemLive(now)];
   const status = f.status ?? 'active';
   if (status !== 'all') conds.push(eq(knowledgeItems.status, status));
   if (f.text?.trim()) {
@@ -201,10 +216,10 @@ export async function searchLibrary(db: Db, f: LibraryFilter): Promise<{ rows: L
   if (f.country) conds.push(sql`${f.country} = any(${knowledgeItems.countries})`);
   if (f.industry) conds.push(sql`${f.industry} = any(${knowledgeItems.industries})`);
   if (f.voice) conds.push(eq(knowledgeItems.voice, f.voice as KnowledgeVoice));
-  if (f.sourceType) conds.push(sql`exists (select 1 from knowledge_sources s where s.item_id = knowledge_items.id and s.source_type = ${f.sourceType})`);
+  if (f.sourceType) conds.push(sql`exists (select 1 from knowledge_sources s where s.item_id = knowledge_items.id and s.source_type = ${f.sourceType} and ${liveSource(now)})`);
   if (f.maxAgeDays != null && Number.isFinite(f.maxAgeDays)) {
     const cutoff = new Date(Date.now() - f.maxAgeDays * 86_400_000).toISOString();
-    conds.push(sql`${newestExpr} >= ${cutoff}::timestamptz`);
+    conds.push(sql`${newestExpr(now)} >= ${cutoff}::timestamptz`);
   }
   const where = and(...conds);
   const page = Number.isFinite(f.page) ? Math.max(1, Math.floor(f.page!)) : 1;
@@ -213,19 +228,20 @@ export async function searchLibrary(db: Db, f: LibraryFilter): Promise<{ rows: L
   const order = f.queryVector
     ? [asc(cosineDistance(knowledgeItems.embedding, f.queryVector)), desc(knowledgeItems.updatedAt), asc(knowledgeItems.id)]
     : [desc(knowledgeItems.updatedAt), asc(knowledgeItems.id)];
-  const rows = await db.select(rowShape).from(knowledgeItems).where(where).orderBy(...order).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
+  const rows = await db.select(rowShape(now)).from(knowledgeItems).where(where).orderBy(...order).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
   return { rows: rows as LibraryRow[], total: Number(total) };
 }
 
-export async function getLibraryItem(db: Db, id: string): Promise<(LibraryRow & { facts: unknown; sources: SourceRow[] }) | null> {
-  const [row] = await db.select({ ...rowShape, facts: knowledgeItems.facts }).from(knowledgeItems).where(eq(knowledgeItems.id, id));
+/** An entry with its live sources; null when missing or when all its sources have expired. */
+export async function getLibraryItem(db: Db, id: string, now: Date = new Date()): Promise<(LibraryRow & { facts: unknown; sources: SourceRow[] }) | null> {
+  const [row] = await db.select({ ...rowShape(now), facts: knowledgeItems.facts }).from(knowledgeItems).where(and(eq(knowledgeItems.id, id), itemLive(now)));
   if (!row) return null;
   const sources = await db.select({
     id: knowledgeSources.id, url: knowledgeSources.url, domain: knowledgeSources.domain, sourceType: knowledgeSources.sourceType,
     publishedAt: knowledgeSources.publishedAt, fetchedAt: knowledgeSources.fetchedAt, quote: knowledgeSources.quote,
     quoteVerified: knowledgeSources.quoteVerified, voice: knowledgeSources.voice,
     via: knowledgeSources.via, snapshotAt: knowledgeSources.snapshotAt, expiresAt: knowledgeSources.expiresAt,
-  }).from(knowledgeSources).where(eq(knowledgeSources.itemId, id)).orderBy(asc(knowledgeSources.fetchedAt), asc(knowledgeSources.id));
+  }).from(knowledgeSources).where(and(eq(knowledgeSources.itemId, id), liveJoined(now))).orderBy(asc(knowledgeSources.fetchedAt), asc(knowledgeSources.id));
   return { ...(row as LibraryRow & { facts: unknown }), sources };
 }
 
@@ -246,20 +262,21 @@ export type LibraryCoverage = {
   oldest: Date | null;
 };
 
-export async function libraryCoverage(db: Db): Promise<LibraryCoverage> {
-  const active = eq(knowledgeItems.status, 'active');
+export async function libraryCoverage(db: Db, now: Date = new Date()): Promise<LibraryCoverage> {
+  const active = and(eq(knowledgeItems.status, 'active'), itemLive(now));
+  const activeLiveSource = and(active, liveJoined(now));
   const tally = (rows: { k: string | null; n: number }[]) =>
     Object.fromEntries(rows.filter((r) => r.k != null).map((r) => [r.k as string, Number(r.n)]));
 
   const byKindRows = await db.select({ k: knowledgeItems.kind, n: count() }).from(knowledgeItems).where(active).groupBy(knowledgeItems.kind);
   const byVoiceRows = await db.select({ k: knowledgeItems.voice, n: count() }).from(knowledgeItems).where(active).groupBy(knowledgeItems.voice);
   const bySourceRows = await db.select({ k: knowledgeSources.sourceType, n: sql<number>`count(distinct ${knowledgeSources.itemId})`.mapWith(Number) })
-    .from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(active).groupBy(knowledgeSources.sourceType);
+    .from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(activeLiveSource).groupBy(knowledgeSources.sourceType);
 
   const [social] = await db.select({
     total: count(),
     social: sql<number>`count(*) filter (where ${inArray(knowledgeSources.sourceType, [...SOCIAL_SOURCE_TYPES])})`.mapWith(Number),
-  }).from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(active);
+  }).from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(activeLiveSource);
 
   const [problems] = await db.select({
     total: count(),
@@ -295,11 +312,14 @@ export async function libraryCoverage(db: Db): Promise<LibraryCoverage> {
 }
 
 /** The eligibility rule shared by retrieveForRun and countEligibleForRun. */
-function eligibleConds(opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[] }): (SQL | undefined)[] {
+function eligibleConds(opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[] }, now: Date): (SQL | undefined)[] {
   const kinds = opts.kinds?.length ? opts.kinds : (['problem', 'pricing'] as const);
   const conds: (SQL | undefined)[] = [
     eq(knowledgeItems.status, 'active'),
     eq(knowledgeItems.quoteVerified, true),
+    // Expired data is never promoted: not an entry whose sources have all expired, nor a quote only an expired source had.
+    itemLive(now),
+    not(itemQuoteExpired(now)),
     inArray(knowledgeItems.kind, [...kinds]),
     sql`${knowledgeItems.embedding} is not null`,
   ];
@@ -311,23 +331,24 @@ function eligibleConds(opts: { kinds?: ('problem' | 'pricing')[]; countries?: st
 }
 
 /** How many entries retrieveForRun could return for these options (same eligibility, no limit). */
-export async function countEligibleForRun(db: Db, opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[] }): Promise<number> {
-  const [r] = await db.select({ n: count() }).from(knowledgeItems).where(and(...eligibleConds(opts)));
+export async function countEligibleForRun(db: Db, opts: { kinds?: ('problem' | 'pricing')[]; countries?: string[]; now?: Date }): Promise<number> {
+  const [r] = await db.select({ n: count() }).from(knowledgeItems).where(and(...eligibleConds(opts, opts.now ?? new Date())));
   return Number(r?.n ?? 0);
 }
 
 export async function retrieveForRun(
   db: Db,
   queryVector: number[],
-  opts: { limit: number; kinds?: ('problem' | 'pricing')[]; countries?: string[] },
+  opts: { limit: number; kinds?: ('problem' | 'pricing')[]; countries?: string[]; now?: Date },
 ): Promise<LibraryRow[]> {
   const limit = Math.min(Math.max(Number.isFinite(opts.limit) ? Math.floor(opts.limit) : RETRIEVAL_MAX, 0), RETRIEVAL_MAX);
   if (limit === 0) return [];
-  const conds = eligibleConds(opts);
-  const domainExpr = sql<string>`coalesce((select s.domain from knowledge_sources s where s.item_id = knowledge_items.id order by s.fetched_at, s.id limit 1), knowledge_items.id::text)`;
+  const now = opts.now ?? new Date();
+  const conds = eligibleConds(opts, now);
+  const domainExpr = sql<string>`coalesce((select s.domain from knowledge_sources s where s.item_id = knowledge_items.id and ${liveSource(now)} order by s.fetched_at, s.id limit 1), knowledge_items.id::text)`;
   const scoreExpr = sql<number>`(${similarity(queryVector)})
     + (case when ${knowledgeItems.voice} in ('operator', 'neutral') then ${VOICE_BONUS}::float8 else 0::float8 end)
-    - greatest(0::float8, extract(epoch from (now() - coalesce(${newestExpr}, now()))) / ${YEAR_MS / 1000}::float8 - ${AGE_FREE_YEARS}::float8) * ${AGE_PENALTY_PER_YEAR}::float8`;
+    - greatest(0::float8, extract(epoch from (now() - coalesce(${newestExpr(now)}, now()))) / ${YEAR_MS / 1000}::float8 - ${AGE_FREE_YEARS}::float8) * ${AGE_PENALTY_PER_YEAR}::float8`;
 
   // One bounded query: score every eligible entry, keep the best 3 per domain, take the top `limit`.
   const base = db.select({
@@ -335,7 +356,7 @@ export async function retrieveForRun(
     quote: knowledgeItems.quote, quoteVerified: knowledgeItems.quoteVerified, audience: knowledgeItems.audience,
     countries: knowledgeItems.countries, industries: knowledgeItems.industries, voice: knowledgeItems.voice,
     status: knowledgeItems.status, updatedAt: knowledgeItems.updatedAt,
-    sourceCount: sourceCountExpr.as('source_count'), newestSourceAt: newestExpr.as('newest_source_at'),
+    sourceCount: sourceCountExpr(now).as('source_count'), newestSourceAt: newestExpr(now).as('newest_source_at'),
     score: scoreExpr.as('score'), dom: domainExpr.as('dom'),
   }).from(knowledgeItems).where(and(...conds)).as('base');
   const ranked = db.select({

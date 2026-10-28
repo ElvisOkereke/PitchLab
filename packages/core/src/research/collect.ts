@@ -83,6 +83,9 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
   if (!ARCHIVE_OUTCOMES.has(outcome) || !ctx.archive || state.archiveDisabled) return { failed: outcome };
 
   const archive = ctx.archive;
+  // Archive attempts are logged under the original page's domain (via 'archive'), so the diagnostics show which sites
+  // needed the archive instead of ranking archive.org as a failing domain.
+  const recordArchive = (o: FetchOutcome, status?: number) => record(url, o, 'archive', status);
   const disable = () => {
     state.archiveDisabled = true;
     ctx.log('archive: rate limited by archive.org, not used for the rest of this mission');
@@ -90,17 +93,17 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
   try {
     const snap = await archive.snapshot(url);
     if (!snap) {
-      await record('https://archive.org/', 'http_404', 'archive', 404); // tried: no usable snapshot
+      await recordArchive('http_404', 404); // tried: no usable snapshot
       return { failed: outcome };
     }
     await archive.pace?.();
     if (!(await ctx.robotsAllows(snap.snapshotUrl))) {
-      await record(snap.snapshotUrl, 'blocked_robots', 'archive');
+      await recordArchive('blocked_robots');
       return { failed: outcome };
     }
     const page = await archive.fetch(snap);
     const empty = page.ok && page.text.trim() === '';
-    await record(snap.snapshotUrl, empty ? 'thin_text' : classifyFetch(page), 'archive', page.status || undefined);
+    await recordArchive(empty ? 'thin_text' : classifyFetch(page), page.status || undefined);
     if (!page.ok || empty) {
       if (page.status === 429) disable();
       return { failed: outcome };
@@ -108,9 +111,10 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
     // The original's address stays the source URL; the archive host never becomes a citation.
     return { text: page.text, title: page.title, finalUrl: url, via: 'archive', snapshotAt: snap.timestamp };
   } catch (e) {
-    if (e instanceof SourceError && e.code === 'rate_limited') disable();
+    const limited = e instanceof SourceError && e.code === 'rate_limited';
+    if (limited) disable();
     else ctx.log(`archive: ${hostOf(url)} lookup failed`);
-    await record('https://archive.org/', e instanceof SourceError && e.code === 'rate_limited' ? 'http_4xx' : 'network', 'archive', e instanceof SourceError && e.code === 'rate_limited' ? 429 : undefined);
+    await recordArchive(limited ? 'http_4xx' : 'network', limited ? 429 : undefined);
     return { failed: outcome };
   }
 }
