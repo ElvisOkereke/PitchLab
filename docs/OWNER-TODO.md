@@ -16,6 +16,7 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 
 ## Use the app
 
+- [ ] Run a bench-v2 pass after merging and score the cases. It is the first pass with consumer ideas, business models, barriers and the value multiple, and the scorecard rows for them read "no data" until then.
 - [ ] Give each case a **Your gut** score (Score tab). It feeds the owner verdict on the Progress page; press **Recompute** on a pass afterwards.
 - [ ] Walk through the tour ("Take the tour") once on your computer and once on your phone, in light and dark mode. Report anything confusing.
 - [ ] Try **Hide** and **Reset** on the example case (Settings → Example case).

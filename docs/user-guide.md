@@ -373,16 +373,32 @@ Kill early. A killed case costs nothing to keep, and you can overturn it later. 
 
 Write the reason in the kill note. Reasons like these help the next runs avoid the same dead ends.
 
+## Ideas for people as well as businesses
+
+- **What:** Each idea now says who pays (a business, an individual, or both), how it earns money (its business
+  model: subscription, one-off, usage, marketplace, transaction fee, data sales, ads, affiliate, licensing, freemium,
+  or service plus software), and two barrier scores: how hard it is to start and how hard to copy. A consumer idea
+  must name an individual who pays, or whose attention or data is the product. A business idea is never relabelled
+  as "both" to fill the mix.
+- **Why:** Earlier runs only found business-to-business ideas. Consumer ideas, and models such as ads or affiliate,
+  widen the search, and the barrier scores point you to ideas that are cheap to start and hard to copy.
+- **Value multiple:** a case now shows how much a year of the product is worth to the paying user against what it
+  costs them, with the source of each figure. Ideas where the user pays nothing show a note instead. A multiple under
+  1× gets the "value below price" flag and the case is kept for you to judge. The older return figure is still shown.
+- **Consumer lenses:** six lenses aim at individuals: earn on the side, save on a car or home, life stages, solo
+  creators, leapfrogging a market, and AI for chores. Tick them under **Lenses** when you start a run. Runs without
+  a lens pick at most 6 lenses and include at least 2 consumer ones when the seed allows.
+
 ## Track idea quality
 
 - **What:** Open **Progress**. It scores how varied, well-evidenced and valuable your generated ideas are, and shows
   the scores for a baseline and your newest benchmark passes side by side. Each row has a target, with a green or red
   badge when a result meets it or misses it.
 - **Why:** After you change something in PitchLab, you need to know whether ideas got better or only different. A
-  benchmark is a fixed set of 4 runs, so every pass is measured the same way.
+  benchmark is a fixed set of 5 runs (called bench-v2), so every pass is measured the same way.
 - **Do it:**
   1. Freeze a baseline once with `npm run gen -- bench baseline`. Until then the page says "No baseline yet".
-  2. After a change, press **Run benchmark**. It queues 4 runs, about $12–28 in model calls, and only when you press
+  2. After a change, press **Run benchmark**. It queues 5 runs, about $15–35 in model calls, and only when you press
      it. It is refused while other runs are waiting or a pass is already running. Keep `npm run worker` running.
   3. The page refreshes while the pass runs. When it finishes, a new column appears. A pass where a run failed is
      marked "incomplete".
@@ -391,7 +407,7 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
      column with today's scores; the old one stays as it was. Retrying a failed run after its pass froze doesn't change
      the pass either: press Recompute to include the retried run.
 - **What good looks like:** Repetition and near-duplicates fall, buyer variety rises, and your own verdict stays above
-  3.5. With only 4 runs, small differences (under about 0.05 similarity, or one case) may be noise.
+  3.5. The newer rows should also rise: consumer share (at least 30% of ideas for individuals), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
 - **From the terminal:** `npm run gen -- bench report` prints the scorecard and writes it to `output/bench/`.
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline

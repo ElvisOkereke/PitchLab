@@ -177,15 +177,22 @@ flowchart TD
 ## Benchmark
 
 `packages/core/src/bench/` measures idea quality from stored rows only (no model calls). `definitions.ts` holds the
-immutable `bench-v1` seeds and the 13 metric definitions; `scorecard.ts` computes a scorecard over a set of runs
+immutable `bench-v1` and `bench-v2` seeds (v2 is v1 plus a run on the `consumer-earn-side` and `consumer-save-auto` lenses; `CURRENT_BENCHMARK` is `bench-v2`) and the 13 metric definitions (only `demandEvidence` is still marked not measured); `scorecard.ts` computes a scorecard over a set of runs
 (example data excluded, at most 200 runs and 3000 ideas, with a note when trimmed); `passes.ts` freezes baselines,
 queues passes and finalises them. A snapshot is stored once in `benchmark_passes` (kind `baseline`, `pass` or
 `recompute`; status `running`, `complete` or `incomplete`) and is never recomputed in place: `gen bench report
 --recompute` (or the Recompute button on Progress) adds a new `recompute` row.
 
 - **Queueing:** `queueBenchmarkPass` runs in one transaction under the queue advisory lock. It refuses when a pass is
-  running or any run is queued or running, then inserts the pass and its 4 runs, each with `runs.benchmark_pass_id`
+  running or any run is queued or running, then inserts the pass and its 5 runs, each with `runs.benchmark_pass_id`
   set. The dashboard's Progress page and `gen bench run` both call it.
+- **Generation metrics:** `consumerShare` is generated ideas with audience consumer or both over those with an audience
+  (target 30%). `modelVariety` is distinct `business_model` values per run, averaged over runs with at least one
+  (target 4). `easyStartHardCopy` is cases whose idea has `barriers.toStart <= 2` and `toCopy >= 4` over cases whose
+  idea has barriers (target 50%). `customerReturn` reads `numbers.results.buyer.valueMultiple` when it is present and
+  not null, leaves out a case whose multiple is null because the user pays nothing (and says so in the metric note),
+  and falls back to `roiMultiple` for older cases. Ideas and cases from before these fields exist are `no_data`, and
+  frozen snapshots keep the "not measured yet" text they were saved with.
 - **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each run outcome and on every heartbeat (not after
   validation jobs); `gen resume` calls it too. When every run of a running pass has
   finished, the pass is frozen with metrics over all its runs: `complete`, or `incomplete` if any run failed. The hook

@@ -44,7 +44,16 @@ The background program that does the work in your queued runs and validation pac
 An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.
 
 ### Benchmark
-A fixed set of 4 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too. Press Run benchmark on the Progress page, or use `npm run gen -- bench run`.
+A fixed set of 5 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too. Press Run benchmark on the Progress page, or use `npm run gen -- bench run`. The current set is bench-v2: the four bench-v1 runs plus a run through two consumer lenses (earn on the side, save on a car). Older passes keep their own scores and are not changed.
+
+### Business model
+The way an idea earns money, such as a subscription, a one-off sale, a fee per transaction, ads or affiliate links. Ideas are written with one of these models, and an idea from before this existed reads as a subscription. The ten models are subscription, one-off, usage, marketplace, transaction fee, data sales, ads, affiliate, licensing, freemium, and service plus software.
+
+### Value multiple
+How much a year of the product is worth to the person who pays, divided by what it costs them for a year. A multiple of 3× means they get three times the price back. Ideas where the user pays nothing, such as ad-funded ones, have none. It uses the value and price the idea cites (a library entry, a signal or a stated assumption), and the Numbers tab shows it beside the older return figure.
+
+### Barriers
+Two 1 to 5 scores on an idea: how hard it is for someone to start it (1 is easy) and how hard it is for a rival to copy it (5 is hard). The best ideas are easy to start and hard to copy. The scorecard counts a case as easy to start and hard to copy when the first score is 2 or less and the second is 4 or more.
 
 ## How a run works
 

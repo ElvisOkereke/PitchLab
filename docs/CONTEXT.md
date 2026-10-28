@@ -4,6 +4,11 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
+- **Generation rebuild (branch `generation`, built 2026-10-27):** ideas carry audience, business model and barrier
+  scores; cases carry a value multiple; six consumer lenses; the scorecard measures consumer share, model variety and
+  easy-start/hard-copy; `bench-v2` (bench-v1 plus a consumer-lens run) is the current benchmark. `demandEvidence` stays
+  not measured (Phase 2 Slice B). Owner to-do: run a bench-v2 pass after merging. Design:
+  `docs/superpowers/specs/2026-10-27-generation-rebuild-design.md`.
 - **Research library (Phase 2, Slice A, branch `library`):** a persistent library of problems, pricing and startup entries
   that runs draw verified evidence from. Missions start from the Library page or `gen research`; background research is
   off by default (cap $5 per Toronto day, $1 missions). Sources: HN, GitHub, Stack Exchange, app reviews, Product Hunt,
@@ -363,3 +368,8 @@ See `docs/QUESTIONS.md` (round 3 sent 2026-10-17).
   maps `busy` and `pass_running` to the core refusal copy. New nav tab, `benchmark` glossary term, one tour step
   (`decide-progress`, anchor `progress-scorecard`; no tour anchor on the nav tab). Docs: README, user guide "Track
   idea quality", architecture "Benchmark" and `benchmark_passes`.
+- **2026-10-27 (generation rebuild, Task 6):** scorecard metrics `consumerShare`, `modelVariety` and `easyStartHardCopy`
+  are live (phase markers removed; old data reads `no_data`); `customerReturn` prefers `valueMultiple` and leaves out
+  pays-nothing cases. `BENCHMARKS['bench-v2']` added and made current (bench-v1 frozen, bench-v2 frozen test). Glossary
+  gained business model, value multiple and barriers. Docs updated: README, user guide, architecture, glossary,
+  OWNER-TODO.
