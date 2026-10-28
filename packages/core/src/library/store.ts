@@ -74,7 +74,7 @@ export async function upsertKnowledgeItem(
       tx.insert(knowledgeSources).values({
         itemId, url: d.source.url, domain: d.source.domain, sourceType: d.source.sourceType,
         publishedAt: d.source.publishedAt ?? null, quote: d.source.quote ?? null, quoteVerified: d.source.quoteVerified,
-        voice: d.source.voice ?? d.voice ?? null,
+        voice: d.source.voice ?? d.voice ?? null, via: d.source.via ?? 'direct', snapshotAt: d.source.snapshotAt ?? null,
       }).onConflictDoUpdate({
         target: [knowledgeSources.itemId, knowledgeSources.url],
         // A later verified quote for the same url replaces an unverified one (with its voice); a verified row is never downgraded.

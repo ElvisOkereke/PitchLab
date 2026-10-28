@@ -1,3 +1,4 @@
+import { classifyFetch, recordFetch } from '../research/fetch-log';
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { claims } from '../db/schema';
@@ -98,7 +99,10 @@ export async function verify(
       if (gh !== null) return { ok: true, status: 200, finalUrl: url, title: '', text: gh.fullText, matchText: gh.issueText, viaApi: true };
       log(`verify: GitHub API unavailable for ${url}, falling back to the page`);
     }
-    return fetchPage(url);
+    const page = await fetchPage(url);
+    // Diagnostics only: the outcome is logged (registrable domain, never the URL); verification is unchanged.
+    await recordFetch(db, { url, outcome: classifyFetch(page), via: 'direct', status: page.status || undefined, runId: run.id });
+    return page;
   };
   const getPage = (url: string) => {
     let p = cache.get(url);

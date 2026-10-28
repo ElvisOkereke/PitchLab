@@ -10,12 +10,15 @@ import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
 import { MIN_QUOTE_CHARS, MIN_QUOTE_WORDS, normalize } from '../pipeline/verify';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { logDataCall } from '../tools/data-calls';
-import type { fetchPage as fetchPageFn, FetchPageOpts, PageResult } from '../tools/fetch-page';
+import type { fetchPage as fetchPageFn, FetchPageOpts } from '../tools/fetch-page';
 import { errorMessage } from '../tools/scrub';
 import { createGithubSource } from '../tools/sources/github';
 import { createHnSource } from '../tools/sources/hn';
 import { createStackExchangeSource } from '../tools/sources/stackexchange';
 import type { RawItem, SignalSource } from '../tools/sources/types';
+import type { ArchiveClient } from './archive';
+import { collectPage, type BrowserRenderer } from './collect';
+import type { FetchOutcome, FetchVia } from './fetch-log';
 import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
 import { robotsAllows } from './robots';
@@ -91,6 +94,10 @@ export type MissionDeps = {
   db: Db;
   router: ModelRouter;
   fetchPage: typeof fetchPageFn;
+  /** Internet Archive fallback for gone pages (off when absent). */
+  archive?: ArchiveClient;
+  /** Renders thin pages (off when absent or null). */
+  browser?: BrowserRenderer | null;
   collectors: Collectors;
   log: (m: string) => void;
   now?: () => Date;
@@ -153,7 +160,7 @@ const EXTRACT_SYSTEM =
 // ---- helpers ------------------------------------------------------------------------------------------
 
 /** A text the collector actually fetched (API text or page text): extraction input and the quote-verification ground truth. */
-type Collected = { url: string; domain: string; sourceType: string; title: string; text: string; publishedAt: Date | null };
+type Collected = { url: string; domain: string; sourceType: string; title: string; text: string; publishedAt: Date | null; via?: FetchVia; snapshotAt?: Date };
 
 const hostOf = (url: string): string => {
   try {
@@ -191,18 +198,23 @@ function sourceReason(e: unknown): string {
   return capField(errorMessage(e), 120) || 'failed';
 }
 
-function pageReason(p: PageResult): string {
-  switch (p.reason) {
+function outcomeReason(o: FetchOutcome): string {
+  switch (o) {
     case 'timeout':
       return 'timed out';
-    case 'http_error':
-      return `HTTP ${p.status}`;
+    case 'http_403':
+    case 'http_404':
+    case 'http_410':
+      return `HTTP ${o.slice(5)}`;
+    case 'http_4xx':
+      return 'HTTP error';
+    case 'http_5xx':
+      return 'HTTP 5xx';
     case 'too_large':
       return 'page too large';
     case 'not_html':
       return 'not a web page';
     case 'blocked_host':
-    case 'blocked_scheme':
       return 'blocked address';
     default:
       return 'could not connect';
@@ -409,12 +421,13 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const guardedFetch = (url: string, opts: FetchPageOpts = {}) =>
       deps.fetchPage(url, { ...opts, userAgent: USER_AGENT, blockHosts: [...(opts.blockHosts ?? []), ...BANNED_DOMAINS] });
 
-    const addItems = (items: RawItem[]) => {
+    const webState = { archiveDisabled: false };
+    const addItems = (items: (RawItem & { via?: FetchVia; snapshotAt?: Date })[]) => {
       for (const it of items) {
         const text = (it.text ?? '').trim();
         if (!text || seenUrls.has(it.url) || isBannedSource(it.url)) continue;
         seenUrls.add(it.url);
-        texts.push({ url: it.url, domain: hostOf(it.url), sourceType: it.source, title: it.title ?? '', text, publishedAt: it.publishedAt });
+        texts.push({ url: it.url, domain: hostOf(it.url), sourceType: it.source, title: it.title ?? '', text, publishedAt: it.publishedAt, via: it.via, snapshotAt: it.snapshotAt });
       }
     };
     const addStructured = (drafts: KnowledgeDraft[]) => {
@@ -457,29 +470,18 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       let failed = 0;
       for (const url of urls) {
         const host = hostOf(url);
-        if (!(await robotsAllows(url, { fetchPage: guardedFetch }))) {
-          warn(`web: robots.txt disallows ${host}`);
-          failed++;
-          continue;
-        }
-        const page = await guardedFetch(url);
-        await logDataCall(db, { runId: null, missionId, provider: 'web', endpoint: host, ok: page.ok });
-        if (!page.ok) {
-          warn(`web: ${host} ${pageReason(page)}`);
-          failed++;
-          continue;
-        }
-        const finalUrl = page.finalUrl || url;
-        // After any redirect (same host or not), re-check: a banned domain or a robots-disallowed path drops the text.
-        const redirected = finalUrl !== url && finalUrl !== new URL(url).href;
-        if (isBannedSource(finalUrl)) continue;
-        if (redirected && !(await robotsAllows(finalUrl, { fetchPage: guardedFetch }))) {
-          warn(`web: robots.txt disallows ${hostOf(finalUrl)}`);
+        const page = await collectPage(url, {
+          db, fetchPage: guardedFetch, robotsAllows: (u) => robotsAllows(u, { fetchPage: guardedFetch }), archive: deps.archive,
+          browser: deps.browser, missionId, log: warn, state: webState,
+        });
+        await logDataCall(db, { runId: null, missionId, provider: 'web', endpoint: host, ok: !('failed' in page) });
+        if ('failed' in page) {
+          warn(page.failed === 'blocked_robots' ? `web: robots.txt disallows ${host}` : `web: ${host} ${outcomeReason(page.failed)}`);
           failed++;
           continue;
         }
         const before = texts.length;
-        addItems([{ source: 'web', url: finalUrl, title: page.title, text: page.text, publishedAt: null }]);
+        addItems([{ source: 'web', url: page.finalUrl, title: page.title, text: page.text, publishedAt: null, via: page.via, snapshotAt: page.snapshotAt }]);
         seenUrls.add(url);
         if (texts.length > before) loaded++;
       }
@@ -632,6 +634,8 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Sl
       domain: src.domain,
       sourceType: src.sourceType,
       publishedAt: src.publishedAt ?? undefined,
+      via: src.via,
+      snapshotAt: src.snapshotAt,
       quote,
       quoteVerified,
       voice: e.kind === 'startup' ? undefined : (e.voice ?? undefined),

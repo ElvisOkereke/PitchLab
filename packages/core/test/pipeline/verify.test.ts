@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import { claims } from '../../src/db/schema';
+import { claims, pageFetches } from '../../src/db/schema';
 import { COMPETITOR_REVIEW_NOTE, MIN_JUDGE_CONFIDENCE, REVIEW_CONFIDENCE_FLOOR, verify } from '../../src/pipeline/verify';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import type { PageResult } from '../../src/tools/fetch-page';
@@ -331,5 +331,20 @@ describe('verify', () => {
     const rows = new Map((await db.select().from(claims).where(eq(claims.caseId, kase.id))).map((r) => [r.id, r]));
     expect(rows.get(a!.id)).toMatchObject({ verified: 'unreachable', confidence: null });
     expect(rows.get(b!.id)).toMatchObject({ verified: 'unreachable', confidence: null });
+  });
+
+  it('logs a fetch diagnostic per page and changes nothing else', async () => {
+    const { db, run, kase } = await setup();
+    await mk(db, kase.id, [
+      { text: 'A', sourceUrl: 'https://a.com', quote: 'Small teams spend $40/hour on this manual task' },
+      { text: 'C', sourceUrl: 'https://c.com', quote: 'whatever' },
+    ]);
+    const fetchPage = vi.fn(async (url: string) => (url.includes('c.com') ? page('', false) : page('Small teams spend $40/hour on this manual task')));
+    const deps = { db, router: fakeRouter({}), fetchPage, log: () => {} } as unknown as StageDeps;
+    await verify(deps, run, { caseIds: [kase.id] });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+    for (const c of fetchPage.mock.calls) expect(c).toHaveLength(1);
+    const rows = await db.select().from(pageFetches);
+    expect(rows.map((r) => `${r.urlDomain}:${r.via}:${r.outcome}:${r.runId === run.id}`).sort()).toEqual(['a.com:direct:ok:true', 'c.com:direct:http_404:true']);
   });
 });

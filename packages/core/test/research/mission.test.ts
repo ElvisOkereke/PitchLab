@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
-import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, researchMissions } from '../../src/db/schema';
+import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, pageFetches, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
 import { buildCollectors, COLLECT_SHARE, maxQueriesFor, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
 import { resetRobotsCache } from '../../src/research/robots';
@@ -249,6 +249,43 @@ describe('runMission', () => {
     expect(page.calls.map((c) => c.url)).toEqual(['https://blocked.example/robots.txt']);
     expect((await mission(db, id)).warnings).toContain('web: robots.txt disallows blocked.example');
     expect(await db.select().from(knowledgeItems)).toHaveLength(1);
+  });
+
+  it('uses an archived copy when the live page is gone: sources carry via and snapshotAt, quotes verify against the archived text', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['problem'] });
+    const { deps } = happy(db);
+    const gone = 'https://gone.example/thread/9';
+    const snapshotUrl = `https://web.archive.org/web/20260101000000id_/${gone}`;
+    const ARCHIVED = 'The old forum thread explained that quoting by hand loses us bids every month. We never found a fit.';
+    const router = mockRouter(db, {
+      plan: { queries: [{ source: 'web', q: 'x' }] },
+      research: [{ text: '', sources: [{ url: gone }] }],
+    });
+    const snapshot = { snapshotUrl, timestamp: new Date('2026-01-01T00:00:00Z') };
+    const archive = {
+      snapshot: async () => snapshot,
+      fetch: async (): Promise<PageResult> => ({ ok: true, status: 200, finalUrl: snapshotUrl, title: 'Old thread', text: ARCHIVED }),
+    };
+    const allow = 'User-agent: *' + String.fromCharCode(10) + 'Allow: /';
+    const robots = { 'gone.example': allow, 'web.archive.org': allow };
+    const page = mockFetchPage({}, robots);
+    expect(await runMission({ ...deps, router, fetchPage: page.fn, archive }, id)).toBe('succeeded');
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src).toMatchObject({ url: gone, via: 'archive', quoteVerified: true });
+    expect(src!.snapshotAt?.toISOString()).toBe('2026-01-01T00:00:00.000Z');
+    const pf = await db.select().from(pageFetches);
+    expect(pf.map((r) => `${r.via}:${r.outcome}`).sort()).toEqual(['archive:ok', 'direct:timeout']);
+    expect(pf.every((r) => r.missionId === id)).toBe(true);
+  });
+
+  it('stores direct sources with via = direct and no snapshot time', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['problem'] });
+    const { deps } = happy(db);
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const srcs = await db.select().from(knowledgeSources);
+    expect(srcs.find((s) => s.url === PAGE_URL)).toMatchObject({ via: 'direct', snapshotAt: null });
   });
 
   it('skips banned domains from web search without fetching them', async () => {
