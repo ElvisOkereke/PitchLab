@@ -16,14 +16,17 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 
 ## Research reach
 
-- [ ] **YouTube API key (free, optional).** Lets research missions read public YouTube comments.
+- [x] **YouTube API key (free, optional).** Done 2026-10-28. Lets research missions read public YouTube comments.
   1. Open the Google Cloud console and create a new project.
   2. Enable **YouTube Data API v3** for it.
   3. Go to Credentials, create an **API key**, and restrict it to YouTube Data API v3.
   4. Add it to `.env` as `YOUTUBE_API_KEY=…`, restart `npm run worker`, and check that Settings → Connections shows YouTube as connected.
   Comments are kept for 30 days and then deleted.
-- [ ] **Local browser (optional).** In `packages/core` run `npx playwright-core install chromium` (about 150 to 300 MB, installed to `%LOCALAPPDATA%\ms-playwright`, usually on C:). It helps with pages that need JavaScript. Settings → Connections shows whether it is installed (once the worker has run).
-- [ ] After the key and Chromium are set up, run two $5 missions and compare **Pages read** (Page fetching card) and **Social share** on the Library page with what they were before.
+- [x] **Local browser (optional).** Already installed; it rendered pages in the 2026-10-28 missions. In `packages/core` run `npx playwright-core install chromium` (about 150 to 300 MB, installed to `%LOCALAPPDATA%\ms-playwright`, usually on C:). It helps with pages that need JavaScript. Settings → Connections shows whether it is installed (once the worker has run).
+- [x] Done 2026-10-28 (Claude ran them): social share rose from about 50% to 75%, and new entries rose 26 to 47% at about the same cost. After the key and Chromium are set up, run two $5 missions and compare **Pages read** (Page fetching card) and **Social share** on the Library page with what they were before.
+
+- [ ] Restart `npm run worker` so it picks up the YouTube key (it last ran before the key was added).
+- [ ] Keep in mind: YouTube-only entries are deleted 30 days after collection (about 190 from these two missions, around 27 Nov). Background research or new missions on the same topics bring fresh ones back.
 
 ## Use the app
 
