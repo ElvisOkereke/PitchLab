@@ -356,6 +356,21 @@ describe('runWorker maintenance', () => {
     expect(await db.select().from(pageFetches)).toHaveLength(0);
     expect(typeof (await getSetting(db, 'maintenance.lastRun'))).toBe('string');
   });
+  it('records the attempt and does not mark lastRun when a step fails; a later start within 1 hour does not retry', async () => {
+    const db = await testDb();
+    const real = db.transaction.bind(db);
+    (db as unknown as { transaction: unknown }).transaction = () => Promise.reject(new Error('down'));
+    await run(db);
+    (db as unknown as { transaction: unknown }).transaction = real;
+    expect(await getSetting(db, 'maintenance.lastRun')).toBeNull();
+    expect(typeof (await getSetting(db, 'maintenance.lastAttempt'))).toBe('string');
+    await seed(db);
+    await run(db);
+    expect(await db.select().from(pageFetches)).toHaveLength(1);
+    await setSetting(db, 'maintenance.lastAttempt', old(1).toISOString());
+    await run(db);
+    expect(await db.select().from(pageFetches)).toHaveLength(0);
+  });
   it('does not run again within 24 hours of lastRun, runs after', async () => {
     const db = await testDb();
     await run(db);

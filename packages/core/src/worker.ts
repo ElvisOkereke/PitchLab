@@ -103,19 +103,42 @@ const ERROR_MAX = 1000;
 export const MAINTENANCE_KEY = 'maintenance.lastRun';
 const MAINTENANCE_EVERY_MS = 24 * 3_600_000;
 
-/** Runs maintenance when it has never run or the last run is 24 hours old; never throws. */
-async function maintainIfDue(db: Db, log: (m: string) => void): Promise<void> {
-  try {
-    const last = await getSetting(db, MAINTENANCE_KEY);
-    const lastMs = typeof last === 'string' ? Date.parse(last) : NaN;
-    if (Number.isFinite(lastMs) && Date.now() - lastMs < MAINTENANCE_EVERY_MS) return;
-    const m = await runMaintenance(db);
-    await setSetting(db, MAINTENANCE_KEY, new Date().toISOString());
-    const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
-    if (total > 0) log(`maintenance: ${total} old records cleaned up`);
-  } catch (err) {
-    log(`maintenance failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+const MAINTENANCE_RETRY_MS = 3_600_000;
+const MAINTENANCE_ATTEMPT_KEY = 'maintenance.lastAttempt';
+const parseTime = (v: unknown): number => (typeof v === 'string' ? Date.parse(v) : NaN);
+
+/**
+ * Returns a function that runs maintenance when due (never run, or last run 24 hours old; after a failed attempt, retry
+ * after 1 hour). The next-due time is cached in memory after the first settings read. Never throws.
+ */
+function maintenanceScheduler(db: Db, log: (m: string) => void): () => Promise<void> {
+  let nextDue: number | null = null;
+  return async () => {
+    try {
+      if (nextDue === null) {
+        const last = parseTime(await getSetting(db, MAINTENANCE_KEY));
+        const attempt = parseTime(await getSetting(db, MAINTENANCE_ATTEMPT_KEY));
+        nextDue = Number.isFinite(last) ? last + MAINTENANCE_EVERY_MS : 0;
+        if (Number.isFinite(attempt) && (!Number.isFinite(last) || attempt > last)) nextDue = Math.max(nextDue, attempt + MAINTENANCE_RETRY_MS);
+      }
+      if (Date.now() < nextDue) return;
+      const m = await runMaintenance(db);
+      const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
+      if (total > 0) log(`maintenance: ${total} old records cleaned up`);
+      const now = new Date();
+      if (m.errors.length) {
+        for (const e of m.errors) log(`maintenance step failed: ${e}`);
+        await setSetting(db, MAINTENANCE_ATTEMPT_KEY, now.toISOString());
+        nextDue = now.getTime() + MAINTENANCE_RETRY_MS;
+      } else {
+        await setSetting(db, MAINTENANCE_KEY, now.toISOString());
+        nextDue = now.getTime() + MAINTENANCE_EVERY_MS;
+      }
+    } catch (err) {
+      log(`maintenance failed: ${err instanceof Error ? err.message : String(err)}`);
+      nextDue = Date.now() + MAINTENANCE_RETRY_MS;
+    }
+  };
 }
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -159,8 +182,9 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       o.log(`finalize failed: ${messageOf(err)}`);
     }
   };
+  const maintain = maintenanceScheduler(o.db, o.log);
   while (!o.signal.aborted) {
-    await maintainIfDue(o.db, o.log);
+    await maintain();
     await beat();
     // D2-R3: a stop requested while the heartbeat was in flight must not start a run.
     if (o.signal.aborted) return;

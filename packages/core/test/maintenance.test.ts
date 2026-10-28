@@ -87,11 +87,12 @@ describe('runMaintenance', () => {
       mk(oldCase.id, 'https://youtu.be/aaaaaaaaaaa', 'another youtube quote that is long'),
       mk(oldCase.id, 'https://youtube.com/watch?v=aaaaaaaaaaa', null),
       mk(oldCase.id, 'https://news.example/a', 'a news quote that is long enough'),
+      mk(oldCase.id, 'https://m.youtube.com/watch?v=aaaaaaaaaaa', 'mobile youtube quote long enough here'),
       mk(oldCase.id, 'https://notyoutube.com/a', 'lookalike host quote long enough'),
       mk(newCase.id, 'https://www.youtube.com/watch?v=bbbbbbbbbbb', 'fresh case youtube quote long enough'),
     ]);
     const r = await runMaintenance(db, NOW);
-    expect(r.redactedClaims).toBe(2);
+    expect(r.redactedClaims).toBe(3);
     const all = await db.select().from(claims);
     const byUrl = (u: string, c: string) => all.find((x) => x.sourceUrl === u && x.caseId === c)!;
     expect(byUrl('https://www.youtube.com/watch?v=aaaaaaaaaaa', oldCase.id)).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
@@ -101,13 +102,38 @@ describe('runMaintenance', () => {
     expect(byUrl('https://www.youtube.com/watch?v=bbbbbbbbbbb', newCase.id).quote).not.toBeNull();
   });
 
+  it('deletes a YouTube-only entry that a signal was promoted from, redacting the signal, without throwing', async () => {
+    const db = await testDb();
+    const id = await item(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(1));
+    const [s] = await db.insert(signals).values({
+      marketId: 'ca-us', source: 'youtube', url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa', title: 't', quote: 'quote text', quoteHash: 'p1',
+      knowledgeItemId: id, createdAt: ago(31),
+    }).returning();
+    const r = await runMaintenance(db, NOW);
+    expect(r).toMatchObject({ deletedItems: 1, redactedSignals: 1, errors: [] });
+    const row = (await db.select().from(signals).where(eq(signals.id, s!.id)))[0]!;
+    expect(row).toMatchObject({ knowledgeItemId: null, quote: PLACEHOLDER });
+    expect(await db.select().from(knowledgeItems)).toHaveLength(0);
+  });
+
+  it('a failing step does not block the others', async () => {
+    const db = await testDb();
+    await sig(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(31));
+    const real = db.transaction.bind(db);
+    let calls = 0;
+    (db as unknown as { transaction: unknown }).transaction = (fn: never) => (++calls === 2 ? Promise.reject(new Error('step 2 down')) : real(fn));
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual(['expire sources: step 2 down']);
+    expect(r.redactedSignals).toBe(1);
+  });
+
   it('is idempotent', async () => {
     const db = await testDb();
     await db.insert(pageFetches).values({ urlDomain: 'a.example', outcome: 'ok', via: 'direct', at: ago(100) });
     await item(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(1));
     await sig(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(31));
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0 });
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0 });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0, errors: [] });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0, errors: [] });
   });
 });
 
@@ -121,6 +147,6 @@ describe('runMaintenanceQuietly (used by openDb)', () => {
     await runMaintenanceQuietly(db, (l) => lines.push(l));
     expect(lines).toEqual(['Maintenance: 1 old records cleaned up.']);
     await expect(runMaintenanceQuietly({ transaction: () => { throw new Error('boom'); } } as never, (l) => lines.push(l))).resolves.toBeUndefined();
-    expect(lines[1]).toMatch(/skipped: boom/);
+    expect(lines[1]).toMatch(/step failed: .*boom/);
   });
 });

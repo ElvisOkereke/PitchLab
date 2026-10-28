@@ -18,6 +18,7 @@ export function classifyFetch(result: PageResult | { robots: false } | { thin: t
       if (result.status === 404) return 'http_404';
       if (result.status === 410) return 'http_410';
       if (result.status >= 500) return 'http_5xx';
+      // Also covers an unexpected status below 400 on a failed result (fetchPage does not produce one): treated as a client error.
       return 'http_4xx';
     case 'timeout': return 'timeout';
     case 'too_large': return 'too_large';
