@@ -8,7 +8,7 @@ import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/sche
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { isBannedSource } from '../tools/banned-sources';
-import { ideaBlock } from './idea-text';
+import { businessBlock, ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const SLUG_MAX = 60;
@@ -17,6 +17,9 @@ const WRITE_MAX_TOKENS = 16000;
 const LINK_CLAIMS_MAX = 15;
 /** How many unused signal urls the per-case log line names. */
 const UNUSED_LOG_MAX = 3;
+
+/** Gate flag text for a case whose value to the user is below its yearly price. */
+export const VALUE_BELOW_PRICE = 'value below price';
 
 const cut = (s: string, n: number) => s.slice(0, n).replace(/-+$/, '');
 
@@ -93,7 +96,7 @@ export async function deepCase(
     const model = router.modelFor('case');
 
     for (const idea of ordered) {
-      const wrappedIdea = wrapUntrusted('idea', ideaBlock(idea));
+      const wrappedIdea = wrapUntrusted('idea', [ideaBlock(idea), businessBlock(idea)].filter(Boolean).join('\n'));
 
       const sigFound = idea.signalIds.length
         ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
@@ -170,15 +173,24 @@ export async function deepCase(
       }
       const competitorList = draft.competitors.list.filter((c) => !isBannedSource(c.url)).slice(0, LINK_CLAIMS_MAX);
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
+      const results = computeNumbers(inputs);
+      // A value below the price is flagged, not dropped: the owner decides.
+      if (results.buyer.valueMultiple != null && results.buyer.valueMultiple < 1) gateFlags.push(VALUE_BELOW_PRICE);
       const sections: CaseSections = {
-        summary: { ...draft.summary, gateFlags },
+        summary: {
+          ...draft.summary, gateFlags,
+          ...(idea.audience ? { audience: idea.audience } : {}),
+          ...(idea.businessModel ? { businessModel: idea.businessModel } : {}),
+          ...(idea.valueToUser ? { valueToUser: idea.valueToUser } : {}),
+          ...(idea.barriers ? { barriers: idea.barriers } : {}),
+        },
         evidence: {
           signals: sigRows.map((s) => ({
             quote: s.quote, url: s.url, sourceName: sourceName(s.url, s.source), ...(s.voice ? { voice: s.voice } : {}),
           })),
           claims: evidenceClaims,
         },
-        numbers: { inputs, results: computeNumbers(inputs) },
+        numbers: { inputs, results },
         competitors: { ...draft.competitors, list: competitorList },
         pitch: draft.pitch,
       };

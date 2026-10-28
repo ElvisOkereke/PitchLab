@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { NumberResults } from '../calc/numbers';
 import { NumberInputsSchema } from '../calc/schema';
 import { SIGNAL_VOICES } from '../db/schema';
+import { AUDIENCES, BarriersSchema, BUSINESS_MODELS, ValueToUserSchema } from '../pipeline/business-models';
 
 /** AI-scored screening criteria (`gut` is owner-only and added elsewhere). */
 export const CRITERIA = ['pain', 'roi', 'evidence', 'speed', 'autonomy', 'novelty', 'reach'] as const;
@@ -110,6 +111,7 @@ const numOrNull = z.number().nullable();
 export const NumberResultsSchema = z.object({
   buyer: z.object({
     annualPrice: num, annualProblemCost: num, annualSavings: num, roiMultiple: numOrNull, paybackMonths: numOrNull,
+    valueMultiple: numOrNull.optional(),
   }),
   market: z.object({ annualRevenuePotential: num, year1Revenue: num }),
   unit: z.object({ monthlyPricePerBuyer: num, monthlyDeliveryCost: num, grossMarginPct: numOrNull }),
@@ -117,6 +119,7 @@ export const NumberResultsSchema = z.object({
   breakevenBuyers: numOrNull,
   breakevenReason: z.string().optional(),
   formulas: z.array(z.string()),
+  revenueFormula: z.string().optional(),
 });
 
 /**
@@ -142,7 +145,15 @@ export type CaseDraft = z.infer<typeof CaseDraftSchema>;
 
 /** The stored `cases.sections` shape. */
 export const CaseSectionsSchema = z.object({
-  summary: z.object({ ...summaryShape, gateFlags: z.array(z.string()) }),
+  summary: z.object({
+    ...summaryShape,
+    gateFlags: z.array(z.string()),
+    // Idea facts copied by code onto new cases; absent on older cases.
+    audience: z.enum(AUDIENCES).optional(),
+    businessModel: z.enum(BUSINESS_MODELS).optional(),
+    valueToUser: ValueToUserSchema.optional(),
+    barriers: BarriersSchema.optional(),
+  }),
   evidence: EvidenceSchema,
   numbers: z.object({ inputs: NumberInputsSchema, results: NumberResultsSchema }),
   competitors: CompetitorsSchema,

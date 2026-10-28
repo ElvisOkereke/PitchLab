@@ -14,6 +14,20 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
     ['Problem', s.problem],
     ['Solution', s.solution],
   ];
+  const extra: [string, string][] = [];
+  if (s.audience) extra.push(['Audience', s.audience]);
+  if (s.businessModel) extra.push(['Business model', s.businessModel]);
+  if (s.valueToUser) {
+    const v = s.valueToUser;
+    extra.push(['Value to the user', `${v.kind}: ${money(v.amountPerYear)} per year. ${v.basis}${v.source ? ` (${v.source})` : ''}`]);
+  }
+  if (s.barriers) {
+    const b = s.barriers;
+    extra.push([
+      'Barriers',
+      `To start: ${b.toStart}/5 (${b.toStartWhy}). To copy: ${b.toCopy}/5 (${b.toCopyWhy}). ${b.soloBuildable ? 'One person can build it.' : 'Not buildable by one person.'}`,
+    ]);
+  }
   const later: [string, string][] = [
     ['Why now', s.whyNow],
     ['Why it wins', s.whyItWins],
@@ -43,6 +57,14 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
             <TextBlock text={s.price.rationale} />
           </dd>
         </div>
+        {extra.map(([label, text]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>
+              <TextBlock text={text} />
+            </dd>
+          </div>
+        ))}
         {later.map(([label, text]) => (
           <div key={label}>
             <dt>{label}</dt>

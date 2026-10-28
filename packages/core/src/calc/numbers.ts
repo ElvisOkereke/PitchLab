@@ -1,4 +1,4 @@
-import type { NumberInputs } from './schema';
+import type { NumberInputs, Revenue } from './schema';
 
 export type NumberResults = {
   buyer: {
@@ -7,6 +7,8 @@ export type NumberResults = {
     annualSavings: number;
     roiMultiple: number | null;
     paybackMonths: number | null;
+    /** Yearly value to the user divided by the yearly price; only when the case gives a value. */
+    valueMultiple?: number | null;
   };
   market: { annualRevenuePotential: number; year1Revenue: number };
   unit: { monthlyPricePerBuyer: number; monthlyDeliveryCost: number; grossMarginPct: number | null };
@@ -14,6 +16,8 @@ export type NumberResults = {
   breakevenBuyers: number | null;
   breakevenReason?: string;
   formulas: string[];
+  /** The one line showing how a business-model revenue figure per buyer is worked out; absent for plain price inputs. */
+  revenueFormula?: string;
 };
 
 const DEFAULT_SCENARIOS = [10, 50, 200];
@@ -38,11 +42,56 @@ const plain = (x: number) => {
   return String(v !== 0 && Math.abs(v) < 1 ? Number(v.toPrecision(4)) : round2(v));
 };
 
+/** Annual revenue per buyer for a business model, with the formula line that shows it. */
+function revenueFor(r: Revenue): { annual: number; formula: string } {
+  const v = (x: { value: number }) => fin(x.value);
+  switch (r.model) {
+    case 'marketplace': {
+      const a = fin(v(r.gmvPerBuyerPerYear) * v(r.takeRate));
+      return { annual: a, formula: `Annual revenue per buyer = GMV ${usd(v(r.gmvPerBuyerPerYear))} × take rate ${plain(v(r.takeRate))} = ${usd(a)}` };
+    }
+    case 'usage': {
+      const a = fin(v(r.unitPrice) * v(r.unitsPerBuyerPerYear));
+      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.unitPrice))} per unit × ${plain(v(r.unitsPerBuyerPerYear))} units = ${usd(a)}` };
+    }
+    case 'ads': {
+      const a = fin((v(r.impressionsPerUserPerYear) * v(r.cpm)) / 1000);
+      return { annual: a, formula: `Annual revenue per buyer = ${plain(v(r.impressionsPerUserPerYear))} impressions × ${usd(v(r.cpm))} CPM ÷ 1,000 = ${usd(a)}` };
+    }
+    case 'affiliate': {
+      const a = fin(v(r.referralsPerBuyerPerYear) * v(r.commission));
+      return { annual: a, formula: `Annual revenue per buyer = ${plain(v(r.referralsPerBuyerPerYear))} referrals × ${usd(v(r.commission))} commission = ${usd(a)}` };
+    }
+    case 'freemium': {
+      const a = fin(v(r.conversionRate) * v(r.paidPricePerYear));
+      return { annual: a, formula: `Annual revenue per user = conversion ${plain(v(r.conversionRate))} × ${usd(v(r.paidPricePerYear))} paid price = ${usd(a)}` };
+    }
+    case 'transaction_fee': {
+      const a = fin(v(r.transactionsPerBuyerPerYear) * v(r.feePerTransaction));
+      return { annual: a, formula: `Annual revenue per buyer = ${plain(v(r.transactionsPerBuyerPerYear))} transactions × ${usd(v(r.feePerTransaction))} fee = ${usd(a)}` };
+    }
+    case 'one_off': {
+      const a = fin(v(r.price) * v(r.repeatPurchasesPerYear));
+      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.price))} price × ${plain(v(r.repeatPurchasesPerYear))} purchases = ${usd(a)}` };
+    }
+    case 'data_sales':
+    case 'licensing': {
+      const a = v(r.pricePerClientPerYear);
+      return { annual: a, formula: `Annual revenue per client = ${usd(a)} (${r.model === 'data_sales' ? 'data sales' : 'licence'})` };
+    }
+    case 'service_plus_software': {
+      const a = fin(v(r.subscriptionPerYear) + v(r.setupFee));
+      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.subscriptionPerYear))} subscription + ${usd(v(r.setupFee))} setup fee = ${usd(a)}` };
+    }
+  }
+}
+
 export function computeNumbers(i: NumberInputs): NumberResults {
   const amount = fin(i.price.amount.value);
   const units = fin(i.price.unitsPerBuyer.value);
   const periods = fin(i.price.periodsPerYear);
-  const annualPriceRaw = fin(amount * units * periods);
+  const modelRevenue = i.revenue ? revenueFor(i.revenue) : null;
+  const annualPriceRaw = modelRevenue ? modelRevenue.annual : fin(amount * units * periods);
 
   const problemLines = i.problemCost.map(l => ({
     label: l.label,
@@ -52,7 +101,8 @@ export function computeNumbers(i: NumberInputs): NumberResults {
   }));
   const annualProblemRaw = sum(problemLines.map(l => fin(l.q * l.u * l.y)));
   const reduction = fin(i.expectedReduction.value);
-  const annualSavingsRaw = fin(annualProblemRaw * reduction);
+  const valueGiven = i.valueToUserPerYear ? fin(i.valueToUserPerYear.value) : null;
+  const annualSavingsRaw = valueGiven !== null ? valueGiven : fin(annualProblemRaw * reduction);
 
   const roi = annualPriceRaw === 0 ? null : round2(annualSavingsRaw / annualPriceRaw);
   const payback = annualSavingsRaw === 0 ? null : round2(annualPriceRaw / (annualSavingsRaw / 12));
@@ -91,12 +141,19 @@ export function computeNumbers(i: NumberInputs): NumberResults {
   }
 
   const formulas: string[] = [
-    `Annual price = ${usd(amount)} × ${plain(units)} × ${plain(periods)} = ${usd(annualPriceRaw)}`,
+    modelRevenue ? modelRevenue.formula : `Annual price = ${usd(amount)} × ${plain(units)} × ${plain(periods)} = ${usd(annualPriceRaw)}`,
     ...problemLines.map(
       l => `Annual cost of ${l.label} = ${plain(l.q)} × ${usd(l.u)} × ${plain(l.y)} = ${usd(l.q * l.u * l.y)}`,
     ),
     `Annual problem cost = ${usd(annualProblemRaw)}`,
-    `Annual savings = ${usd(annualProblemRaw)} × ${plain(reduction)} = ${usd(annualSavingsRaw)}`,
+    valueGiven !== null
+      ? `Annual value to the user = ${usd(valueGiven)}`
+      : `Annual savings = ${usd(annualProblemRaw)} × ${plain(reduction)} = ${usd(annualSavingsRaw)}`,
+    ...(valueGiven !== null
+      ? [roi === null
+          ? `Value multiple: n/a (annual price is ${usd(annualPriceRaw)})`
+          : `Value multiple = annual value to the user ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`]
+      : []),
     roi === null
       ? `ROI multiple: n/a (annual price is ${usd(annualPriceRaw)})`
       : `ROI multiple = annual savings ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`,
@@ -122,6 +179,7 @@ export function computeNumbers(i: NumberInputs): NumberResults {
       annualSavings: cents(annualSavingsRaw),
       roiMultiple: roi,
       paybackMonths: payback,
+      ...(valueGiven !== null ? { valueMultiple: roi } : {}),
     },
     market: { annualRevenuePotential: cents(potentialRaw), year1Revenue: cents(year1Raw) },
     unit: { monthlyPricePerBuyer: cents(monthlyPriceRaw), monthlyDeliveryCost: cents(deliveryRaw), grossMarginPct },
@@ -129,5 +187,6 @@ export function computeNumbers(i: NumberInputs): NumberResults {
     breakevenBuyers,
     ...(breakevenReason ? { breakevenReason } : {}),
     formulas,
+    ...(modelRevenue ? { revenueFormula: modelRevenue.formula } : {}),
   };
 }

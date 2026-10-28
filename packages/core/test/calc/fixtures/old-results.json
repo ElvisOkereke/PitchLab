@@ -1,0 +1,133 @@
+{
+  "inputs": {
+    "price": {
+      "amount": {
+        "value": 8,
+        "assumption": "Our proposed price per monitored site per month, set well below the value of one lead."
+      },
+      "per": "site",
+      "unitsPerBuyer": {
+        "value": 40,
+        "source": {
+          "url": "https://agency-benchmarks.example/2026-small-agency-report",
+          "quote": "The median agency in our survey maintains 40 client websites on a monthly care plan."
+        }
+      },
+      "periodsPerYear": 12
+    },
+    "problemCost": [
+      {
+        "label": "lost leads from broken forms",
+        "quantity": {
+          "value": 6,
+          "assumption": "Leads lost per silent form failure before anyone notices (roughly three weeks of enquiries for a small trades business)."
+        },
+        "unitCost": {
+          "value": 400,
+          "source": {
+            "url": "https://trades-marketing.example/average-lead-value-home-services",
+            "quote": "For home-service businesses, the average value of a qualified inbound lead is about $400."
+          }
+        },
+        "perYear": {
+          "value": 40,
+          "assumption": "One silent failure per client site per year across the agency's 40 sites."
+        }
+      }
+    ],
+    "expectedReduction": {
+      "value": 0.5,
+      "assumption": "Daily checks catch failures within a day, recovering about half of the leads that would otherwise be lost."
+    },
+    "reachableBuyers": {
+      "value": 3000,
+      "source": {
+        "url": "https://agency-directory.example/web-design-agencies-canada-us",
+        "quote": "Our directory lists 3,000 web design agencies in Canada and the US that advertise website maintenance plans."
+      }
+    },
+    "captureRate": {
+      "value": 0.01,
+      "assumption": "1% of reachable agencies buy in year one from cold outreach."
+    },
+    "deliveryCostPerBuyerMonthly": [
+      {
+        "label": "infra+LLM",
+        "cost": {
+          "value": 40,
+          "assumption": "Headless browser runs, test inboxes and LLM triage for 40 sites per month."
+        }
+      }
+    ],
+    "fixedCostsMonthly": [
+      {
+        "label": "hosting",
+        "cost": {
+          "value": 30,
+          "assumption": "One small VPS plus database for the scheduler."
+        }
+      }
+    ],
+    "scenarios": [
+      10,
+      50,
+      200
+    ]
+  },
+  "results": {
+    "buyer": {
+      "annualPrice": 3840,
+      "annualProblemCost": 96000,
+      "annualSavings": 48000,
+      "roiMultiple": 12.5,
+      "paybackMonths": 0.96
+    },
+    "market": {
+      "annualRevenuePotential": 11520000,
+      "year1Revenue": 115200
+    },
+    "unit": {
+      "monthlyPricePerBuyer": 320,
+      "monthlyDeliveryCost": 40,
+      "grossMarginPct": 87.5
+    },
+    "scenarios": [
+      {
+        "buyers": 10,
+        "mrr": 3200,
+        "arr": 38400,
+        "monthlyGrossProfit": 2800,
+        "monthlyNet": 2770
+      },
+      {
+        "buyers": 50,
+        "mrr": 16000,
+        "arr": 192000,
+        "monthlyGrossProfit": 14000,
+        "monthlyNet": 13970
+      },
+      {
+        "buyers": 200,
+        "mrr": 64000,
+        "arr": 768000,
+        "monthlyGrossProfit": 56000,
+        "monthlyNet": 55970
+      }
+    ],
+    "breakevenBuyers": 1,
+    "formulas": [
+      "Annual price = $8 × 40 × 12 = $3,840",
+      "Annual cost of lost leads from broken forms = 6 × $400 × 40 = $96,000",
+      "Annual problem cost = $96,000",
+      "Annual savings = $96,000 × 0.5 = $48,000",
+      "ROI multiple = annual savings $48,000 ÷ annual price $3,840 = 12.5×",
+      "Payback = annual price $3,840 ÷ (annual savings $48,000 ÷ 12) = 0.96 months",
+      "Monthly price per buyer = $3,840 / 12 = $320",
+      "Monthly delivery cost per buyer = $40",
+      "Gross margin = (monthly price $320 − delivery $40) ÷ $320 = 87.5%",
+      "Annual revenue potential = 3000 × $3,840 = $11,520,000",
+      "Year 1 revenue = $11,520,000 × 0.01 = $115,200",
+      "Breakeven buyers = ceil($30 / ($320 - $40)) = 1"
+    ]
+  }
+}

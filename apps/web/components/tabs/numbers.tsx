@@ -21,6 +21,13 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
     ['Gross margin', orNone(r.unit.grossMarginPct, (n) => `${n}%`)],
     ['Breakeven buyers', r.breakevenBuyers === null ? `none (${r.breakevenReason ?? 'unknown'})` : String(r.breakevenBuyers)],
   ];
+  // Business-model rows appear only on cases that have them; older cases render exactly as before.
+  const model = inputs.businessModel ?? inputs.revenue?.model;
+  if (model) results.unshift(['Business model', model]);
+  if (r.revenueFormula) results.splice(1, 0, ['Revenue formula', r.revenueFormula]);
+  if (r.buyer.valueMultiple !== undefined) {
+    results.splice(results.findIndex(([l]) => l === 'ROI multiple') + 1, 0, ['Value multiple', orNone(r.buyer.valueMultiple, (n) => `${n}×`)]);
+  }
   return (
     <div className="tab tab-numbers">
       <h2>Key results</h2>

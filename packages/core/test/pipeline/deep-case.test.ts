@@ -68,7 +68,7 @@ describe('deepCase', () => {
     expect(row.gateAdvisory).toBe(false);
     expect(row.sections.summary.gateFlags).toEqual([]);
     expect(row.model).toBe('claude-opus-5-5');
-    expect(row.promptVersion).toBe('case-write.v3');
+    expect(row.promptVersion).toBe('case-write.v4');
     expect(row.updatedAt).toBeInstanceOf(Date);
     expect(CaseSectionsSchema.safeParse(row.sections).success).toBe(true);
 
@@ -523,5 +523,52 @@ describe('slugify', () => {
 
   it('falls back when the title has no letters or digits', () => {
     expect(slugify('!!!')).toBe('case');
+  });
+});
+
+describe('deepCase business models', () => {
+  it('flags "value below price" when the value multiple is under 1, and keeps the case', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.numbers.inputs.valueToUserPerYear = { value: 100, assumption: 'Assumption: small saving' };
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.numbers.results.buyer.valueMultiple).toBeLessThan(1);
+    expect(row.sections.summary.gateFlags).toEqual(['value below price']);
+    expect(row.gateAdvisory).toBe(true);
+  });
+  it('adds no flag at 1x or above', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await ideaWithSignal(db, run.id);
+    const d = draft();
+    d.numbers.inputs.valueToUserPerYear = { value: 100000, assumption: 'Assumption: big saving' };
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    expect((await caseFor(db, idea.id)).sections.summary.gateFlags).toEqual([]);
+  });
+  it('tells the writer the business model, value and price hints, and stores idea facts on the summary', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, {
+      title: 'Form checks', oneLiner: 'x', buyer: 'agencies', problem: 'p', solution: 's', status: 'advanced',
+      audience: 'business', businessModel: 'usage', revenueMechanics: 'per check',
+      valueToUser: { kind: 'save', amountPerYear: 5000, basis: 'saved leads' },
+      priceHint: { amount: 2, unit: 'per check', basis: 'rival pricing' },
+      barriers: { toStart: 2, toStartWhy: 'easy', toCopy: 3, toCopyWhy: 'ok', soloBuildable: true },
+    });
+    const router = recordingRouter([draft()]);
+    await deepCase(deps(db, router), run, { passed: [idea.id], advisory: [] });
+    const write = router.calls[1]!.prompt;
+    expect(write).toContain('Business model: usage');
+    expect(write).toContain('Value to the user');
+    expect(write).toContain('Price hint');
+    const row = await caseFor(db, idea.id);
+    expect(row.promptVersion).toBe('case-write.v4');
+    expect(row.sections.summary.businessModel).toBe('usage');
+    expect(row.sections.summary.audience).toBe('business');
+    expect(row.sections.summary.valueToUser?.amountPerYear).toBe(5000);
+    expect(row.sections.summary.barriers?.soloBuildable).toBe(true);
   });
 });

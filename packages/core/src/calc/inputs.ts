@@ -8,6 +8,11 @@ export function listInputs(i: NumberInputs): LabelledInput[] {
     { label: 'price.amount', sourced: i.price.amount },
     { label: 'price.unitsPerBuyer', sourced: i.price.unitsPerBuyer },
   ];
+  if (i.revenue) {
+    const { model: _m, ...fields } = i.revenue;
+    for (const [key, sourced] of Object.entries(fields)) out.push({ label: `revenue.${key}`, sourced: sourced as Sourced });
+  }
+  if (i.valueToUserPerYear) out.push({ label: 'valueToUserPerYear', sourced: i.valueToUserPerYear });
   i.problemCost.forEach((line, n) => {
     for (const key of ['quantity', 'unitCost', 'perYear'] as const) {
       out.push({ label: `problemCost[${n}].${key} (${line.label})`, sourced: line[key] });

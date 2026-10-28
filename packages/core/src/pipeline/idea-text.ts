@@ -40,3 +40,32 @@ export function ideaBlock(idea: IdeaFields): string {
   if (gap) lines.push(`Functional gap ${CLAIM}: ${gap}`);
   return lines.join('\n');
 }
+
+type BusinessFields = Pick<typeof ideas.$inferSelect, 'audience' | 'businessModel' | 'revenueMechanics' | 'valueToUser' | 'priceHint'>;
+
+/**
+ * The idea's business facts for the case writer: audience, business model, how it earns, the yearly value to the user
+ * and the price hint, each labelled as the idea's own unverified claim. A line is omitted when the idea lacks it
+ * (older and owner ideas). Money figures are numbers from validated jsonb; text is capped. Wrap before use.
+ */
+export function businessBlock(idea: BusinessFields): string {
+  const lines: string[] = [];
+  if (idea.audience) lines.push(`Audience: ${idea.audience}`);
+  if (idea.businessModel) lines.push(`Business model: ${idea.businessModel}`);
+  if (idea.revenueMechanics) lines.push(`Revenue mechanics ${CLAIM}: ${capField(idea.revenueMechanics, 600)}`);
+  const v = idea.valueToUser;
+  if (v && Number.isFinite(v.amountPerYear)) {
+    lines.push(
+      `Value to the user ${CLAIM}: ${v.kind}, ${v.amountPerYear} per year. Basis: ${capField(v.basis, 400)}` +
+        (v.source ? ` Source: ${capField(v.source, 300)}` : ''),
+    );
+  }
+  const p = idea.priceHint;
+  if (p && Number.isFinite(p.amount)) {
+    lines.push(
+      `Price hint ${CLAIM}: ${p.amount} ${capField(p.unit, 60)}. Basis: ${capField(p.basis, 300)}` +
+        (p.source ? ` Source: ${capField(p.source, 300)}` : ''),
+    );
+  }
+  return lines.join('\n');
+}
