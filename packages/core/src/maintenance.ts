@@ -1,15 +1,18 @@
 import { and, eq, inArray, isNotNull, lt, notExists, sql } from 'drizzle-orm';
 import type { Db } from './db/client';
+import { pacificDate } from './research/sources/youtube';
 import { cases, claims, knowledgeItems, knowledgeSources, pageFetches, signals } from './db/schema';
 
 const DAY = 86_400_000;
 export const FETCH_RETENTION_DAYS = 90;
+export const QUOTA_ROW_RETENTION_DAYS = 7;
 export const YOUTUBE_RETENTION_DAYS = 30;
 export const EXPIRED_PLACEHOLDER = '[expired YouTube data]';
 export const YOUTUBE_CLAIM_NOTE = 'YouTube quote removed after 30 days';
 
 export type MaintenanceResult = {
   prunedFetches: number;
+  prunedQuotaRows: number;
   expiredSources: number;
   deletedItems: number;
   redactedSignals: number;
@@ -81,14 +84,25 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
     return res.length;
   }));
 
-  return { prunedFetches, expiredSources, deletedItems, redactedSignals, redactedClaims, errors };
+  const prunedQuotaRows = await step('prune quota rows', 0, async () => {
+    // Keys look like youtube.quota.YYYY-MM-DD; ISO dates sort as text, and only well-formed keys are considered.
+    const cutoff = pacificDate(new Date(now.getTime() - QUOTA_ROW_RETENTION_DAYS * DAY));
+    const res = await db.execute(sql`
+      delete from settings
+      where key ~ '^youtube\\.quota\\.[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+        and substring(key from 15) < ${cutoff}
+      returning key`);
+    return (Array.isArray(res) ? res : ((res as { rows?: unknown[] }).rows ?? [])).length;
+  });
+
+  return { prunedFetches, prunedQuotaRows, expiredSources, deletedItems, redactedSignals, redactedClaims, errors };
 }
 
 /** runMaintenance for startup paths: logs one count line (only when something changed) and never throws. */
 export async function runMaintenanceQuietly(db: Db, log: (line: string) => void, now?: Date): Promise<void> {
   try {
     const m = await runMaintenance(db, now);
-    const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
+    const total = m.prunedFetches + m.prunedQuotaRows + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
     if (total > 0) log(`Maintenance: ${total} old records cleaned up.`);
     for (const e of m.errors) log(`Maintenance step failed: ${e}`);
   } catch (err) {

@@ -779,6 +779,29 @@ describe('buildCollectors', () => {
     });
   });
 
+  describe('YouTube comment verification', () => {
+    it('a quote that appears only in the video title of a comment item is not verified; a comment quote is', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem'] });
+      const YTU = 'https://www.youtube.com/watch?v=vid00000001';
+      const TITLE = 'Why invoicing hurts small shops every single week';
+      const COMMENT = 'Chasing unpaid invoices takes me six hours every week. It is awful.';
+      const youtube: Collectors['youtube'] = async () => [item('youtube', YTU, COMMENT, TITLE)];
+      const router = mockRouter(db, {
+        plan: { queries: [{ source: 'youtube', q: 'invoice' }] },
+        extract: (s) => [
+          { ...defaultEntry(s), title: 'From title', quote: TITLE },
+          { ...defaultEntry(s), title: 'From comment', quote: COMMENT.split('.')[0] + '.' },
+        ],
+      });
+      const { deps } = happy(db);
+      expect(await runMission({ ...deps, router, collectors: { youtube } }, id)).toBe('succeeded');
+      const rows = await db.select().from(knowledgeItems);
+      expect(rows.find((r) => r.title === 'From title')!.quoteVerified).toBe(false);
+      expect(rows.find((r) => r.title === 'From comment')!.quoteVerified).toBe(true);
+    });
+  });
+
   describe('effort scales with budget', () => {
     it('maxQueriesFor clamps round(6 * budget) to 12..60', () => {
       expect([1, 2, 5, 10, 25].map(maxQueriesFor)).toEqual([12, 12, 30, 60, 60]);

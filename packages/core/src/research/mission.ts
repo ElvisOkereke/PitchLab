@@ -631,8 +631,11 @@ ${text}` : it.url;
 /** Validate one extracted entry against its own source and the kind's facts schema; null means invalid (dropped). */
 function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: SliceAKind[]): KnowledgeDraft | null {
   const src = batch[e.source - 1];
-  const sourceText = shown[e.source - 1];
-  if (!src || sourceText === undefined || !kinds.includes(e.kind)) return null;
+  const shownText = shown[e.source - 1];
+  // A YouTube comment item carries the video title only as context: the quote must be verbatim in the item's own text
+  // (the comment, or the title and description for the video item itself), never in the title shown alongside it.
+  const sourceText = src?.sourceType === 'youtube' ? stripInvisible(src.text) : shownText;
+  if (!src || shownText === undefined || sourceText === undefined || !kinds.includes(e.kind)) return null;
   let facts: unknown;
   try {
     facts = parseFacts(e.kind, e.facts);

@@ -19,12 +19,12 @@ export const MAX_SEARCHES_PER_DAY = 90;
 export const MAX_UNITS_PER_DAY = 9000;
 export const MAX_SEARCHES_PER_MISSION = 5;
 export const YOUTUBE_QUOTA_WARNING = 'YouTube daily quota reached';
+export const YOUTUBE_RATE_WARNING = 'YouTube rate limit reached';
 const BASE = 'https://www.googleapis.com/youtube/v3/';
 const VIDEO_ID = /^[A-Za-z0-9_-]{6,20}$/;
 const REGION = /^[A-Za-z]{2}$/;
-/** Comment-thread errors that just mean "no comments from this video". */
-const SKIP_COMMENT_REASONS = new Set(['commentsDisabled', 'videoNotFound', 'forbidden']);
-const QUOTA_REASONS = new Set(['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded']);
+const DAILY_REASONS = new Set(['quotaExceeded', 'dailyLimitExceeded']);
+const RATE_REASONS = new Set(['rateLimitExceeded']);
 
 /** Per-mission state: how many searches it ran, and whether YouTube is switched off for the rest of it. */
 export type YoutubeState = { searches: number; stopped: boolean };
@@ -83,20 +83,24 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
   const perVideo = Math.min(Math.max(opts.commentsPerVideo ?? 100, 1), 100);
   const key = opts.apiKey;
 
-  const stop = () => {
+  const stop = (warning: string) => {
     if (!state.stopped) {
       state.stopped = true;
-      opts.onWarn?.(YOUTUBE_QUOTA_WARNING);
+      opts.onWarn?.(warning);
     }
   };
   /** One counted API call. Throws QuotaStop when the guard refuses or the API says the quota is gone. */
   const call = async (endpoint: string, params: Record<string, string>, units: { searches: number; units: number; headroom?: number }) => {
-    if (!(await reserveQuota(opts.db, units, now()))) throw new QuotaStop();
+    if (!(await reserveQuota(opts.db, units, now()))) throw new QuotaStop(YOUTUBE_QUOTA_WARNING);
+    if (endpoint === 'search') state.searches++; // counted once reserved, so failed or cancelled searches still use the cap
     const qs = new URLSearchParams({ ...params, key });
     try {
       return await request('youtube', `${BASE}${endpoint}?${qs}`, { errorReason: true }, opts);
     } catch (e) {
-      if (e instanceof SourceError && (e.code === 'rate_limited' || (e.reason !== undefined && QUOTA_REASONS.has(e.reason)))) throw new QuotaStop();
+      if (e instanceof SourceError) {
+        if (e.reason !== undefined && DAILY_REASONS.has(e.reason)) throw new QuotaStop(YOUTUBE_QUOTA_WARNING);
+        if (e.code === 'rate_limited' || (e.reason !== undefined && RATE_REASONS.has(e.reason))) throw new QuotaStop(YOUTUBE_RATE_WARNING);
+      }
       throw e;
     }
   };
@@ -107,7 +111,6 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
       part: 'snippet', type: 'video', q, maxResults: String(maxVideos), relevanceLanguage: 'en',
       ...(opts.regionCode && REGION.test(opts.regionCode) ? { regionCode: opts.regionCode.toUpperCase() } : {}),
     }, { searches: 1, units: 0, headroom: 1 + maxVideos });
-    state.searches++;
     const ids = [...new Set(arr(obj(search).items).map((i) => str(obj(i.id).videoId)).filter((id) => VIDEO_ID.test(id)))].slice(0, maxVideos);
     if (ids.length === 0) return out;
 
@@ -132,8 +135,8 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
           part: 'snippet', videoId: v.id, maxResults: String(perVideo), order: 'relevance', textFormat: 'plainText',
         }, { searches: 0, units: 1 });
       } catch (e) {
-        if (e instanceof SourceError && e.reason !== undefined && SKIP_COMMENT_REASONS.has(e.reason)) continue;
-        throw e;
+        if (e instanceof QuotaStop) throw e;
+        continue; // commentsDisabled, a 500 or any other failure: skip this video, keep what was gathered
       }
       for (const t of arr(obj(threads).items)) {
         // Only the comment text and its date are read; every author field is left alone.
@@ -146,11 +149,15 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
     return out;
   } catch (e) {
     if (e instanceof QuotaStop) {
-      stop();
+      stop(e.warning);
       return out;
     }
     throw e;
   }
 }
 
-class QuotaStop extends Error {}
+class QuotaStop extends Error {
+  constructor(readonly warning: string) {
+    super(warning);
+  }
+}

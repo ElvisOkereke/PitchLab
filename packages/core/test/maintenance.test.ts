@@ -1,8 +1,8 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Db } from '../src/db/client';
-import { claims, knowledgeItems, knowledgeSources, pageFetches, signals } from '../src/db/schema';
+import { claims, knowledgeItems, knowledgeSources, pageFetches, settings, signals } from '../src/db/schema';
 import { upsertKnowledgeItem } from '../src/library/store';
 import { runMaintenance, runMaintenanceQuietly } from '../src/maintenance';
 import { insertCase, insertIdea, insertRun, testDb, unit } from './helpers/db';
@@ -41,6 +41,23 @@ describe('runMaintenance', () => {
     const r = await runMaintenance(db, NOW);
     expect(r.prunedFetches).toBe(1);
     expect((await db.select().from(pageFetches)).map((x) => x.urlDomain)).toEqual(['b.example']);
+  });
+
+  it('prunes youtube.quota settings rows older than 7 days, keeps recent ones and other settings', async () => {
+    const db = await testDb();
+    await db.execute(sql`insert into settings (key, value) values
+      ('youtube.quota.2026-10-10', '{"searchCalls":1,"units":1}'::jsonb),
+      ('youtube.quota.2026-10-20', '{"searchCalls":1,"units":1}'::jsonb),
+      ('youtube.quota.2026-10-21', '{"searchCalls":1,"units":1}'::jsonb),
+      ('youtube.quota.2026-10-28', '{"searchCalls":1,"units":1}'::jsonb),
+      ('youtube.quota.garbage', '{}'::jsonb),
+      ('youtube.quotax.2026-01-01', '{}'::jsonb),
+      ('other.2026-01-01', '{}'::jsonb)`);
+    const r = await runMaintenance(db, NOW);
+    expect(r.prunedQuotaRows).toBe(2);
+    expect(r.errors).toEqual([]);
+    const keys = (await db.select().from(settings)).map((x) => x.key).sort();
+    expect(keys).toEqual(['other.2026-01-01', 'youtube.quota.2026-10-21', 'youtube.quota.2026-10-28', 'youtube.quota.garbage', 'youtube.quotax.2026-01-01']);
   });
 
   it('deletes expired sources, then entries left with no sources', async () => {
@@ -132,8 +149,8 @@ describe('runMaintenance', () => {
     await db.insert(pageFetches).values({ urlDomain: 'a.example', outcome: 'ok', via: 'direct', at: ago(100) });
     await item(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(1));
     await sig(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(31));
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0, errors: [] });
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0, errors: [] });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, prunedQuotaRows: 0, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0, errors: [] });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, prunedQuotaRows: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0, errors: [] });
   });
 });
 

@@ -6,7 +6,7 @@ import { upsertKnowledgeItem } from '../../../src/library/store';
 import { runMaintenance } from '../../../src/maintenance';
 import { resetThrottle } from '../../../src/research/http';
 import {
-  MAX_SEARCHES_PER_DAY, MAX_UNITS_PER_DAY, pacificDate, reserveQuota, YOUTUBE_QUOTA_WARNING, youtubeSearch, type YoutubeState,
+  MAX_SEARCHES_PER_DAY, MAX_UNITS_PER_DAY, pacificDate, reserveQuota, YOUTUBE_QUOTA_WARNING, YOUTUBE_RATE_WARNING, youtubeSearch, type YoutubeState,
 } from '../../../src/research/sources/youtube';
 import { getSetting, setSetting } from '../../../src/validation/settings';
 import { insertCase, insertIdea, insertRun, testDb, unit } from '../../helpers/db';
@@ -186,6 +186,45 @@ describe('quota guard', () => {
     expect(a.calls.filter((c) => c.path === 'search')).toHaveLength(5);
     expect(warns).toEqual([]);
     expect(((await getSetting(db, 'youtube.quota.2026-10-28')) as { searchCalls: number }).searchCalls).toBe(5);
+  });
+
+  it('failed searches count toward the per-mission cap and the day bucket', async () => {
+    const a = api(happyRoutes({ search: () => ({ status: 500, body: {} }) }));
+    const state: YoutubeState = { searches: 0, stopped: false };
+    for (let i = 0; i < 7; i++) await youtubeSearch(`q${i}`, opts(a.impl, { state, maxVideos: 1 })).catch(() => {});
+    expect(a.calls.filter((c) => c.path === 'search')).toHaveLength(5);
+    expect(((await getSetting(db, 'youtube.quota.2026-10-28')) as { searchCalls: number }).searchCalls).toBe(5);
+  });
+
+  it('rateLimitExceeded and 429 stop with a rate-limit warning, not the daily-quota one', async () => {
+    for (const route of [() => quotaErr('rateLimitExceeded'), () => ({ status: 429, body: {} })]) {
+      const a = api(happyRoutes({ videos: route }));
+      const warns: string[] = [];
+      const state: YoutubeState = { searches: 0, stopped: false };
+      expect(await youtubeSearch('q', opts(a.impl, { state, onWarn: (w: string) => warns.push(w) }))).toEqual([]);
+      expect(warns).toEqual([YOUTUBE_RATE_WARNING]);
+      expect(YOUTUBE_RATE_WARNING).toBe('YouTube rate limit reached');
+      expect(state.stopped).toBe(true);
+    }
+  });
+
+  it('one failed commentThreads call skips that video and keeps the rest', async () => {
+    const a = api(happyRoutes({
+      commentThreads: (p) => (p.get('videoId') === 'vid00000001' ? { status: 500, body: {} } : { body: { items: [comment('Quoting jobs by hand loses us bids every month.')] } }),
+    }));
+    const warns: string[] = [];
+    const items = await youtubeSearch('q', opts(a.impl, { onWarn: (w: string) => warns.push(w) }));
+    expect(warns).toEqual([]);
+    expect(items.filter((i) => i.url.endsWith('vid00000001'))).toHaveLength(1);
+    expect(items.filter((i) => i.url.endsWith('vid00000002'))).toHaveLength(2);
+  });
+
+  it('quotaExceeded on commentThreads still stops and keeps what was gathered', async () => {
+    const a = api(happyRoutes({ commentThreads: () => quotaErr('quotaExceeded') }));
+    const warns: string[] = [];
+    const items = await youtubeSearch('q', opts(a.impl, { onWarn: (w: string) => warns.push(w) }));
+    expect(warns).toEqual([YOUTUBE_QUOTA_WARNING]);
+    expect(items).toHaveLength(2);
   });
 
   it('a new Pacific day starts a fresh counter', async () => {
