@@ -3,7 +3,7 @@
 // server-only markers. Prints file names and labels only, never a value. Exit 0 = no hits, 1 = hits, 2 = no build.
 //   Secrets (process env first, else the repo-root .env, read only to search): SESSION_SECRET, OWNER_PASSWORD_HASH,
 //   DATABASE_URL and its password, LLM_API_KEY, ACCEPT_PASSWORD when set.
-//   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:
+//   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:, playwright (the optional local browser is core-only)
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,7 @@ import { parseEnv } from 'node:util';
 const webRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = resolve(webRoot, '..', '..');
 
-const MARKERS = ['postgres://', 'postgresql://', 'drizzle', 'pglite', 'scrypt:'];
+const MARKERS = ['postgres://', 'postgresql://', 'drizzle', 'pglite', 'scrypt:', 'playwright'];
 /** Values shorter than this are too generic to search for (they would match ordinary words). */
 const MIN_SECRET_LENGTH = 8;
 

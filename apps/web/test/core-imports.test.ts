@@ -1,6 +1,6 @@
 // The web layer may import only web-safe core modules: following every runtime (non-type) import from apps/web into
 // packages/core/src must never reach the model router or adapters, the page fetcher, the source clients, the env
-// loader, the CLI, PGlite or the LLM SDKs.
+// loader, the CLI, PGlite, the LLM SDKs or the optional local browser (Playwright).
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -13,8 +13,9 @@ const coreSrc = fileURLToPath(new URL('../../../packages/core/src', import.meta.
 const FORBIDDEN_MODULES = [
   'llm/router', 'llm/anthropic', 'llm/openai', 'llm/retry', 'llm/prompts', 'tools/fetch-page', 'tools/sources', 'tools/github-issue',
   'config/env', 'cli', 'db/client', 'db/migrate', 'db/test-db', 'pipeline/deps', 'worker', 'validation/outreach', 'validation/emails',
+  'research/browser',
 ];
-const FORBIDDEN_PACKAGES = ['@anthropic-ai/sdk', 'openai', 'undici', '@mozilla/readability', 'linkedom', '@electric-sql/pglite', 'commander'];
+const FORBIDDEN_PACKAGES = ['@anthropic-ai/sdk', 'openai', 'undici', '@mozilla/readability', 'linkedom', '@electric-sql/pglite', 'commander', 'playwright-core', 'playwright'];
 
 /** Runtime import specifiers of a source file (whole-statement `import type` / `export type` are skipped). */
 function runtimeImports(text: string): string[] {
@@ -100,6 +101,21 @@ describe('web-safe core imports', () => {
       expect(problems.some((p) => p.startsWith(`${name} → llm/router →`) && p.endsWith('@anthropic-ai/sdk'))).toBe(true);
       // The type-only import of db/client and the web-safe case-view import are not reported.
       expect(problems.filter((p) => p.includes('db/client') || p.includes('case-view'))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a web file importing the local browser (and so Playwright) is reported', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bcg-core-imports-'));
+    try {
+      const file = join(dir, 'browser-page.tsx');
+      writeFileSync(file, [
+        "import { loadBrowser } from '@bcg/core/research/browser/render';",
+        'export default function P() { void loadBrowser; return null; }',
+      ].join('\n'));
+      const name = relative(webRoot, file).replaceAll('\\', '/');
+      expect(scan([file]).problems).toContain(`${name} → research/browser/render`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

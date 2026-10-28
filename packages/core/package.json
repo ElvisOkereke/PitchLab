@@ -36,5 +36,8 @@
   "devDependencies": {
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.11"
+  },
+  "optionalDependencies": {
+    "playwright-core": "1.64.1"
   }
 }

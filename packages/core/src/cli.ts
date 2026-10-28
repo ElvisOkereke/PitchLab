@@ -34,6 +34,7 @@ import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
+import { openMissionBrowser } from './research/browser/render';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -208,12 +209,16 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       },
       executeMission: async (missionId) => {
         busy = true;
+        // Optional local Chromium behind the guarded proxy, for this mission only (null when not installed).
+        let browser: Awaited<ReturnType<typeof openMissionBrowser>> = null;
         try {
+          browser = await openMissionBrowser();
           return await runMission({
-            db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default',
+            db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default', browser: browser?.renderer ?? null,
             collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN }),
           }, missionId);
         } finally {
+          await browser?.close();
           busy = false;
         }
       },
