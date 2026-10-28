@@ -18,7 +18,10 @@ function Emails({ heading, emails }: { heading: string; emails: Email[] }) {
   );
 }
 
-/** Elevator pitch, the 3 emails and 2 follow-ups, call script, objections and pricing copy, all as text. */
+/**
+ * Elevator pitch, the 3 emails and 2 follow-ups, call script, objections and pricing copy, all as text. A consumer pitch
+ * has no emails (no cold email to individuals) and shows its channels and landing copy instead.
+ */
 export function PitchTab({ view }: { view: CaseView }) {
   const p = view.case.sections.pitch;
   return (
@@ -26,15 +29,43 @@ export function PitchTab({ view }: { view: CaseView }) {
       <h2>Elevator pitch</h2>
       <TextBlock text={p.elevator} />
 
-      <h2>Emails</h2>
-      <div className="stack">
-        <Emails heading="Email" emails={p.emails} />
-      </div>
+      {p.emails.length > 0 ? (
+        <>
+          <h2>Emails</h2>
+          <div className="stack">
+            <Emails heading="Email" emails={p.emails} />
+          </div>
+        </>
+      ) : null}
 
-      <h2>Follow-ups</h2>
-      <div className="stack">
-        <Emails heading="Follow-up" emails={p.followUps} />
-      </div>
+      {p.followUps.length > 0 ? (
+        <>
+          <h2>Follow-ups</h2>
+          <div className="stack">
+            <Emails heading="Follow-up" emails={p.followUps} />
+          </div>
+        </>
+      ) : null}
+
+      {p.channels?.length ? (
+        <>
+          <h2>Channels</h2>
+          <ul className="objections">
+            {p.channels.map((c, i) => (
+              <li key={i}>
+                <strong>{c.channel}</strong>: <span className="pre">{c.plan}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {p.landingCopy ? (
+        <>
+          <h2>Landing copy</h2>
+          <TextBlock text={p.landingCopy} />
+        </>
+      ) : null}
 
       <h2>Call script</h2>
       <TextBlock text={p.callScript} />

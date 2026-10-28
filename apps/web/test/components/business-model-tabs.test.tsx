@@ -44,7 +44,7 @@ describe('business-model display', () => {
     expect(text).toContain('Audience');
     expect(text).toContain('consumer');
     expect(text).toContain('Business model');
-    expect(text).toContain('Value to the user');
+    expect(text).toContain("Idea's estimate of value to the user");
     expect(text).toContain('<b>saved</b> leads');
     expect(container.querySelector('b')).toBeNull();
     expect(text).toContain('easy to start');
@@ -83,6 +83,41 @@ describe('business-model display details', () => {
     expect(text).toContain('Users');
     expect(text).toContain('Breakeven users');
     expect(text).toContain('user pays nothing (ad/affiliate funded)');
+  });
+  it('shows ROI and payback as n/a with the note when the user pays nothing', () => {
+    const sections = sectionsFixture();
+    sections.numbers.inputs = {
+      ...sections.numbers.inputs,
+      businessModel: 'affiliate',
+      revenue: { model: 'affiliate', referralsPerBuyerPerYear: a(4), commission: a(10) },
+    };
+    sections.numbers.results = computeNumbers(sections.numbers.inputs);
+    const { container } = render(<NumbersTab view={caseViewFixture({ sections })} />);
+    const rows = [...container.querySelectorAll('dl.results > div')].map((d) => d.textContent);
+    expect(rows).toContain('ROI multiplen/a (user pays nothing (ad/affiliate funded))');
+    expect(rows).toContain('Paybackn/a (user pays nothing (ad/affiliate funded))');
+  });
+  it('labels the idea value row as the idea\'s estimate and links a library id source to its library entry', () => {
+    const id = '0b6f5c1e-9a1d-4c1e-8f3a-2d5b7c9e1f20';
+    const view = modelView();
+    view.case.sections.summary.valueToUser = { kind: 'save', amountPerYear: 5000, basis: 'like RentPro', source: id };
+    const { container } = render(<SummaryTab view={view} />);
+    const text = container.textContent ?? '';
+    expect(text).toContain("Idea's estimate of value to the user");
+    expect(text).not.toContain(id);
+    const link = container.querySelector(`a[href="/library?item=${id}"]`);
+    expect(link?.textContent).toBe('library entry');
+  });
+  it('links a url source and hides a source that is neither a url nor a library id', () => {
+    const view = modelView();
+    view.case.sections.summary.valueToUser = { kind: 'save', amountPerYear: 5000, basis: 'b', source: 'https://forum.example/t/1' };
+    const linked = render(<SummaryTab view={view} />).container;
+    expect(linked.querySelector('a[href="https://forum.example/t/1"]')).not.toBeNull();
+    cleanup();
+    view.case.sections.summary.valueToUser = { kind: 'save', amountPerYear: 5000, basis: 'b', source: 'javascript:alert(1)' };
+    const hidden = render(<SummaryTab view={view} />).container;
+    expect(hidden.textContent).not.toContain('javascript');
+    expect(hidden.querySelector('a[href^="javascript"]')).toBeNull();
   });
   it('shows the setup fee for service plus software', () => {
     const sections = sectionsFixture();

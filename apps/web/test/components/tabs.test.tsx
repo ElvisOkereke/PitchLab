@@ -109,5 +109,24 @@ describe('PitchTab', () => {
     expect(blocks).toContain(p.callScript);
     expect(blocks).toContain(p.pricingCopy);
     expect(container.textContent).toContain(p.objections[0]!.objection);
+    expect(container.textContent).not.toMatch(/Channels|Landing copy/);
+  });
+
+  it('renders a consumer pitch without emails: channels and landing copy instead, as text', () => {
+    const view = caseViewFixture();
+    view.case.sections.pitch = {
+      ...view.case.sections.pitch, emails: [], followUps: [],
+      channels: [{ channel: 'Communities', plan: 'Answer <b>renters</b> in tenant forums' }],
+      landingCopy: 'Never pay a late rent fee again.',
+    };
+    const { container } = render(<PitchTab view={view} />);
+    const headings = [...container.querySelectorAll('h2')].map((h) => h.textContent);
+    expect(headings).not.toContain('Emails');
+    expect(headings).not.toContain('Follow-ups');
+    expect(headings).toEqual(expect.arrayContaining(['Elevator pitch', 'Channels', 'Landing copy', 'Call script', 'Objections', 'Pricing copy']));
+    expect(container.querySelectorAll('[data-testid="email"]')).toHaveLength(0);
+    expect(container.textContent).toContain('Answer <b>renters</b> in tenant forums');
+    expect(container.querySelector('b')).toBeNull();
+    expect([...container.querySelectorAll('p.pre')].map((b) => b.textContent)).toContain('Never pay a late rent fee again.');
   });
 });

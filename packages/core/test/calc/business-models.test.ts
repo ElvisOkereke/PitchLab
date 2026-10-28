@@ -81,6 +81,27 @@ describe('value multiple per model (value / what the user pays)', () => {
     expect(ads).toContain('Breakeven users');
     expect(computeNumbers(withRev(models[1]![1])).formulas.join('\n')).toContain('Monthly price per buyer');
   });
+  it('when the user pays nothing, ROI and payback are n/a with the same note (no figure from our ad revenue)', () => {
+    for (const [revenue, note] of [
+      [models[2]![1], 'user pays nothing (ad/affiliate funded)'],
+      [models[3]![1], 'user pays nothing (ad/affiliate funded)'],
+    ] as const) {
+      for (const extra of [{ valueToUserPerYear: s(600) }, {}]) {
+        const r = computeNumbers(withRev(revenue, extra));
+        expect(r.buyer.roiMultiple).toBeNull();
+        expect(r.buyer.paybackMonths).toBeNull();
+        expect(r.buyer.roiNote).toBe(note);
+        expect(r.formulas).toContain(`ROI multiple: n/a (${note})`);
+        expect(r.formulas).toContain(`Payback: n/a (${note})`);
+      }
+    }
+    const free = computeNumbers(withRev(models[0]![1], { price: { ...base.price, amount: s(0) }, valueToUserPerYear: s(600) }));
+    expect([free.buyer.roiMultiple, free.buyer.paybackMonths, free.buyer.roiNote]).toEqual([null, null, 'user pays nothing']);
+    // Paying users keep both figures and get no note.
+    const paid = computeNumbers(withRev(models[1]![1], { valueToUserPerYear: s(6000) }));
+    expect(paid.buyer.roiMultiple).not.toBeNull();
+    expect(paid.buyer.roiNote).toBeUndefined();
+  });
   it('freemium keeps roiMultiple on the revenue basis', () => {
     const r = computeNumbers(withRev(models[4]![1], { valueToUserPerYear: s(600) }));
     expect(r.buyer.roiMultiple).toBe(100);

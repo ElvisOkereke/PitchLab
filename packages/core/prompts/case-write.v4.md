@@ -48,7 +48,7 @@ How code uses the inputs (so you choose them correctly):
 - `problemCost`: one line per cost of the problem to ONE buyer, cost per year = `quantity.value` × `unitCost.value` × `perYear.value`. Give each line a short `label` (e.g. "lost leads from broken forms").
 - `expectedReduction`: fraction 0-1 of that cost the solution removes.
 - `reachableBuyers`: number of buyers of the named type in {{market}}.
-- `captureRate`: fraction 0-1 of reachable buyers realistically won in year one from cold outreach. Be conservative.
+- `captureRate`: fraction 0-1 of reachable buyers realistically won in year one from cold outreach (for consumers, from those channels instead: communities, search/SEO, app stores, content, partnerships and paid ads, as in the consumer pitch rule below). Be conservative.
 - `deliveryCostPerBuyerMonthly`: lines of cost to serve one buyer per month (infrastructure, LLM, data, email). `fixedCostsMonthly`: lines of fixed monthly cost.
 - `scenarios`: buyer counts to model, normally [10, 50, 200].
 
@@ -96,8 +96,13 @@ Write `numbers.inputs.valueToUserPerYear`: the yearly value to one buyer or user
     - Lead-flow verification | Customer action produces the expected downstream result | Requires some knowledge of the destination
 - `pitch`:
   - `elevator`: two sentences a buyer understands instantly.
-  - `emails`: exactly 3 cold emails, each a different angle (the silent failure, the proof-of-value for their own clients, the gap in their current tool). Under 130 words each, plain text, no hype, no fake testimonials or statistics. Every email must be CASL and CAN-SPAM aware: start with "Hi [First name]," and end with the placeholders [Your name], [Mailing address], [Phone or website] and [Unsubscribe line], each on its own line.
+  - `emails` (business buyers; see the consumer rule below): exactly 3 cold emails, each a different angle (the silent failure, the proof-of-value for their own clients, the gap in their current tool). Under 130 words each, plain text, no hype, no fake testimonials or statistics. Every email must be CASL and CAN-SPAM aware: start with "Hi [First name]," and end with the placeholders [Your name], [Mailing address], [Phone or website] and [Unsubscribe line], each on its own line.
   - `followUps`: exactly 2 short follow-ups. They are outreach too, so they need the same CASL footer: end with [Your name], [Mailing address], [Phone or website] and [Unsubscribe line], each on its own line.
   - `callScript`: open, discovery questions, offer, close.
   - `objections`: the 3-5 objections this buyer will really raise, each with an honest response.
   - `pricingCopy`: pricing-page copy using the input price.
+  - Consumer rule: if the idea's audience is `consumer` or `both`, never write cold emails to individuals. CASL has no implied consent for commercial messages to people you have no relationship with, so cold email to consumers is out. When the one who pays is an individual, set `emails` and `followUps` to empty lists and give instead:
+    - `channels`: 3 to 6 entries, each `{ channel, plan }`, drawn from communities, search/SEO, app stores, content, partnerships and paid ads, each with a concrete plan for reaching these users (where, what you post or rank for, and why they would come).
+    - `landingCopy`: the landing-page copy (a headline, three benefit lines and a call to action) using the input price.
+    - `callScript` becomes a short interview script for people who opted in (they signed up on the landing page or answered a community post), not a cold call.
+    For `both`, write the 3 emails and 2 follow-ups only when the buyer named in `summary.buyer` is a business, and still give `channels` and `landingCopy`.

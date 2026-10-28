@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { CaseDraftSchema, CaseSectionsSchema } from '../../src/case/schema';
 import { cases, claims, gateVerdicts, ideas, signals } from '../../src/db/schema';
 import { StructuredOutputError } from '../../src/llm/types';
+import { loadPrompt } from '../../src/llm/prompts';
 import { deepCase, slugify } from '../../src/pipeline/deep-case';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { insertIdea, insertRun, testDb } from '../helpers/db';
@@ -566,7 +567,8 @@ describe('deepCase business models', () => {
     expect(write).toContain('Price hint');
     const row = await caseFor(db, idea.id);
     expect(row.promptVersion).toBe('case-write.v4');
-    expect(row.sections.summary.businessModel).toBe('usage');
+    // The summary carries the writer's model (what the Numbers tab computes with), not the idea's.
+    expect(row.sections.summary.businessModel).toBe('subscription');
     expect(row.sections.summary.audience).toBe('business');
     expect(row.sections.summary.valueToUser?.amountPerYear).toBe(5000);
     expect(row.sections.summary.barriers?.soloBuildable).toBe(true);
@@ -590,5 +592,64 @@ describe('deepCase writer model consistency', () => {
     const logs: string[] = [];
     await deepCase({ db, router: recordingRouter([draft()]), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { passed: [idea.id], advisory: [] });
     expect(logs.some((l) => l.includes('business model') && l.includes('usage') && l.includes('subscription'))).toBe(true);
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.summary.businessModel).toBe('subscription');
+    expect(row.sections.numbers.inputs.businessModel ?? 'subscription').toBe('subscription');
+  });
+  it("copies the writer's business model into the summary, so Summary and Numbers agree", async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { title: 't', oneLiner: 'x', buyer: 'b', problem: 'p', solution: 's', status: 'advanced', businessModel: 'subscription' });
+    const d = draft();
+    d.numbers.inputs.businessModel = 'usage';
+    d.numbers.inputs.revenue = { model: 'usage', unitPrice: { value: 1, assumption: 'a' }, unitsPerBuyerPerYear: { value: 100, assumption: 'a' } };
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.summary.businessModel).toBe('usage');
+    expect(row.sections.numbers.inputs.businessModel).toBe('usage');
+  });
+});
+
+describe('consumer pitch (case-write.v4): no cold email to individuals', () => {
+  const consumerPitch = (d: Draft) => ({
+    ...d.pitch, emails: [], followUps: [],
+    channels: [{ channel: 'Communities', plan: 'Answer renters in tenant forums' }, { channel: 'Search', plan: 'Rank for late rent fee' }],
+    landingCopy: 'Never pay a late rent fee again.',
+  });
+
+  it('the prompt forbids cold emails to individuals and asks for channels and landing copy instead', () => {
+    const text = loadPrompt('case-write').render({
+      idea: '<idea>x</idea>', market: 'm', currency: 'CAD', signals: 's', gate: 'g', research: 'r', researchSources: 'rs',
+    });
+    expect(text).toContain('Consumer rule: if the idea\'s audience is `consumer` or `both`, never write cold emails to individuals');
+    expect(text).toContain('CASL');
+    expect(text).toContain('no implied consent');
+    for (const c of ['communities', 'search/SEO', 'app stores', 'content', 'partnerships', 'paid ads']) expect(text).toContain(c);
+    expect(text).toContain('`landingCopy`');
+    expect(text).toMatch(/captureRate`: fraction 0-1 of reachable buyers realistically won in year one from cold outreach[^\n]*for consumers, from those channels/);
+  });
+
+  it('the draft schema accepts a consumer pitch with no emails, plus channels and landing copy, and still takes the old shape', () => {
+    const d = draft();
+    expect(CaseDraftSchema.safeParse(d).success).toBe(true);
+    expect(CaseDraftSchema.safeParse({ ...d, pitch: consumerPitch(d) }).success).toBe(true);
+    const { channels: _c, ...noChannels } = consumerPitch(d);
+    expect(CaseDraftSchema.safeParse({ ...d, pitch: noChannels }).success).toBe(false);
+    expect(CaseDraftSchema.safeParse({ ...d, pitch: { ...consumerPitch(d), landingCopy: ' ' } }).success).toBe(false);
+    expect(CaseDraftSchema.safeParse({ ...d, pitch: { ...d.pitch, emails: d.pitch.emails.slice(0, 2) } }).success).toBe(false);
+    expect(CaseDraftSchema.safeParse({ ...d, pitch: { ...d.pitch, followUps: [] } }).success).toBe(false);
+  });
+
+  it('stores a consumer case without emails', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { title: 'Rent', oneLiner: 'x', buyer: 'renters', problem: 'p', solution: 's', status: 'advanced', audience: 'consumer' });
+    const d = draft();
+    d.pitch = consumerPitch(d);
+    await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
+    const row = await caseFor(db, idea.id);
+    expect(row.sections.pitch.emails).toEqual([]);
+    expect(row.sections.pitch.channels).toHaveLength(2);
+    expect(CaseSectionsSchema.safeParse(row.sections).success).toBe(true);
   });
 });

@@ -95,14 +95,25 @@ const emailSchema = z.object({
     message: `email body must contain each placeholder: ${CASL_PLACEHOLDERS.join(', ')}`,
   }),
 });
+/**
+ * A business pitch has exactly 3 cold emails and 2 follow-ups. A consumer pitch (case-write.v4: no cold email to
+ * individuals, CASL has no implied consent) has none and gives `channels` and `landingCopy` instead. Older cases have
+ * neither of those fields.
+ */
 const PitchSchema = z.object({
   elevator: z.string(),
-  emails: z.array(emailSchema).length(3),
-  followUps: z.array(emailSchema).length(2),
+  emails: z.array(emailSchema).max(3),
+  followUps: z.array(emailSchema).max(2),
   callScript: z.string(),
   objections: z.array(z.object({ objection: z.string(), response: z.string() })),
   pricingCopy: z.string(),
-});
+  channels: z.array(z.object({ channel: z.string(), plan: z.string() })).max(8).optional(),
+  landingCopy: z.string().optional(),
+}).refine(
+  (p) => (p.emails.length === 3 && p.followUps.length === 2)
+    || (p.emails.length === 0 && p.followUps.length === 0 && (p.channels?.length ?? 0) > 0 && !!p.landingCopy?.trim()),
+  { message: 'pitch needs exactly 3 emails and 2 follow-ups, or (consumer cases) none, with channels and landingCopy' },
+);
 
 const num = z.number();
 const numOrNull = z.number().nullable();
@@ -113,6 +124,7 @@ export const NumberResultsSchema = z.object({
     annualPrice: num, annualProblemCost: num, annualSavings: num, roiMultiple: numOrNull, paybackMonths: numOrNull,
     valueMultiple: numOrNull.optional(),
     valueMultipleNote: z.string().optional(),
+    roiNote: z.string().optional(),
     setupFeePerBuyer: num.optional(),
   }),
   market: z.object({ annualRevenuePotential: num, year1Revenue: num }),

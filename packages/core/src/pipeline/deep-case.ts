@@ -185,7 +185,8 @@ export async function deepCase(
         summary: {
           ...draft.summary, gateFlags,
           ...(idea.audience ? { audience: idea.audience } : {}),
-          ...(idea.businessModel ? { businessModel: idea.businessModel } : {}),
+          // The writer's model, which the Numbers tab computes with, so Summary and Numbers always agree.
+          businessModel: writerModel,
           ...(idea.valueToUser ? { valueToUser: idea.valueToUser } : {}),
           ...(idea.barriers ? { barriers: idea.barriers } : {}),
         },

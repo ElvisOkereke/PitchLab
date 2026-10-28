@@ -213,12 +213,13 @@ function pitch(c: CaseRow): string[] {
     '',
     block(p.elevator),
     '',
-    '### Emails',
-    '',
-    ...p.emails.flatMap(email('Email')),
-    '### Follow-ups',
-    '',
-    ...p.followUps.flatMap(email('Follow-up')),
+    // A consumer pitch has no cold emails (case-write.v4); older and business pitches render exactly as before.
+    ...(p.emails.length ? ['### Emails', '', ...p.emails.flatMap(email('Email'))] : []),
+    ...(p.followUps.length ? ['### Follow-ups', '', ...p.followUps.flatMap(email('Follow-up'))] : []),
+    ...(p.channels?.length
+      ? ['### Channels', '', ...p.channels.map((ch) => `- **${line(ch.channel)}**: ${line(ch.plan)}`), '']
+      : []),
+    ...(p.landingCopy ? ['### Landing copy', '', block(p.landingCopy), ''] : []),
     '### Call script',
     '',
     block(p.callScript),

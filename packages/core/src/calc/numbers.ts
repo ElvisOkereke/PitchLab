@@ -11,6 +11,8 @@ export type NumberResults = {
     valueMultiple?: number | null;
     /** Why valueMultiple is null when the user pays nothing. */
     valueMultipleNote?: string;
+    /** Why roiMultiple and paybackMonths are null: the user pays nothing, so there is no return on what they pay. */
+    roiNote?: string;
     /** One-time setup fee per buyer (service_plus_software); not part of recurring revenue. */
     setupFeePerBuyer?: number;
   };
@@ -144,8 +146,11 @@ export function computeNumbers(i: NumberInputs): NumberResults {
   const userPrice = userAnnualPrice(i, annualPriceRaw);
   const vmRaw = valueMultipleRaw(i);
   const vm = vmRaw === null ? null : round2(vmRaw);
-  const roi = annualPriceRaw === 0 ? null : round2(annualSavingsRaw / annualPriceRaw);
-  const payback = annualSavingsRaw === 0 ? null : round2(annualPriceRaw / (annualSavingsRaw / 12));
+  // When the user pays nothing (ads, affiliate, a free marketplace side), our revenue per user is not their price, so
+  // there is no ROI or payback for them: both are null with the same note (scorecard fallbacks never see a figure).
+  const payNothing = userPrice.note;
+  const roi = payNothing || annualPriceRaw === 0 ? null : round2(annualSavingsRaw / annualPriceRaw);
+  const payback = payNothing || annualSavingsRaw === 0 ? null : round2(annualPriceRaw / (annualSavingsRaw / 12));
 
   const monthlyPriceRaw = annualPriceRaw / 12;
   const deliveryRaw = sum(i.deliveryCostPerBuyerMonthly.map(l => fin(l.cost.value)));
@@ -200,10 +205,14 @@ export function computeNumbers(i: NumberInputs): NumberResults {
           ? `Value multiple: n/a (${userPrice.note ?? `the user's annual price is ${usd(userPrice.price)}`})`
           : `Value multiple = annual value to the user ${usd(annualSavingsRaw)} ÷ the user's annual price ${usd(userPrice.price)} = ${vm}×`]
       : []),
-    roi === null
+    payNothing
+      ? `ROI multiple: n/a (${payNothing})`
+      : roi === null
       ? `ROI multiple: n/a (annual price is ${usd(annualPriceRaw)})`
       : `ROI multiple = annual ${valueGiven !== null ? 'value to the user' : 'savings'} ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`,
-    payback === null
+    payNothing
+      ? `Payback: n/a (${payNothing})`
+      : payback === null
       ? `Payback: n/a (annual ${valueGiven !== null ? 'value to the user is' : 'savings are'} ${usd(annualSavingsRaw)})`
       : `Payback = annual price ${usd(annualPriceRaw)} ÷ (annual ${valueGiven !== null ? 'value to the user' : 'savings'} ${usd(annualSavingsRaw)} ÷ 12) = ${payback} months`,
     `Monthly price per ${who} = ${usd(annualPriceRaw)} / 12 = ${usd(monthlyPriceRaw)}`,
@@ -228,6 +237,7 @@ export function computeNumbers(i: NumberInputs): NumberResults {
       annualSavings: cents(annualSavingsRaw),
       roiMultiple: roi,
       paybackMonths: payback,
+      ...(payNothing ? { roiNote: payNothing } : {}),
       ...(valueGiven !== null ? { valueMultiple: vm, ...(vm === null && userPrice.note ? { valueMultipleNote: userPrice.note } : {}) } : {}),
       ...(modelRevenue?.setup !== undefined ? { setupFeePerBuyer: cents(setupRaw) } : {}),
     },

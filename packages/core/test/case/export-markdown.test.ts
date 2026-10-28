@@ -405,3 +405,20 @@ describe('caseToMarkdown', () => {
     expect(md).toContain('[x.example](https://x.example/a_%28b%29%20c)');
   });
 });
+
+describe('caseToMarkdown consumer pitch', () => {
+  it('shows channels and landing copy instead of empty email sections, and leaves old pitches unchanged', () => {
+    const md = caseToMarkdown(caseFixture({ mutate: (s) => {
+      s.pitch = { ...s.pitch, emails: [], followUps: [], channels: [{ channel: 'Communities', plan: 'Answer <renters>' }], landingCopy: 'Never pay a late fee' };
+    } }), [], []);
+    expect(md).not.toContain('### Emails');
+    expect(md).not.toContain('### Follow-ups');
+    expect(md).toContain('### Channels');
+    expect(md).toContain('- **Communities**: Answer &lt;renters&gt;');
+    expect(md).toContain('### Landing copy');
+    expect(md).toContain('Never pay a late fee');
+    const old = caseToMarkdown(caseFixture(), [], []);
+    expect(old).toContain('### Emails');
+    expect(old).not.toContain('### Channels');
+  });
+});

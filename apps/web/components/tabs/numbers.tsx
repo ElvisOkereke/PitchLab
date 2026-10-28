@@ -24,7 +24,7 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
           ['Annual problem cost per buyer', money(r.buyer.annualProblemCost)],
           ['Annual savings per buyer', money(r.buyer.annualSavings)],
         ] as [string, string][])),
-    ['ROI multiple', orNone(r.buyer.roiMultiple, (n) => `${n}×`)],
+    ['ROI multiple', r.buyer.roiNote ? `n/a (${r.buyer.roiNote})` : orNone(r.buyer.roiMultiple, (n) => `${n}×`)],
     ...(hasValue
       ? ([[
           'Value multiple',
@@ -33,7 +33,7 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
             : `${r.buyer.valueMultiple}×`,
         ]] as [string, string][])
       : []),
-    ['Payback', orNone(r.buyer.paybackMonths, (n) => `${n} months`)],
+    ['Payback', r.buyer.roiNote ? `n/a (${r.buyer.roiNote})` : orNone(r.buyer.paybackMonths, (n) => `${n} months`)],
     ['Annual revenue potential', money(r.market.annualRevenuePotential)],
     ['Year 1 revenue', money(r.market.year1Revenue)],
     ...(r.buyer.setupFeePerBuyer !== undefined
