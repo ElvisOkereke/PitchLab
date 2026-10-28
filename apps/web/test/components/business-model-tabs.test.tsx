@@ -58,3 +58,39 @@ describe('business-model display', () => {
     expect(s).not.toMatch(/Audience|Business model|Value to the user|Barriers/);
   });
 });
+
+describe('business-model display details', () => {
+  it('hides problem-cost and savings rows when a value to the user is given, and marks price rows not used for revenue', () => {
+    const { container } = render(<NumbersTab view={modelView()} />);
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('Annual problem cost per buyer');
+    expect(text).not.toContain('Annual savings per buyer');
+    expect(text).toContain('Annual value to the user');
+    expect(text).toContain('price.amount (not used for revenue)');
+  });
+  it('labels rows per user for ads and freemium, and shows the note when the multiple is n/a', () => {
+    const sections = sectionsFixture();
+    sections.numbers.inputs = {
+      ...sections.numbers.inputs,
+      businessModel: 'ads',
+      revenue: { model: 'ads', impressionsPerUserPerYear: a(1000), cpm: a(5) },
+      valueToUserPerYear: a(100),
+    };
+    sections.numbers.results = computeNumbers(sections.numbers.inputs);
+    const { container } = render(<NumbersTab view={caseViewFixture({ sections })} />);
+    const text = container.textContent ?? '';
+    expect(text).toContain('Annual revenue per user');
+    expect(text).toContain('Users');
+    expect(text).toContain('user pays nothing (ad/affiliate funded)');
+  });
+  it('shows the setup fee for service plus software', () => {
+    const sections = sectionsFixture();
+    sections.numbers.inputs = {
+      ...sections.numbers.inputs,
+      revenue: { model: 'service_plus_software', subscriptionPerYear: a(1200), setupFee: a(800) },
+    };
+    sections.numbers.results = computeNumbers(sections.numbers.inputs);
+    const text = render(<NumbersTab view={caseViewFixture({ sections })} />).container.textContent ?? '';
+    expect(text).toContain('Setup fee per buyer (year 1 only)');
+  });
+});

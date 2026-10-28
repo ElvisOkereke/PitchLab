@@ -1,6 +1,6 @@
 import { asc, eq, inArray } from 'drizzle-orm';
 import { listInputs } from '../calc/inputs';
-import { computeNumbers } from '../calc/numbers';
+import { computeNumbers, valueMultipleRaw } from '../calc/numbers';
 import { NumberInputsSchema, type NumberInputs } from '../calc/schema';
 import { CaseDraftSchema, competitorPricingText, hasPriceFigure, type CaseSections } from '../case/schema';
 import type { Db } from '../db/client';
@@ -175,7 +175,12 @@ export async function deepCase(
       const gateFlags = [...(flagsById.get(idea.id) ?? [])];
       const results = computeNumbers(inputs);
       // A value below the price is flagged, not dropped: the owner decides.
-      if (results.buyer.valueMultiple != null && results.buyer.valueMultiple < 1) gateFlags.push(VALUE_BELOW_PRICE);
+      const rawMultiple = valueMultipleRaw(inputs);
+      if (rawMultiple !== null && rawMultiple < 1) gateFlags.push(VALUE_BELOW_PRICE);
+      const writerModel = inputs.businessModel ?? inputs.revenue?.model ?? 'subscription';
+      if (idea.businessModel && idea.businessModel !== writerModel) {
+        log(`deep-case: "${capField(draft.title, 120)}": idea business model ${idea.businessModel} differs from the writer's ${writerModel}`);
+      }
       const sections: CaseSections = {
         summary: {
           ...draft.summary, gateFlags,

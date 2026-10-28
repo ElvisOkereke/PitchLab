@@ -10,24 +10,38 @@ const orNone = (x: number | null, fmt: (n: number) => string) => (x === null ? '
 /** Key results, formulas, the inputs (source + quote + status, or the assumption) and the scenarios. */
 export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: CaseView; flags?: LinkFlags }) {
   const { inputs, results: r } = view.case.sections.numbers;
+  // Business-model rows appear only on cases that have them; older cases render exactly as before.
+  const model = inputs.businessModel ?? inputs.revenue?.model;
+  const perUser = model === 'ads' || model === 'freemium';
+  const hasValue = r.buyer.valueMultiple !== undefined;
   const results: [string, string][] = [
-    ['Annual price per buyer', money(r.buyer.annualPrice)],
-    ['Annual problem cost per buyer', money(r.buyer.annualProblemCost)],
-    ['Annual savings per buyer', money(r.buyer.annualSavings)],
+    ...(model ? ([['Business model', model]] as [string, string][]) : []),
+    ...(r.revenueFormula ? ([['Revenue formula', r.revenueFormula]] as [string, string][]) : []),
+    [perUser ? 'Annual revenue per user' : 'Annual price per buyer', money(r.buyer.annualPrice)],
+    ...(hasValue
+      ? ([['Annual value to the user', money(r.buyer.annualSavings)]] as [string, string][])
+      : ([
+          ['Annual problem cost per buyer', money(r.buyer.annualProblemCost)],
+          ['Annual savings per buyer', money(r.buyer.annualSavings)],
+        ] as [string, string][])),
     ['ROI multiple', orNone(r.buyer.roiMultiple, (n) => `${n}×`)],
+    ...(hasValue
+      ? ([[
+          'Value multiple',
+          r.buyer.valueMultiple === null
+            ? `n/a${r.buyer.valueMultipleNote ? ` (${r.buyer.valueMultipleNote})` : ''}`
+            : `${r.buyer.valueMultiple}×`,
+        ]] as [string, string][])
+      : []),
     ['Payback', orNone(r.buyer.paybackMonths, (n) => `${n} months`)],
     ['Annual revenue potential', money(r.market.annualRevenuePotential)],
     ['Year 1 revenue', money(r.market.year1Revenue)],
+    ...(r.buyer.setupFeePerBuyer !== undefined
+      ? ([['Setup fee per buyer (year 1 only)', money(r.buyer.setupFeePerBuyer)]] as [string, string][])
+      : []),
     ['Gross margin', orNone(r.unit.grossMarginPct, (n) => `${n}%`)],
     ['Breakeven buyers', r.breakevenBuyers === null ? `none (${r.breakevenReason ?? 'unknown'})` : String(r.breakevenBuyers)],
   ];
-  // Business-model rows appear only on cases that have them; older cases render exactly as before.
-  const model = inputs.businessModel ?? inputs.revenue?.model;
-  if (model) results.unshift(['Business model', model]);
-  if (r.revenueFormula) results.splice(1, 0, ['Revenue formula', r.revenueFormula]);
-  if (r.buyer.valueMultiple !== undefined) {
-    results.splice(results.findIndex(([l]) => l === 'ROI multiple') + 1, 0, ['Value multiple', orNone(r.buyer.valueMultiple, (n) => `${n}×`)]);
-  }
   return (
     <div className="tab tab-numbers">
       <h2>Key results</h2>
@@ -62,7 +76,7 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
               const status = inputStatus(flags, label, sourced.value);
               return (
                 <tr key={label}>
-                  <td>{label}</td>
+                  <td>{inputs.revenue && label.startsWith('price.') ? `${label} (not used for revenue)` : label}</td>
                   <td>{sourced.value}</td>
                   <td>
                     {sourced.source ? (
@@ -86,7 +100,7 @@ export function NumbersTab({ view, flags = linkFlags(view.claims) }: { view: Cas
         <table data-testid="scenarios">
           <thead>
             <tr>
-              <th scope="col">Buyers</th>
+              <th scope="col">{perUser ? 'Users' : 'Buyers'}</th>
               <th scope="col">MRR</th>
               <th scope="col">ARR</th>
               <th scope="col">Monthly gross profit</th>

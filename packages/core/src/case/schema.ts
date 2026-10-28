@@ -112,6 +112,8 @@ export const NumberResultsSchema = z.object({
   buyer: z.object({
     annualPrice: num, annualProblemCost: num, annualSavings: num, roiMultiple: numOrNull, paybackMonths: numOrNull,
     valueMultiple: numOrNull.optional(),
+    valueMultipleNote: z.string().optional(),
+    setupFeePerBuyer: num.optional(),
   }),
   market: z.object({ annualRevenuePotential: num, year1Revenue: num }),
   unit: z.object({ monthlyPricePerBuyer: num, monthlyDeliveryCost: num, grossMarginPct: numOrNull }),
@@ -136,6 +138,10 @@ export const CaseDraftSchema = z
     numbers: z.object({ inputs: NumberInputsSchema }),
     competitors: CompetitorsSchema,
     pitch: PitchSchema,
+  })
+  .refine((d) => (d.numbers.inputs.businessModel ?? 'subscription') === (d.numbers.inputs.revenue?.model ?? 'subscription'), {
+    message: 'numbers.inputs.businessModel must match numbers.inputs.revenue.model (subscription when there is no revenue block)',
+    path: ['numbers', 'inputs', 'businessModel'],
   })
   .refine((d) => d.summary.price.amount === d.numbers.inputs.price.amount.value, {
     message: 'summary.price.amount must equal numbers.inputs.price.amount.value',

@@ -26,7 +26,7 @@ export const RevenueSchema = z.discriminatedUnion('model', [
   z.object({ model: z.literal('affiliate'), referralsPerBuyerPerYear: S, commission: S }),
   z.object({ model: z.literal('freemium'), conversionRate: FractionSchema, paidPricePerYear: S }),
   z.object({ model: z.literal('transaction_fee'), transactionsPerBuyerPerYear: S, feePerTransaction: S }),
-  z.object({ model: z.literal('one_off'), price: S, repeatPurchasesPerYear: S }),
+  z.object({ model: z.literal('one_off'), price: S, purchasesPerBuyerPerYear: S.refine((v) => v.value > 0, { message: 'purchases per buyer per year must be above 0 (the first purchase counts)' }) }),
   z.object({ model: z.literal('data_sales'), pricePerClientPerYear: S }),
   z.object({ model: z.literal('licensing'), pricePerClientPerYear: S }),
   z.object({ model: z.literal('service_plus_software'), subscriptionPerYear: S, setupFee: S }),

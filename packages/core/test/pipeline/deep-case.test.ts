@@ -572,3 +572,23 @@ describe('deepCase business models', () => {
     expect(row.sections.summary.barriers?.soloBuildable).toBe(true);
   });
 });
+
+describe('deepCase writer model consistency', () => {
+  it('draft schema rejects a businessModel that disagrees with the revenue block', () => {
+    const d = draft();
+    d.numbers.inputs.businessModel = 'usage';
+    expect(CaseDraftSchema.safeParse(d).success).toBe(false);
+    d.numbers.inputs.revenue = { model: 'usage', unitPrice: { value: 1, assumption: 'a' }, unitsPerBuyerPerYear: { value: 1, assumption: 'a' } };
+    expect(CaseDraftSchema.safeParse(d).success).toBe(true);
+    d.numbers.inputs.businessModel = 'subscription';
+    expect(CaseDraftSchema.safeParse(d).success).toBe(false);
+  });
+  it('logs when the writer picked a different business model than the idea', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { title: 't', oneLiner: 'x', buyer: 'b', problem: 'p', solution: 's', status: 'advanced', businessModel: 'usage' });
+    const logs: string[] = [];
+    await deepCase({ db, router: recordingRouter([draft()]), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { passed: [idea.id], advisory: [] });
+    expect(logs.some((l) => l.includes('business model') && l.includes('usage') && l.includes('subscription'))).toBe(true);
+  });
+});

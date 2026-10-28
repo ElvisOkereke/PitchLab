@@ -59,16 +59,19 @@ How code uses the inputs (so you choose them correctly):
 The <idea> block may list the idea's audience, business model, revenue mechanics, value to the user and price hint. Each is the idea's own unverified claim: check it against the research and say so in the case if the research disagrees.
 
 Write `numbers.inputs.businessModel` equal to the idea's business model (use "subscription" if none is given). For any model other than subscription, also write a `numbers.inputs.revenue` block whose `model` matches it. Every field is a `Sourced` value (Rule 1). Code works out revenue per buyer from it:
-- marketplace: `{ model, gmvPerBuyerPerYear, takeRate }` (revenue = GMV x take rate, takeRate is a 0-1 fraction)
+- marketplace: `{ model, gmvPerBuyerPerYear, takeRate }` (revenue = GMV x take rate; takeRate is a 0-1 fraction). The "buyer" is the side that pays you: name that side in `summary.buyer`, and put what that side pays per year in `price` (use 0 if it pays nothing). The value multiple divides the value to the user by that price, never by your take.
 - usage: `{ model, unitPrice, unitsPerBuyerPerYear }`
-- ads: `{ model, impressionsPerUserPerYear, cpm }` (revenue = impressions x CPM / 1000)
-- affiliate: `{ model, referralsPerBuyerPerYear, commission }`
-- freemium: `{ model, conversionRate, paidPricePerYear }` (conversionRate is a 0-1 fraction of users who pay)
-- transaction_fee: `{ model, transactionsPerBuyerPerYear, feePerTransaction }`
-- one_off: `{ model, price, repeatPurchasesPerYear }`
+- ads: `{ model, impressionsPerUserPerYear, cpm }` (revenue = impressions x CPM / 1000, per USER). The user pays $0.
+- affiliate: `{ model, referralsPerBuyerPerYear, commission }` (`commission` is MONEY per referral, not a percent: if the programme pays a percent, convert it to money in the `assumption`/basis, e.g. "8% of a $50 order" is 4). The user pays $0.
+- freemium: `{ model, conversionRate, paidPricePerYear }` (`conversionRate` is a 0-1 fraction of users who pay; revenue per user = conversionRate x paidPricePerYear; the value multiple divides by `paidPricePerYear`, the price a paying user pays)
+- transaction_fee: `{ model, transactionsPerBuyerPerYear, feePerTransaction }` (`feePerTransaction` is MONEY per transaction, not a percent: convert a percent fee to money in the basis)
+- one_off: `{ model, price, purchasesPerBuyerPerYear }` (`purchasesPerBuyerPerYear` includes the first purchase and must be above 0: a single-purchase product is 1)
 - data_sales or licensing: `{ model, pricePerClientPerYear }`
-- service_plus_software: `{ model, subscriptionPerYear, setupFee }`
-Leave `revenue` out for a subscription. `price` is still required: describe the headline price the buyer sees there (`summary.price.amount` must still equal `price.amount.value`).
+- service_plus_software: `{ model, subscriptionPerYear, setupFee }` (recurring revenue is the subscription only; the one-time setup fee is shown separately as a year-1 line, not in monthly or annual recurring revenue)
+Leave `revenue` out for a subscription (and set `businessModel` to "subscription"); `businessModel` must equal `revenue.model` whenever a revenue block is present, or the draft is rejected.
+`price` is still required but display-only whenever `revenue` is present: code does not use it for revenue (it is only the divisor of the value multiple for a marketplace). `summary.price.amount` must still equal `price.amount.value`. Describe the headline price the buyer sees there; for ads and affiliate, where the user pays nothing, set the `price` amount to 0 and say "$0 to the user" in `per`.
+
+Per-USER models (ads and freemium): `reachableBuyers`, `captureRate`, `scenarios` and `deliveryCostPerBuyerMonthly` are all per USER (free and paid together), so size scenarios for users, for example [1000, 10000, 100000], and give delivery cost per user per month (free users cost money too). `takeRate` and `conversionRate` are fractions between 0 and 1.
 
 Model-specific costs (payment fees, content or licence costs, ad-network share, support, refunds) go in `deliveryCostPerBuyerMonthly` as ordinary lines, one per cost, so the margin is honest.
 

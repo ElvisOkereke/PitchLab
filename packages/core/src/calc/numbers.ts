@@ -9,6 +9,10 @@ export type NumberResults = {
     paybackMonths: number | null;
     /** Yearly value to the user divided by the yearly price; only when the case gives a value. */
     valueMultiple?: number | null;
+    /** Why valueMultiple is null when the user pays nothing. */
+    valueMultipleNote?: string;
+    /** One-time setup fee per buyer (service_plus_software); not part of recurring revenue. */
+    setupFeePerBuyer?: number;
   };
   market: { annualRevenuePotential: number; year1Revenue: number };
   unit: { monthlyPricePerBuyer: number; monthlyDeliveryCost: number; grossMarginPct: number | null };
@@ -43,7 +47,7 @@ const plain = (x: number) => {
 };
 
 /** Annual revenue per buyer for a business model, with the formula line that shows it. */
-function revenueFor(r: Revenue): { annual: number; formula: string } {
+function revenueFor(r: Revenue): { annual: number; formula: string; setup?: number } {
   const v = (x: { value: number }) => fin(x.value);
   switch (r.model) {
     case 'marketplace': {
@@ -71,8 +75,8 @@ function revenueFor(r: Revenue): { annual: number; formula: string } {
       return { annual: a, formula: `Annual revenue per buyer = ${plain(v(r.transactionsPerBuyerPerYear))} transactions × ${usd(v(r.feePerTransaction))} fee = ${usd(a)}` };
     }
     case 'one_off': {
-      const a = fin(v(r.price) * v(r.repeatPurchasesPerYear));
-      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.price))} price × ${plain(v(r.repeatPurchasesPerYear))} purchases = ${usd(a)}` };
+      const a = fin(v(r.price) * v(r.purchasesPerBuyerPerYear));
+      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.price))} price × ${plain(v(r.purchasesPerBuyerPerYear))} purchases (first one included) = ${usd(a)}` };
     }
     case 'data_sales':
     case 'licensing': {
@@ -80,10 +84,43 @@ function revenueFor(r: Revenue): { annual: number; formula: string } {
       return { annual: a, formula: `Annual revenue per client = ${usd(a)} (${r.model === 'data_sales' ? 'data sales' : 'licence'})` };
     }
     case 'service_plus_software': {
-      const a = fin(v(r.subscriptionPerYear) + v(r.setupFee));
-      return { annual: a, formula: `Annual revenue per buyer = ${usd(v(r.subscriptionPerYear))} subscription + ${usd(v(r.setupFee))} setup fee = ${usd(a)}` };
+      const a = v(r.subscriptionPerYear);
+      return { annual: a, setup: v(r.setupFee), formula: `Annual recurring revenue per buyer = ${usd(a)} subscription` };
     }
   }
+}
+
+const ZERO_PAY_NOTE = 'user pays nothing (ad/affiliate funded)';
+
+/** The annual price from the plain price fields (display price when a revenue block is present). */
+const priceFieldsAnnual = (i: NumberInputs) =>
+  fin(fin(i.price.amount.value) * fin(i.price.unitsPerBuyer.value) * fin(i.price.periodsPerYear));
+
+/** What one user pays per year (the divisor of the value multiple), and why it is nothing when it is. */
+function userAnnualPrice(i: NumberInputs, annualPriceRaw: number): { price: number; note?: string } {
+  const r = i.revenue;
+  if (!r) return { price: annualPriceRaw };
+  switch (r.model) {
+    case 'ads':
+    case 'affiliate':
+      return { price: 0, note: ZERO_PAY_NOTE };
+    case 'freemium':
+      return { price: fin(r.paidPricePerYear.value) };
+    case 'marketplace': {
+      const p = priceFieldsAnnual(i);
+      return p > 0 ? { price: p } : { price: 0, note: 'user pays nothing' };
+    }
+    default:
+      return { price: annualPriceRaw };
+  }
+}
+
+/** The unrounded value multiple (value to the user / what the user pays), or null when it cannot be worked out. */
+export function valueMultipleRaw(i: NumberInputs): number | null {
+  if (!i.valueToUserPerYear) return null;
+  const annual = i.revenue ? revenueFor(i.revenue).annual : priceFieldsAnnual(i);
+  const { price } = userAnnualPrice(i, annual);
+  return price > 0 ? fin(i.valueToUserPerYear.value) / price : null;
 }
 
 export function computeNumbers(i: NumberInputs): NumberResults {
@@ -104,6 +141,9 @@ export function computeNumbers(i: NumberInputs): NumberResults {
   const valueGiven = i.valueToUserPerYear ? fin(i.valueToUserPerYear.value) : null;
   const annualSavingsRaw = valueGiven !== null ? valueGiven : fin(annualProblemRaw * reduction);
 
+  const userPrice = userAnnualPrice(i, annualPriceRaw);
+  const vmRaw = valueMultipleRaw(i);
+  const vm = vmRaw === null ? null : round2(vmRaw);
   const roi = annualPriceRaw === 0 ? null : round2(annualSavingsRaw / annualPriceRaw);
   const payback = annualSavingsRaw === 0 ? null : round2(annualPriceRaw / (annualSavingsRaw / 12));
 
@@ -116,7 +156,8 @@ export function computeNumbers(i: NumberInputs): NumberResults {
   const reachable = fin(i.reachableBuyers.value);
   const capture = fin(i.captureRate.value);
   const potentialRaw = fin(reachable * annualPriceRaw);
-  const year1Raw = fin(potentialRaw * capture);
+  const setupRaw = modelRevenue?.setup ?? 0;
+  const year1Raw = fin(potentialRaw * capture + reachable * capture * setupRaw);
 
   const buyerCounts = i.scenarios && i.scenarios.length > 0 ? i.scenarios : DEFAULT_SCENARIOS;
   const scenarios = buyerCounts.map(buyers => {
@@ -142,24 +183,28 @@ export function computeNumbers(i: NumberInputs): NumberResults {
 
   const formulas: string[] = [
     modelRevenue ? modelRevenue.formula : `Annual price = ${usd(amount)} × ${plain(units)} × ${plain(periods)} = ${usd(annualPriceRaw)}`,
-    ...problemLines.map(
-      l => `Annual cost of ${l.label} = ${plain(l.q)} × ${usd(l.u)} × ${plain(l.y)} = ${usd(l.q * l.u * l.y)}`,
-    ),
-    `Annual problem cost = ${usd(annualProblemRaw)}`,
+    ...(valueGiven !== null
+      ? []
+      : [
+          ...problemLines.map(
+            l => `Annual cost of ${l.label} = ${plain(l.q)} × ${usd(l.u)} × ${plain(l.y)} = ${usd(l.q * l.u * l.y)}`,
+          ),
+          `Annual problem cost = ${usd(annualProblemRaw)}`,
+        ]),
     valueGiven !== null
       ? `Annual value to the user = ${usd(valueGiven)}`
       : `Annual savings = ${usd(annualProblemRaw)} × ${plain(reduction)} = ${usd(annualSavingsRaw)}`,
     ...(valueGiven !== null
-      ? [roi === null
-          ? `Value multiple: n/a (annual price is ${usd(annualPriceRaw)})`
-          : `Value multiple = annual value to the user ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`]
+      ? [vm === null
+          ? `Value multiple: n/a (${userPrice.note ?? `the user's annual price is ${usd(userPrice.price)}`})`
+          : `Value multiple = annual value to the user ${usd(annualSavingsRaw)} ÷ the user's annual price ${usd(userPrice.price)} = ${vm}×`]
       : []),
     roi === null
       ? `ROI multiple: n/a (annual price is ${usd(annualPriceRaw)})`
-      : `ROI multiple = annual savings ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`,
+      : `ROI multiple = annual ${valueGiven !== null ? 'value to the user' : 'savings'} ${usd(annualSavingsRaw)} ÷ annual price ${usd(annualPriceRaw)} = ${roi}×`,
     payback === null
-      ? `Payback: n/a (annual savings are ${usd(annualSavingsRaw)})`
-      : `Payback = annual price ${usd(annualPriceRaw)} ÷ (annual savings ${usd(annualSavingsRaw)} ÷ 12) = ${payback} months`,
+      ? `Payback: n/a (annual ${valueGiven !== null ? 'value to the user is' : 'savings are'} ${usd(annualSavingsRaw)})`
+      : `Payback = annual price ${usd(annualPriceRaw)} ÷ (annual ${valueGiven !== null ? 'value to the user' : 'savings'} ${usd(annualSavingsRaw)} ÷ 12) = ${payback} months`,
     `Monthly price per buyer = ${usd(annualPriceRaw)} / 12 = ${usd(monthlyPriceRaw)}`,
     `Monthly delivery cost per buyer = ${usd(deliveryRaw)}`,
     grossMarginPct === null
@@ -167,6 +212,7 @@ export function computeNumbers(i: NumberInputs): NumberResults {
       : `Gross margin = (monthly price ${usd(monthlyPriceRaw)} − delivery ${usd(deliveryRaw)}) ÷ ${usd(monthlyPriceRaw)} = ${grossMarginPct}%`,
     `Annual revenue potential = ${plain(reachable)} × ${usd(annualPriceRaw)} = ${usd(potentialRaw)}`,
     `Year 1 revenue = ${usd(potentialRaw)} × ${plain(capture)} = ${usd(year1Raw)}`,
+    ...(modelRevenue?.setup !== undefined ? [`Year 1 includes a one-time setup fee of ${usd(setupRaw)} per buyer`] : []),
     breakevenBuyers === null
       ? `Breakeven buyers: none (${breakevenReason})`
       : `Breakeven buyers = ceil(${usd(fixedRaw)} / (${usd(monthlyPriceRaw)} - ${usd(deliveryRaw)})) = ${breakevenBuyers}`,
@@ -179,7 +225,8 @@ export function computeNumbers(i: NumberInputs): NumberResults {
       annualSavings: cents(annualSavingsRaw),
       roiMultiple: roi,
       paybackMonths: payback,
-      ...(valueGiven !== null ? { valueMultiple: roi } : {}),
+      ...(valueGiven !== null ? { valueMultiple: vm, ...(vm === null && userPrice.note ? { valueMultipleNote: userPrice.note } : {}) } : {}),
+      ...(modelRevenue?.setup !== undefined ? { setupFeePerBuyer: cents(setupRaw) } : {}),
     },
     market: { annualRevenuePotential: cents(potentialRaw), year1Revenue: cents(year1Raw) },
     unit: { monthlyPricePerBuyer: cents(monthlyPriceRaw), monthlyDeliveryCost: cents(deliveryRaw), grossMarginPct },
