@@ -53,11 +53,14 @@ It already has one.
 
 ### Check your connections
 
-- **What:** Open **Settings** and look at Connections. **LLM API** must say connected. GitHub, Stack Exchange and
-  Google Places and Product Hunt are optional extra data sources.
+- **What:** Open **Settings** and look at Connections. **LLM API** must say connected. GitHub, Stack Exchange,
+  Google Places, Product Hunt and YouTube are optional extra data sources. **Local browser (Chromium)** says installed or
+  not installed; it is optional and only helps with pages that need JavaScript.
 - **Why:** Every step of a run needs the LLM key. The worker reports which keys it has, never their values, so these
   say unknown until the worker has run once.
 - **Good:** LLM API connected. If it says not set, put your key in `LLM_API_KEY` in `.env` and restart the worker.
+  For YouTube, put a free key in `YOUTUBE_API_KEY` and restart the worker. For the local browser, run
+  `npx playwright install chromium` in `packages/core`.
 
 ### Fill in who your emails come from
 
@@ -86,6 +89,11 @@ It already has one.
   Missions need `npm run worker` running, and at most 3 can wait at once. Or run `npm run gen -- research "your topic"`.
 - **Background research:** Off until you turn it on in **Settings → Research**. When on, the worker starts one small
   $1 mission at a time, until the daily cap is spent (the day ends at midnight in Toronto).
+- **Where pages came from:** An entry's sources say when a page came from an archived copy (with the date of the copy),
+  was rendered in the local browser, or, for YouTube comments, when it will be deleted (they are kept for 30 days).
+- **Page fetching:** The **Page fetching, last 30 days** card shows how many pages came through, overall and by route,
+  the sites that fail most and why ("blocked (403)", "too little text (needs JavaScript)"). It stays empty until your
+  next mission. The Coverage card also shows the **social share**: how much of the library comes from community sites.
 - **Good:** The Coverage card shows two health targets: at least 60% of problem entries in operator or neutral voice
   (people who run the business, or neutral sources, rather than vendors), and entries from 10 or more countries.
 - **Fix mistakes:** Open an entry and press **Reject** to take it out of search and out of runs. It stays rejected if it

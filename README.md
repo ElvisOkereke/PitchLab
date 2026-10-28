@@ -38,7 +38,7 @@ flowchart LR
   calls a model: its buttons only queue rows that the worker picks up.
 - **Keys** (in `.env`, see [Quick start](#quick-start)): `LLM_API_KEY` plus the two `LLM_*_BASE_URL` values are
   required for the worker. Optional: `GITHUB_TOKEN`, `STACKEXCHANGE_KEY`, `GOOGLE_PLACES_API_KEY`,
-  `PRODUCTHUNT_TOKEN`. The dashboard needs `OWNER_PASSWORD_HASH` and `SESSION_SECRET`.
+  `PRODUCTHUNT_TOKEN`, `YOUTUBE_API_KEY`. The dashboard needs `OWNER_PASSWORD_HASH` and `SESSION_SECRET`.
 - **When the worker starts** it runs the database migrations, seeds the defaults (market, lenses, settings) and makes
   sure the built-in example case exists. Every `gen` command that opens the database does the same.
 - **Heartbeat.** Each loop the worker writes a heartbeat: which keys are set (yes or no, never the values) and the
@@ -70,10 +70,13 @@ missions** card.
 - **What a mission does:**
   1. **Plan:** the model writes queries for the sources that can feed the chosen kinds. With `pricing`, at least
      max(2, 25% of web queries) aim at pricing pages; code adds them if the plan lacks them.
-  2. **Free sources first:** Hacker News, Stack Exchange, GitHub, app store reviews, Product Hunt and the Y Combinator
-     company list cost no model budget, so they run before any web search.
+  2. **Free sources first:** Hacker News, Stack Exchange, GitHub, app store reviews, Product Hunt, YouTube comments (only
+     with `YOUTUBE_API_KEY`) and the Y Combinator company list cost no model budget, so they run before any web search.
   3. **Web search, capped:** pricing-page queries first, then the rest. Each query does up to 3 model web searches and
-     fetches up to 5 cited pages, obeying robots.txt and refusing banned domains on every redirect. Web collection
+     fetches up to 5 cited pages, obeying robots.txt and refusing banned domains on every redirect. A page that comes
+     back blocked, gone, down or too slow is tried once from the Internet Archive (an **archived copy** no more than
+     3 years old, marked as such on the entry), and a page with almost no text can be rendered in an optional local
+     browser. Web collection
      stops once the mission has spent **60% of its budget**; the rest pays for extraction.
   4. **Extract:** the model turns fetched text into entries, 8 sources per batch, at most 3 entries per source per
      batch. Entries that fail their kind's schema are dropped. Product Hunt, YC and paid App Store prices become
@@ -88,6 +91,24 @@ missions** card.
 - **Sources not used:** Reddit is deliberately off (its terms need a contract for commercial use and its public API is
   closing; the collector code stays unused). Product Hunt is used only when `PRODUCTHUNT_TOKEN` is set (non-commercial
   use under its free API terms).
+- **YouTube (optional):** with `YOUTUBE_API_KEY` set, missions also read public YouTube comments through the official API
+  (a free key; at most 5 searches per mission, and PitchLab stops at 90 searches or 9,000 quota units per Pacific day).
+  No channel or author names are stored, and the URL is the plain video URL. **YouTube comments and video text are kept
+  for 30 days, then deleted** (the entry they supported is removed if nothing else backs it, and any case quote that used
+  them is replaced by a note). Without the key, YouTube is skipped.
+- **Archive fallback:** after a direct fetch fails with 403, 404, 410, a 5xx error or a timeout, and only if robots.txt
+  allowed the page, PitchLab asks the Internet Archive (Wayback Machine) for a snapshot, at most 1 request per second. A
+  429 from the archive turns it off for the rest of that mission.
+- **Local browser (optional):** pages that fetch fine but hold under 800 readable characters (usually pages that need
+  JavaScript) can be rendered in a local Chromium. Install it once with `npx playwright install chromium`, run in
+  `packages/core` (about 150 to 300 MB). It identifies itself as PitchLab, sends GET requests only, blocks images, media
+  and fonts, waits at most 20 seconds, and can only reach the network through a local guard that refuses private
+  addresses. Without it, missions run as before. Settings → Connections shows whether it is installed.
+- **Fetch diagnostics:** every page fetch is logged by site and outcome (never the full URL). The Library page shows the
+  last 30 days: success overall and by route, the sites that fail most and why, and the social share of sources.
+- **Maintenance:** expired YouTube data, old fetch logs and old quota counters are cleaned up at the start of every
+  `gen` command, when the worker starts, and every 24 hours while it runs, so expired data goes even if the worker was
+  off for a while.
 - **Background research:** off by default. Turn it on in **Settings → Research** with a daily cap (default $5, 0 to 50,
   counted per Toronto day; it needs at least $1). When the worker is idle it queues one $1 mission at a time, rotating
   through a fixed list of 40 consumer, business, regional and new-tech topics; every 4th pick instead targets a country
@@ -227,7 +248,8 @@ follow its progress.
 - **A Postgres database** that the dashboard and the worker share. A free Supabase project works, or the local
   Postgres in `docker-compose.yml`. The CLI alone can use a built-in embedded database (PGlite) with no setup.
 - Optional: `GITHUB_TOKEN`, `STACKEXCHANGE_KEY` (more signal sources), `GOOGLE_PLACES_API_KEY` (a second prospect
-  source) and `PRODUCTHUNT_TOKEN` (Product Hunt as a research-mission source).
+  source) and `PRODUCTHUNT_TOKEN` (Product Hunt as a research-mission source) and `YOUTUBE_API_KEY` (YouTube comments as a
+  research-mission source).
 
 ## Quick start
 

@@ -14,6 +14,17 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 - [ ] Turn on **Background research** in Settings when ready.
 - [ ] After a few missions, run a benchmark pass on the Progress page and compare real-need evidence with baseline-0.
 
+## Research reach
+
+- [ ] **YouTube API key (free, optional).** Lets research missions read public YouTube comments.
+  1. Open the Google Cloud console and create a new project.
+  2. Enable **YouTube Data API v3** for it.
+  3. Go to Credentials, create an **API key**, and restrict it to YouTube Data API v3.
+  4. Add it to `.env` as `YOUTUBE_API_KEY=…`, restart `npm run worker`, and check that Settings → Connections shows YouTube as connected.
+  Comments are kept for 30 days and then deleted.
+- [ ] **Local browser (optional).** In `packages/core` run `npx playwright install chromium` (about 150 to 300 MB on the Y: drive). It helps with pages that need JavaScript. Chromium may already be installed on this computer (in `%LOCALAPPDATA%\ms-playwright`); if so, Settings → Connections shows "installed" once the worker has run.
+- [ ] After the key and Chromium are set up, run two $5 missions and compare **Fetch success** and **Social share** on the Library page with what they were before.
+
 ## Use the app
 
 - [ ] Do not generate a validation pack for a consumer case yet. Its outreach drafts are cold emails, and CASL does not allow cold emails to individuals without consent. Consumer outreach rules come later.
