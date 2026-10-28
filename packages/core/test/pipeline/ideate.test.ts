@@ -597,6 +597,25 @@ describe('ideate', () => {
     expect(row!.libraryItemIds).toEqual([S]);
   });
 
+  it('drops malformed library ids (not a uuid, not a string) and keeps the idea and its valid ids', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const script: FakeScript = { structured: { ideate: [] }, embed: (texts) => texts.map(() => unit(0)) };
+    const t = await setup(config, script);
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const S = (await upsertKnowledgeItem(t.db, {
+      kind: 'startup', title: 'K', summary: 'S', quote: 'q', audience: 'consumer', countries: ['US'], industries: [],
+      facts: { name: 'Rentify', whatItDoes: 'tracks rent', businessModel: 'saas', outcome: 'active' },
+      source: { url: 'https://rentify.example/', domain: 'rentify.example', sourceType: 'web', quote: 'q', quoteVerified: true },
+    }, unit(0), {})).itemId;
+    // Ten bad entries first: the valid id after them must survive the cap of 10.
+    const bad = ['rentify', 'https://rentify.example/', '', 42, null, '1234', 'not-a-uuid', '[]', 'xyz', { id: S }];
+    script.structured!.ideate!.push(mk(1, [], { libraryItemIds: [...bad, `[${S.toUpperCase()}]`] }));
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.dropped).toBe(0);
+    const [row] = await t.db.select().from(ideas);
+    expect(row!.libraryItemIds).toEqual([S]);
+  });
+
   it('shows each earlier idea\'s audience and business model in <prior-ideas>', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 2 });
     const first = mk(1, [], { title: 'Side gig ads', audience: 'consumer', businessModel: 'ads' });

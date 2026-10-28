@@ -128,7 +128,7 @@ export const ideas = pgTable('ideas', {
   buyer: text('buyer').notNull(),
   problem: text('problem').notNull(),
   solution: text('solution').notNull(),
-  /** Declared by ideate (one of IDEA_MECHANISMS); null for ideas from before tuning-2. Screen caps entrants per mechanism. */
+  /** Declared by ideate (one of IDEA_MECHANISMS); null for ideas from before tuning-2. Screen caps entrants per business model (screen.v4), not per mechanism. */
   mechanism: text('mechanism'),
   /** Short noun phrase for the buyer, e.g. "property manager"; null for ideas from before tuning-2. */
   buyerType: text('buyer_type'),

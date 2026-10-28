@@ -32,7 +32,7 @@ const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15 } as 
 const REASK_MAX_IDEAS = 6;
 const EPS = 1e-9;
 
-/** How an idea delivers value; screen lets at most 2 generated ideas per mechanism reach the gate. */
+/** How an idea delivers value (stored on the idea; screen caps gate entrants per business model, not per mechanism). */
 export const IDEA_MECHANISMS = [
   'monitoring', 'money_recovery', 'workflow_automation', 'data_product', 'integration', 'compliance', 'marketplace', 'other',
 ] as const;
@@ -46,6 +46,8 @@ const ideaFields = {
   mechanism: z.enum(IDEA_MECHANISMS),
   buyerType: z.string(),
 };
+/** A cited library entry id. */
+const LIBRARY_ID = z.string().uuid();
 /** ideate.v8: who pays, the business model, the money story and the barriers to entry. */
 const moneyFields = {
   audience: z.enum(AUDIENCES),
@@ -65,7 +67,7 @@ const lensIdeaSchema = z.object({
   functionalGap: z.string().max(600),
   signalUrls: z.array(z.string()),
   ...moneyFields,
-  libraryItemIds: z.array(z.string().uuid()).max(10),
+  libraryItemIds: z.array(LIBRARY_ID).max(10),
 });
 type LensIdea = z.infer<typeof lensIdeaSchema>;
 /** Plain object copy, or null. */
@@ -75,8 +77,8 @@ const asRecord = (v: unknown): Record<string, unknown> | null =>
 const bareId = (s: string) => s.trim().replace(/^\[\s*(.*?)\s*\]$/, '$1').toLowerCase();
 
 /**
- * Before validation, an over-long v8 text field is cut to its limit and cited library ids are unwrapped and capped at
- * 10, so an easy overrun never drops a whole idea. Other fields (incumbents, gap, enums, numbers) still validate strictly.
+ * Before validation, an over-long v8 text field is cut to its limit and cited library ids are unwrapped, filtered to
+ * well-formed uuids and capped at 10, so an easy overrun or one malformed id never drops a whole idea. Other fields (incumbents, gap, enums, numbers) still validate strictly.
  */
 function normalizeIdea(raw: unknown): unknown {
   const idea = asRecord(raw);
@@ -93,7 +95,11 @@ function normalizeIdea(raw: unknown): unknown {
   const barriers = asRecord(idea.barriers);
   if (barriers) { cut(barriers, 'toStartWhy', 300); cut(barriers, 'toCopyWhy', 300); idea.barriers = barriers; }
   if (Array.isArray(idea.libraryItemIds)) {
-    idea.libraryItemIds = idea.libraryItemIds.slice(0, 10).map((id) => (typeof id === 'string' ? bareId(id) : id));
+    // One malformed id (a name, a url, a number) is dropped on its own instead of failing the whole idea.
+    idea.libraryItemIds = idea.libraryItemIds
+      .flatMap((id) => (typeof id === 'string' ? [bareId(id)] : []))
+      .filter((id) => LIBRARY_ID.safeParse(id).success)
+      .slice(0, 10);
   }
   return idea;
 }
