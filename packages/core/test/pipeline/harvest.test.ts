@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { signals, dataCalls, knowledgeItems, knowledgeSources } from '../../src/db/schema';
 import { CA_US } from '../../src/db/seed';
-import { harvest, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
+import { loadPrompt } from '../../src/llm/prompts';
+import { extractAudienceVars, harvest, harvestAudienceVars, SOFTWARE_ADJACENT_SECTORS } from '../../src/pipeline/harvest';
 import { pickConsumerSegments } from '../../src/pipeline/ideate';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { DEFAULT_WP_SLUGS } from '../../src/tools/sources/wordpress';
@@ -265,18 +268,19 @@ describe('harvest', () => {
     it('makes one research call per chosen sector (open seed), naming the sector and 3 of its phrases, items in sector order', async () => {
       const db = await testDb();
       const router = spying(fakeRouter({
-        research: { harvest: FIRST_SIX.map((_, i) => researchOf(i)) },
+        research: { harvest: [...FIRST_SIX.map((_, i) => researchOf(i)), researchOf(6)] },
         structured: { extract: [{ signals: [] }] },
       }));
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
       await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run, { random: () => 0.99 });
-      const research = router.calls.filter((c) => c.kind === 'research');
-      expect(research).toHaveLength(6);
+      // Six sector calls, then one consumer-segment call (harvest-research.v6).
+      const research = router.calls.filter((c) => c.kind === 'research').slice(0, 6);
+      expect(router.calls.filter((c) => c.kind === 'research')).toHaveLength(7);
       research.forEach((c, i) => expect(c.prompt).toContain(`Pain in this sector: <sector>\n${FIRST_SIX[i]}\n</sector>. Typical owner complaints include: `));
       expect(research[0]!.prompt).toContain('Typical owner complaints include: client site maintenance, chasing client content, scope creep unpaid.');
       expect(research[3]!.prompt).toContain('Typical owner complaints include: missed maintenance renewals, dispatch scheduling chaos, unpaid service invoices.');
       expect(research[0]!.prompt).toContain('Prefer sources written by or for owners and operators in the sector');
-      expect(router.maxSearches).toEqual([3, 3, 3, 3, 3, 3]);
+      expect(router.maxSearches).toEqual([3, 3, 3, 3, 3, 3, 3]);
       const extractPrompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
       const positions = FIRST_SIX.map((_, i) => extractPrompt.indexOf(`https://s.test/${i}`));
       expect(positions.every((p) => p >= 0)).toBe(true);
@@ -384,6 +388,84 @@ describe('harvest', () => {
     it('SOFTWARE_ADJACENT_SECTORS names seeded sectors exactly', () => {
       for (const s of SOFTWARE_ADJACENT_SECTORS) expect(CA_US.sectors).toContain(s);
       expect([...SOFTWARE_ADJACENT_SECTORS]).toEqual(['web design agencies', 'digital marketing agencies', 'managed IT providers', 'ecommerce brands (Shopify)']);
+    });
+  });
+
+  describe('consumer evidence (harvest-research.v6, extract-signals.v4)', () => {
+    const empty = { text: '', sources: [] };
+    /** The v5 / v3 template on disk rendered with plain {{var}} substitution, for the "business runs unchanged" checks. */
+    const renderFile = (file: string, vars: Record<string, string>) =>
+      readFileSync(fileURLToPath(new URL(`../../prompts/${file}`, import.meta.url)), 'utf8').replace(/\r\n/g, '\n')
+        .replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k]!);
+    const BANNED = 'reddit.com';
+
+    it('loads the new versions and keeps the old files', () => {
+      expect(loadPrompt('harvest-research').version).toBe('harvest-research.v6');
+      expect(loadPrompt('extract-signals').version).toBe('extract-signals.v4');
+      expect(renderFile('harvest-research.v5.md', { countries: 'CA', focus: 'f', bannedDomains: BANNED })).toContain('not a consumer');
+      expect(renderFile('extract-signals.v3.md', { countries: 'CA', items: 'X' })).toContain('a BUSINESS (not a consumer)');
+    });
+
+    it('renders word for word as v5 and v3 for a business-only run', () => {
+      const h = { countries: 'Canada, United States', focus: 'Pain in this sector: x.', bannedDomains: BANNED };
+      expect(loadPrompt('harvest-research').render({ ...h, ...harvestAudienceVars('business') }))
+        .toBe(renderFile('harvest-research.v5.md', h));
+      const e = { countries: 'Canada, United States', items: '<items>[]</items>' };
+      expect(loadPrompt('extract-signals').render({ ...e, ...extractAudienceVars('business') }))
+        .toBe(renderFile('extract-signals.v3.md', e));
+    });
+
+    it('accepts an individual describing their own situation as operator evidence, with the library-extract definition', () => {
+      const e = loadPrompt('extract-signals').render({ countries: 'CA', items: 'X', ...extractAudienceVars('both') });
+      expect(e).toContain('a BUSINESS or an INDIVIDUAL (a consumer describing their own situation)');
+      expect(e).toContain('or by the individual who has the problem, describing their own situation');
+      expect(e).not.toContain('not a consumer');
+      const h = loadPrompt('harvest-research').render({ countries: 'CA', focus: 'f', bannedDomains: BANNED, ...harvestAudienceVars('both') });
+      expect(h).toContain('an INDIVIDUAL describing their own situation');
+      expect(h).not.toContain('Skip consumer complaints');
+      expect(h).not.toContain('not a consumer');
+    });
+
+    it('open seeds add one consumer research call for the run segments, and extract consumer pain as operator evidence', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+      const segs = pickConsumerSegments(run.id);
+      const router = fakeRouter({
+        research: { harvest: [...Array.from({ length: 6 }, () => empty), { text: '', sources: [{ url: 'https://renters.test/a', title: 'Rent', citedText: 'I pay a $40 late fee every month because my rent portal fails.' }] }] },
+        structured: { extract: [{ signals: [{ url: 'https://renters.test/a', title: 'Rent', quote: 'I pay a $40 late fee every month', sector: null, painType: 'fees', isPain: true, voice: 'operator' }] }] },
+      });
+      const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run, { random: () => 0.99 });
+      const research = router.calls.filter((c) => c.kind === 'research').map((c) => c.prompt);
+      expect(research).toHaveLength(7);
+      for (const p of research.slice(0, 6)) expect(p).toContain('not a consumer');
+      for (const s of segs) expect(research[6]).toContain(s);
+      expect(research[6]).toContain('an INDIVIDUAL describing their own situation');
+      expect(router.calls.find((c) => c.kind === 'structured')!.prompt).toContain('or by the individual who has the problem');
+      const [row] = await db.select().from(signals);
+      expect(row!.voice).toBe('operator');
+      expect(out.signalIds).toEqual([row!.id]);
+    });
+
+    it('lens seeds research individuals when a chosen lens is a consumer lens, and stay business-only otherwise', async () => {
+      const db = await testDb();
+      const consumer = fakeRouter({ research: { harvest: [empty] }, structured: {} });
+      await harvest({ db, router: consumer, sources: [], fetchPage, log: () => {} }, await insertRun(db, defaultRunConfig({ seedType: 'lens', lensIds: ['silent-failure', 'consumer-save-auto'] })));
+      expect(consumer.calls.find((c) => c.kind === 'research')!.prompt).toContain('an INDIVIDUAL describing their own situation');
+      const business = fakeRouter({ research: { harvest: [empty] }, structured: {} });
+      await harvest({ db, router: business, sources: [], fetchPage, log: () => {} }, await insertRun(db, defaultRunConfig({ seedType: 'lens', lensIds: ['silent-failure'] })));
+      expect(business.calls.find((c) => c.kind === 'research')!.prompt).toContain('not a consumer');
+    });
+
+    it('sector and idea seeds stay business-only', async () => {
+      const db = await testDb();
+      for (const cfg of [defaultRunConfig({ seedType: 'sector', sectors: ['HVAC'] }), defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying' })]) {
+        const router = fakeRouter({ research: { harvest: [researchA] }, structured: { extract: [extractA('operator')] } });
+        await harvest({ db, router, sources: [], fetchPage, log: () => {} }, await insertRun(db, cfg));
+        const research = router.calls.filter((c) => c.kind === 'research');
+        expect(research).toHaveLength(1);
+        expect(research[0]!.prompt).toContain('Skip consumer complaints');
+        expect(router.calls.find((c) => c.kind === 'structured')!.prompt).toContain('a BUSINESS (not a consumer)');
+      }
     });
   });
 
@@ -548,7 +630,7 @@ describe('harvest library signals', () => {
     const queries: string[] = [];
     const embed = (t: string[]) => { queries.push(t[0]!); return [unit(0)]; };
     const seq = (start: number) => { let i = start; return () => { i = (i * 9301 + 49297) % 233280; return i / 233280; }; };
-    const router = () => fakeRouter({ research: { harvest: Array.from({ length: 6 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
+    const router = () => fakeRouter({ research: { harvest: Array.from({ length: 7 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
     await harvest(deps(db, router()), run, { random: seq(1) });
     await harvest(deps(db, router()), run, { random: seq(2) });
     expect(queries).toHaveLength(2);
@@ -563,7 +645,7 @@ describe('harvest library signals', () => {
     const consumerItem = await lib(db, { url: 'https://renters.test/1', audience: 'consumer', vec: unit(3) });
     const queries: string[] = [];
     const embed = (t: string[]) => { queries.push(t[0]!); return [t[0]!.includes(segs[0]!) ? unit(3) : unit(0)]; };
-    const router = fakeRouter({ research: { harvest: Array.from({ length: 6 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
+    const router = fakeRouter({ research: { harvest: Array.from({ length: 7 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }] }, embed });
     const out = await harvest(deps(db, router), run);
     expect(queries).toHaveLength(1);
     for (const s of segs) expect(queries[0]).toContain(s);
