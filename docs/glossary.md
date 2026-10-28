@@ -44,7 +44,7 @@ The background program that does the work in your queued runs and validation pac
 An estimate of what the AI calls cost, worked out from a price table. It is not a billed amount, so your provider’s invoice is the real figure.
 
 ### Benchmark
-A fixed set of 5 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too. Press Run benchmark on the Progress page, or use `npm run gen -- bench run`. The current set is bench-v2: the four bench-v1 runs plus a run through two consumer lenses (earn on the side, save on a car). Older passes keep their own scores and are not changed.
+A fixed set of 5 runs you repeat after each change, so you can compare idea quality before and after. The scorecard measures how varied and well-evidenced the ideas are, and your own gut scores on its cases count too. Press Run benchmark on the Progress page, or use `npm run gen -- bench run`. The current set is bench-v2: the four bench-v1 runs plus a run through two consumer lenses ("Earn on the side" and "Save money automatically", which cuts bills, subscriptions, fees and insurance). Older passes keep their own scores and are not changed.
 
 ### Business model
 The way an idea earns money, such as a subscription, a one-off sale, a fee per transaction, ads or affiliate links. Ideas are written with one of these models, and an idea from before this existed reads as a subscription (the scorecard leaves them out). The eleven models are subscription, one-off, usage, marketplace, transaction fee, data sales, ads, affiliate, licensing, freemium, and service plus software.
