@@ -383,11 +383,21 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
 - **Why:** Earlier runs only found business-to-business ideas. Consumer ideas, and models such as ads or affiliate,
   widen the search, and the barrier scores point you to ideas that are cheap to start and hard to copy.
 - **Value multiple:** a case now shows how much a year of the product is worth to the paying user against what it
-  costs them, with the source of each figure. Ideas where the user pays nothing show a note instead. A multiple under
-  1× gets the "value below price" flag and the case is kept for you to judge. The older return figure is still shown.
-- **Consumer lenses:** six lenses aim at individuals: earn on the side, save on a car or home, life stages, solo
-  creators, leapfrogging a market, and an AI assistant or free-to-user attention product. Tick them under **Lenses** when you start a run. Runs without
-  a lens pick at most 6 lenses and include at least 2 consumer ones when the seed allows.
+  costs them, with the source of each figure. Data sales use the value and price for the client who buys the data, and
+  freemium uses the paid tier's price. Ad- and affiliate-funded ideas, where the user pays nothing, show a note instead of
+  the multiple, the return figure and payback, and sit in the middle of the money ranking. A multiple under 1× gets the
+  "value below price" flag and the case is kept for you to judge. The older return figure is still shown. The Summary tab
+  labels the idea's own figure "Idea's estimate of value to the user".
+- **Consumer lenses:** six lenses aim at individuals: earn on the side, save money automatically (bills, subscriptions,
+  fees, insurance), life stages, solo creators, leapfrogging a market, and an AI assistant or free-to-user attention
+  product. Tick them under **Lenses** when you start a run. Runs without a lens pick at most 6 lenses and include at
+  least 2 consumer ones when the seed allows.
+- **Consumer pitch:** a case for individuals has no cold emails, since Canada's anti-spam law (CASL) allows no implied
+  consent for them. Its Pitch tab lists channels (communities, search, app stores, content, partnerships, paid ads) and
+  landing-page copy instead.
+- **Evidence before the gate:** an idea reaches the gate only when its signals already meet the gate's evidence rule, so
+  no gate slot is spent on an idea that would be killed for thin evidence. Runs with consumer lenses or segments also
+  collect individuals' own posts about their problems as evidence.
 
 ## Track idea quality
 
