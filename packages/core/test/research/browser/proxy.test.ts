@@ -214,3 +214,99 @@ describe('startGuardedProxy: lifecycle', () => {
     await expect(raw(p.port, 'CONNECT x.example:443 HTTP/1.1\r\n\r\n')).rejects.toThrow();
   });
 });
+
+describe('startGuardedProxy: hardening', () => {
+  it('binds the real socket to 127.0.0.1', async () => {
+    const p = await proxy({ lookup: resolverFor({}), isBlockedHost: notBlocked });
+    // `address` is read back from server.address(), not a constant.
+    expect(p.address).toBe('127.0.0.1');
+  });
+
+  it('a throwing isBlockedHost closes the client and never becomes an unhandled rejection', async () => {
+    const isBlockedHost = () => {
+      throw new Error('boom');
+    };
+    const p = await proxy({ lookup: resolverFor({ 'x.example': '93.184.216.34' }), isBlockedHost });
+    const c = await raw(p.port, 'CONNECT x.example:443 HTTP/1.1\r\n\r\n');
+    expect(c.line).not.toMatch(/^HTTP\/1\.1 200/);
+    const g = await raw(p.port, 'GET http://x.example/ HTTP/1.1\r\nHost: x.example\r\n\r\n');
+    expect(g.line).not.toMatch(/^HTTP\/1\.1 200/);
+  });
+
+  it('after the tunnel is established, an upstream error just closes the client (no 502 inside the tunnel)', async () => {
+    const s = await sentinel((sock) => sock.on('data', () => sock.resetAndDestroy()));
+    const p = await proxy({ lookup: resolverFor({ 't.example': '127.0.0.1' }), isBlockedHost: notBlocked, allowLoopbackForTests: true });
+    const r = await raw(p.port, `CONNECT t.example:${s.port} HTTP/1.1\r\n\r\n`);
+    expect(r.line).toMatch(/^HTTP\/1\.1 200/);
+    const closed = new Promise<void>((res) => r.socket.on('close', () => res()));
+    r.socket.write('hello');
+    await closed;
+    expect(r.data()).not.toContain('502');
+  });
+
+  it('tries the remaining checked addresses in order when the first dial fails (one lookup, no re-resolution)', async () => {
+    const s = await sentinel((sock) => sock.on('data', (d) => sock.end(`echo:${d}`)));
+    // 127.0.0.2 has no listener (the sentinel is bound to 127.0.0.1 only), so the first dial is refused.
+    const lookup = vi.fn(async () => [{ address: '127.0.0.2', family: 4 }, { address: '127.0.0.1', family: 4 }]);
+    const dials: { address: string; port: number }[] = [];
+    const p = await proxy({ lookup, isBlockedHost: notBlocked, allowLoopbackForTests: true, onDial: (d) => dials.push(d) });
+    const r = await raw(p.port, `CONNECT multi.example:${s.port} HTTP/1.1\r\n\r\n`);
+    expect(r.line).toMatch(/^HTTP\/1\.1 200/);
+    expect(dials).toEqual([{ address: '127.0.0.2', port: s.port }, { address: '127.0.0.1', port: s.port }]);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  }, 20_000);
+
+  it('answers 502 when every checked address fails to dial', async () => {
+    const s = await sentinel();
+    const lookup = vi.fn(async () => [{ address: '127.0.0.2', family: 4 }, { address: '127.0.0.3', family: 4 }]);
+    const dials: unknown[] = [];
+    const p = await proxy({ lookup, isBlockedHost: notBlocked, allowLoopbackForTests: true, onDial: (d) => dials.push(d) });
+    const r = await raw(p.port, `CONNECT none.example:${s.port} HTTP/1.1\r\n\r\n`);
+    expect(r.line).toMatch(/^HTTP\/1\.1 502/);
+    expect(dials).toHaveLength(2);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  }, 20_000);
+
+  it('strips response headers named in the upstream Connection header', async () => {
+    const s = await sentinel((sock) =>
+      sock.once('data', () => sock.end('HTTP/1.1 200 OK\r\nConnection: close, X-Hop\r\nX-Hop: secret\r\nX-Keep: 2\r\nKeep-Alive: timeout=99, max=7\r\nContent-Length: 2\r\n\r\nok')),
+    );
+    const p = await proxy({ lookup: resolverFor({ 'h.example': '127.0.0.1' }), isBlockedHost: notBlocked, allowLoopbackForTests: true });
+    const res = await new Promise<{ headers: Record<string, unknown>; body: string }>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port: p.port, method: 'GET', path: `http://h.example:${s.port}/`, headers: { host: `h.example:${s.port}` } }, (r) => {
+        let b = '';
+        r.on('data', (d) => (b += d));
+        r.on('end', () => resolve({ headers: r.headers, body: b }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(res.body).toBe('ok');
+    expect(res.headers['x-keep']).toBe('2');
+    expect(res.headers['x-hop']).toBeUndefined();
+    expect(res.headers['keep-alive']).not.toBe('timeout=99, max=7'); // the proxy's own server may add its own
+  });
+
+  it('plain GET also falls back to the next checked address', async () => {
+    const upstream: Server = createHttpServer((_req, res) => res.end('fallback-ok'));
+    await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', r));
+    cleanups.push(() => new Promise<void>((r) => upstream.close(() => r())));
+    const port = (upstream.address() as AddressInfo).port;
+    const dials: unknown[] = [];
+    const p = await proxy({
+      lookup: async () => [{ address: '127.0.0.2', family: 4 }, { address: '127.0.0.1', family: 4 }],
+      isBlockedHost: notBlocked, allowLoopbackForTests: true, onDial: (d) => dials.push(d),
+    });
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = httpRequest({ host: '127.0.0.1', port: p.port, method: 'GET', path: `http://g.example:${port}/`, headers: { host: `g.example:${port}` } }, (r) => {
+        let b = '';
+        r.on('data', (d) => (b += d));
+        r.on('end', () => resolve(b));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    expect(body).toBe('fallback-ok');
+    expect(dials).toHaveLength(2);
+  }, 20_000);
+});

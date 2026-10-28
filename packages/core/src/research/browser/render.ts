@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isBannedSource } from '../../tools/banned-sources';
@@ -14,7 +14,14 @@ import { startGuardedProxy, type GuardedProxy } from './proxy';
  *
  * All browser traffic goes through the guarded proxy (proxy.ts): the context is launched with it, with no bypass list
  * and loopback explicitly proxied, WebRTC limited to proxied traffic, QUIC off and service workers blocked. Routes
- * additionally allow GET only and drop images, media and fonts. No stealth: the PitchLab user agent, no logins.
+ * additionally allow GET only and drop images, media and fonts, and every WebSocket is closed at the route layer (so
+ * nothing but GET leaves the browser, even inside a wss:// tunnel). Pages the renderer did not open are closed.
+ * No stealth: the PitchLab user agent, no logins.
+ *
+ * Remaining gap (accepted; the proxy is the security boundary and only reaches checked public, non-banned hosts):
+ * requests Playwright's routing does not see, such as navigator.sendBeacon / keepalive fetches sent while a page is
+ * unloading and traffic from dedicated or shared workers, are not method-filtered here; over https they travel inside
+ * an opaque CONNECT tunnel. Service workers are blocked outright.
  */
 export interface RequestLike {
   method(): string;
@@ -36,8 +43,14 @@ export interface PageLike {
   url(): string;
   close(): Promise<void>;
 }
+export interface WebSocketRouteLike {
+  close(options?: { code?: number; reason?: string }): Promise<void>;
+}
 export interface ContextLike {
   route(pattern: string, handler: (route: RouteLike) => unknown): Promise<void>;
+  /** Playwright >= 1.48. */
+  routeWebSocket(pattern: string, handler: (ws: WebSocketRouteLike) => unknown): Promise<void>;
+  on(event: 'page', listener: (page: { close(): Promise<void> }) => void): unknown;
   newPage(): Promise<PageLike>;
   close(): Promise<void>;
 }
@@ -63,6 +76,8 @@ const SETTLE_TIMEOUT_MS = 5_000;
 export const MAX_PAGES = 3;
 const BLOCKED_TYPES = new Set(['image', 'media', 'font']);
 const PROFILE_PREFIX = 'pitchlab-browser-';
+/** Profiles older than this at worker start belong to a crashed or killed mission. */
+const STALE_PROFILE_MS = 3_600_000;
 const PLAYWRIGHT = 'playwright-core';
 
 type Importer = () => Promise<unknown>;
@@ -124,6 +139,9 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
   let closed = false;
   let profileDir: string | null = null;
   let contextPromise: Promise<ContextLike> | null = null;
+  /** Pages this renderer opened, and newPage() calls still in flight (Playwright emits 'page' before they resolve). */
+  const ours = new WeakSet<object>();
+  const creating = new Set<Promise<unknown>>();
 
   async function launch(): Promise<ContextLike> {
     profileDir = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
@@ -148,6 +166,14 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
       if (req.method() !== 'GET' || BLOCKED_TYPES.has(req.resourceType())) return route.abort('blockedbyclient');
       return route.continue();
     });
+    // No WebSocket is ever opened to a server: the GET-only rule must also hold inside a wss:// tunnel.
+    await context.routeWebSocket('**/*', (ws) => void ws.close().catch(() => {}));
+    // Any page we did not open (window.open, target=_blank, ...) is closed once our own pending opens have settled.
+    context.on('page', (page) => {
+      void Promise.allSettled([...creating]).then(() => {
+        if (!ours.has(page)) void page.close().catch(() => {});
+      });
+    });
     return context;
   }
 
@@ -156,7 +182,18 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
     contextPromise ??= launch();
     const context = await contextPromise;
     if (closed) return null;
-    const page = await context.newPage();
+    // Marked as in flight before newPage() is called, so a 'page' event for it always waits for ours.add below.
+    let settle!: () => void;
+    const opening = new Promise<void>((r) => (settle = r));
+    creating.add(opening);
+    let page: PageLike;
+    try {
+      page = await context.newPage();
+      ours.add(page);
+    } finally {
+      creating.delete(opening);
+      settle();
+    }
     try {
       page.on('popup', (popup) => void popup.close().catch(() => {}));
       const res = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: 'load' });
@@ -192,6 +229,31 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
       }
     },
   };
+}
+
+/**
+ * Deletes `pitchlab-browser-*` profile directories older than an hour (left by a crashed or killed mission). Run at
+ * worker start. Returns how many were removed; never throws.
+ */
+export async function sweepStaleProfiles(opts: { dir?: string; now?: () => number; maxAgeMs?: number } = {}): Promise<number> {
+  const { dir = tmpdir(), now = Date.now, maxAgeMs = STALE_PROFILE_MS } = opts;
+  let removed = 0;
+  try {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      if (!e.isDirectory() || !e.name.startsWith(PROFILE_PREFIX)) continue;
+      const full = join(dir, e.name);
+      try {
+        if (now() - (await stat(full)).mtimeMs <= maxAgeMs) continue;
+        await rm(full, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+        removed++;
+      } catch {
+        // in use or already gone: leave it for the next sweep
+      }
+    }
+  } catch {
+    // unreadable temp directory: nothing to sweep
+  }
+  return removed;
 }
 
 /** Closes the mission's browser context and deletes its temporary profile. */

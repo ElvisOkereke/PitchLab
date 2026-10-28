@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { closeRenderer, createRenderer, loadBrowser, openMissionBrowser, type BrowserLike } from '../../../src/research/browser/render';
+import { closeRenderer, createRenderer, loadBrowser, openMissionBrowser, sweepStaleProfiles, type BrowserLike } from '../../../src/research/browser/render';
 import { USER_AGENT } from '../../../src/research/http';
 
 type Handler = (route: any) => unknown;
@@ -16,8 +16,14 @@ function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; h
   const routes: Handler[] = [];
   const pages: any[] = [];
   const launches: { dir: string; options: any }[] = [];
+  const wsRoutes: { pattern: string; handler: (ws: any) => unknown }[] = [];
+  const ctxListeners: ((p: any) => void)[] = [];
   const context = {
     route: vi.fn(async (_p: string, h: Handler) => void routes.push(h)),
+    routeWebSocket: vi.fn(async (pattern: string, handler: (ws: any) => unknown) => void wsRoutes.push({ pattern, handler })),
+    on: vi.fn((ev: string, fn: (p: any) => void) => void (ev === 'page' ? ctxListeners.push(fn) : undefined)),
+    /** Simulates a page the renderer did not create (window.open, target=_blank, ...). */
+    emitPage: (p: any) => ctxListeners.forEach((f) => f(p)),
     newPage: vi.fn(async () => {
       const listeners: Record<string, ((x: any) => void)[]> = {};
       let current = 'about:blank';
@@ -36,6 +42,8 @@ function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; h
         emit: (ev: string, x: any) => (listeners[ev] ?? []).forEach((f) => f(x)),
       };
       pages.push(page);
+      // Like Playwright, the context's 'page' event fires before newPage() resolves.
+      ctxListeners.forEach((f) => f(page));
       return page;
     }),
     close: vi.fn(async () => {}),
@@ -47,7 +55,7 @@ function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; h
       return context as any;
     }),
   };
-  return { browser, context, routes, pages, launches };
+  return { browser, context, routes, pages, launches, wsRoutes };
 }
 
 const proxy = { port: 54321 };
@@ -77,7 +85,7 @@ describe('createRenderer', () => {
       javaScriptEnabled: true,
       serviceWorkers: 'block',
     });
-    expect(options.args).toEqual(expect.arrayContaining(['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp']));
+    expect(options.args).toEqual(expect.arrayContaining(['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-quic']));
     expect(dir.startsWith(tmpdir())).toBe(true);
     expect(existsSync(dir)).toBe(true);
   });
@@ -185,6 +193,73 @@ describe('createRenderer', () => {
     const m = mockBrowser();
     await closeRenderer(createRenderer(m.browser, proxy));
     expect(m.launches).toHaveLength(0);
+  });
+});
+
+describe('createRenderer hardening', () => {
+  it('closes every WebSocket at the route layer (the GET-only rule also holds inside wss tunnels)', async () => {
+    const m = mockBrowser();
+    await make(m.browser).render('https://spa.example/a');
+    expect(m.wsRoutes.map((w) => w.pattern)).toEqual(['**/*']);
+    const ws = { close: vi.fn(async () => {}), connectToServer: vi.fn() };
+    await m.wsRoutes[0]!.handler(ws);
+    expect(ws.close).toHaveBeenCalled();
+    expect(ws.connectToServer).not.toHaveBeenCalled();
+  });
+
+  it('closes pages it did not create, but never its own', async () => {
+    const m = mockBrowser();
+    const r = make(m.browser);
+    await r.render('https://spa.example/a');
+    expect(m.pages[0].close).toHaveBeenCalledTimes(1); // only the renderer's own close after rendering
+    const stray = { close: vi.fn(async () => {}) };
+    m.context.emitPage(stray);
+    await new Promise((res) => setTimeout(res, 0));
+    expect(stray.close).toHaveBeenCalled();
+  });
+
+  it('a stray page during concurrent renders is closed while renders still succeed', async () => {
+    const m = mockBrowser();
+    const r = make(m.browser);
+    await r.render('https://spa.example/0'); // context launched
+    const stray = { close: vi.fn(async () => {}) };
+    const all = Promise.all([r.render('https://spa.example/1'), r.render('https://spa.example/2')]);
+    m.context.emitPage(stray);
+    const out = await all;
+    await new Promise((res) => setTimeout(res, 0));
+    expect(out.every((o) => o !== null)).toBe(true);
+    expect(stray.close).toHaveBeenCalled();
+    for (const p of m.pages) expect(p.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sweepStaleProfiles', () => {
+  it('removes pitchlab-browser-* directories older than an hour and keeps everything else', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sweep-test-'));
+    try {
+      const { mkdirSync, utimesSync, writeFileSync } = await import('node:fs');
+      const old = join(root, 'pitchlab-browser-old');
+      const fresh = join(root, 'pitchlab-browser-fresh');
+      const other = join(root, 'something-else-old');
+      for (const d of [old, fresh, other]) {
+        mkdirSync(d);
+        writeFileSync(join(d, 'f'), 'x');
+      }
+      const now = Date.now();
+      const twoHoursAgo = new Date(now - 2 * 3_600_000);
+      utimesSync(old, twoHoursAgo, twoHoursAgo);
+      utimesSync(other, twoHoursAgo, twoHoursAgo);
+      const removed = await sweepStaleProfiles({ dir: root, now: () => now });
+      expect(removed).toBe(1);
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(fresh)).toBe(true);
+      expect(existsSync(other)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  it('never throws (missing directory)', async () => {
+    expect(await sweepStaleProfiles({ dir: join(tmpdir(), 'definitely-missing-dir-xyz') })).toBe(0);
   });
 });
 
