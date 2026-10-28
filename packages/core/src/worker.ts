@@ -70,7 +70,7 @@ export function resolveModels(env: Env): Record<ModelStage, string> {
 }
 
 /** The heartbeat the dashboard shows: which keys are set (booleans, never values) and the resolved models. */
-export function workerStatus(env: Env, models: Record<ModelStage, string>): WorkerStatus {
+export function workerStatus(env: Env, models: Record<ModelStage, string>, extra: { browser?: boolean } = {}): WorkerStatus {
   return {
     at: new Date().toISOString(),
     providers: {
@@ -79,6 +79,8 @@ export function workerStatus(env: Env, models: Record<ModelStage, string>): Work
       stackexchange: Boolean(env.STACKEXCHANGE_KEY),
       places: Boolean(env.GOOGLE_PLACES_API_KEY),
       producthunt: Boolean(env.PRODUCTHUNT_TOKEN),
+      youtube: Boolean(env.YOUTUBE_API_KEY),
+      browser: Boolean(extra.browser),
     },
     models: { ...models },
   };

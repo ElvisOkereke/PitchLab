@@ -734,6 +734,51 @@ describe('buildCollectors', () => {
     expect(router.calls[0]!.prompt).not.toMatch(/reddit/i);
   });
 
+  describe('YouTube source', () => {
+    const YT = 'https://www.youtube.com/watch?v=vid00000001';
+    const C1 = 'Chasing unpaid invoices takes me six hours every week. It is awful.';
+    const C2 = 'Quoting jobs by hand loses us bids every single month. Nothing fits.';
+
+    it('buildCollectors wires youtube only with a key', () => {
+      expect(buildCollectors({})).not.toHaveProperty('youtube');
+      expect(buildCollectors({ youtubeApiKey: 'k' })).toHaveProperty('youtube');
+    });
+
+    it('offers youtube to the planner only when its collector is wired, with the v3 guidance', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem'] });
+      const withKey = mockRouter(db, { plan: { queries: [] } });
+      const { deps } = happy(db);
+      await runMission({ ...deps, router: withKey, collectors: { youtube: async () => [] } }, id);
+      expect(withKey.calls[0]!.prompt).toMatch(/`youtube`/);
+      expect(withKey.calls[0]!.prompt).toMatch(/comments are the evidence/);
+      const id2 = await insertMission(db, { kinds: ['problem'] });
+      const without = mockRouter(db, { plan: { queries: [] } });
+      await runMission({ ...deps, router: without, collectors: { hn: signalSource('hn', []) } }, id2);
+      expect(without.calls[0]!.prompt).not.toMatch(/`youtube`/);
+      expect(without.calls[0]!.prompt).not.toMatch(/comments are the evidence/);
+    });
+
+    it('keeps every comment (same video URL) as its own text, stores YouTube sources with a 30-day expiry, relays warnings', async () => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds: ['problem'] });
+      const youtube: Collectors['youtube'] = async (q, ctx) => {
+        ctx.warn('YouTube daily quota reached');
+        return [item('youtube', YT, C1, 'Video title'), item('youtube', YT, C2, 'Video title')];
+      };
+      const router = mockRouter(db, { plan: { queries: [{ source: 'youtube', q: 'invoice chasing' }] } });
+      const { deps } = happy(db);
+      const now = new Date('2026-10-28T12:00:00Z');
+      expect(await runMission({ ...deps, router, collectors: { youtube }, now: () => now }, id)).toBe('succeeded');
+      expect((await mission(db, id)).warnings).toEqual(['YouTube daily quota reached']);
+      expect((await mission(db, id)).itemsAdded).toBe(2);
+      const sources = await db.select().from(knowledgeSources);
+      expect(sources).toHaveLength(2);
+      expect(sources.every((x) => x.sourceType === 'youtube' && x.url === YT)).toBe(true);
+      expect(sources.every((x) => x.expiresAt!.getTime() === now.getTime() + 30 * 86_400_000)).toBe(true);
+    });
+  });
+
   describe('effort scales with budget', () => {
     it('maxQueriesFor clamps round(6 * budget) to 12..60', () => {
       expect([1, 2, 5, 10, 25].map(maxQueriesFor)).toEqual([12, 12, 30, 60, 60]);

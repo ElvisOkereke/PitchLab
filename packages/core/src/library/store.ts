@@ -60,30 +60,43 @@ const moreIndependent = (a: KnowledgeVoice | null | undefined, b: KnowledgeVoice
 
 const similarity = (vec: number[]): SQL<number> => sql<number>`1 - (${cosineDistance(knowledgeItems.embedding, vec)})`;
 
+/** How long YouTube-sourced data may be kept (YouTube developer policy: 30 days, then refresh or delete). */
+export const YOUTUBE_TTL_MS = 30 * 86_400_000;
+
 export async function upsertKnowledgeItem(
   db: Db,
   d: KnowledgeDraft,
   embedding: number[],
-  ctx: { missionId?: string },
+  ctx: { missionId?: string; now?: Date },
 ): Promise<{ outcome: 'added' | 'merged' | 'duplicate'; itemId: string }> {
   const hash = contentHash(d);
   /** The quote text the collector verified against the fetched source, or null. The entry quote must be this text. */
   const verifiedQuote = d.source.quoteVerified && d.source.quote ? d.source.quote : null;
   return db.transaction(async (tx) => {
+    // YouTube data may be kept for 30 days: such a source is stamped with an expiry, refreshed whenever it is collected again.
+    const fetchedAt = ctx.now ?? new Date();
+    const isYoutube = d.source.sourceType === 'youtube';
+    const expiresAt = isYoutube ? new Date(fetchedAt.getTime() + YOUTUBE_TTL_MS) : null;
+    // A later verified quote for the same url replaces an unverified one (with its voice); a verified row is never downgraded.
+    const upgrade = sql`(excluded.quote_verified and not ${knowledgeSources.quoteVerified})`;
+    const upgraded = (col: SQL, current: SQL) => sql`(case when ${upgrade} then ${col} else ${current} end)`;
     const addSource = (itemId: string) =>
       tx.insert(knowledgeSources).values({
         itemId, url: d.source.url, domain: d.source.domain, sourceType: d.source.sourceType,
         publishedAt: d.source.publishedAt ?? null, quote: d.source.quote ?? null, quoteVerified: d.source.quoteVerified,
         voice: d.source.voice ?? d.voice ?? null, via: d.source.via ?? 'direct', snapshotAt: d.source.snapshotAt ?? null,
+        fetchedAt, expiresAt,
       }).onConflictDoUpdate({
         target: [knowledgeSources.itemId, knowledgeSources.url],
-        // A later verified quote for the same url replaces an unverified one (with its voice); a verified row is never downgraded.
         set: {
-          quote: sql`excluded.quote`, quoteVerified: sql`excluded.quote_verified`,
-          voice: sql`coalesce(excluded.voice, ${knowledgeSources.voice})`,
-          via: sql`excluded.via`, snapshotAt: sql`excluded.snapshot_at`,
+          quote: upgraded(sql`excluded.quote`, sql`${knowledgeSources.quote}`),
+          quoteVerified: upgraded(sql`excluded.quote_verified`, sql`${knowledgeSources.quoteVerified}`),
+          voice: upgraded(sql`coalesce(excluded.voice, ${knowledgeSources.voice})`, sql`${knowledgeSources.voice}`),
+          via: upgraded(sql`excluded.via`, sql`${knowledgeSources.via}`),
+          snapshotAt: upgraded(sql`excluded.snapshot_at`, sql`${knowledgeSources.snapshotAt}`),
+          // Re-collecting a YouTube source restarts its 30 days, whether or not the quote changed.
+          ...(isYoutube ? { fetchedAt: sql`excluded.fetched_at`, expiresAt: sql`excluded.expires_at` } : {}),
         },
-        setWhere: sql`excluded.quote_verified and not ${knowledgeSources.quoteVerified}`,
       });
 
     /** Shared by the duplicate and merge paths: add the source, upgrade voice, adopt a verified quote. */

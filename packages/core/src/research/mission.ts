@@ -23,6 +23,7 @@ import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
 import { robotsAllows } from './robots';
 import { appPriceToDraft, appReviews, COUNTRIES as APP_STORE_COUNTRIES, type AppInfo } from './sources/appreviews';
+import { youtubeSearch, type YoutubeState } from './sources/youtube';
 import { productHuntSearch, productHuntToDraft, type ProductHuntItem } from './sources/producthunt';
 import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
 
@@ -53,14 +54,14 @@ export const BUDGET_WARNING = 'Budget reached; stopped early.';
  * Sources a mission may use. Reddit is deliberately absent (site terms: commercial use needs a contract and its API
  * is closing); its collector module stays in research/sources/ unused, so it can be re-enabled with permission.
  * Product Hunt is used only when PRODUCTHUNT_TOKEN is set (owner ruling: non-commercial prototyping under its free API
- * terms).
+ * terms). YouTube is used only when YOUTUBE_API_KEY is set (official API, 30-day retention).
  */
-export const MISSION_SOURCES = ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'producthunt', 'yc'] as const;
+export const MISSION_SOURCES = ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'producthunt', 'yc', 'youtube'] as const;
 export type MissionSource = (typeof MISSION_SOURCES)[number];
 
 /** Which sources can feed each kind. Product Hunt and YC map to `startup` drafts in code. */
 const SOURCES_FOR_KIND: Record<SliceAKind, readonly MissionSource[]> = {
-  problem: ['web', 'hn', 'stackexchange', 'github', 'appreviews'],
+  problem: ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'youtube'],
   pricing: ['web', 'appreviews'],
   startup: ['web', 'hn', 'producthunt', 'yc'],
 };
@@ -76,15 +77,27 @@ const SOURCE_HINTS: Record<MissionSource, string> = {
   appreviews: 'the name of one app people in this topic use (its low-rated reviews hold problems and pricing complaints).',
   producthunt: 'one topic keyword (for example "invoicing").',
   yc: 'one or two keywords matching what companies in this topic do.',
+  youtube: 'a short search (2 to 6 words) for videos where people describe the problem: reviews, how-tos, complaints. The comments are the evidence.',
 };
 
-export type CollectorCtx = { onCall: CallHook; countries: string[]; onApp?: (app: AppInfo) => void };
+export type CollectorCtx = {
+  onCall: CallHook;
+  countries: string[];
+  onApp?: (app: AppInfo) => void;
+  /** Records a mission warning (deduplicated by the runner). */
+  warn: (w: string) => void;
+  /** Per-mission YouTube guard state (search count, stopped flag). */
+  youtube: YoutubeState;
+  missionId: string;
+  db: Db;
+};
 
 /** All injectable. A missing collector is a source the mission cannot use (and the plan is never offered). */
 export type Collectors = {
   appReviews?: (q: string, ctx: CollectorCtx) => Promise<RawItem[]>;
   productHunt?: (q: string, ctx: CollectorCtx) => Promise<ProductHuntItem[]>;
   yc?: (q: string, ctx: CollectorCtx) => Promise<YcCompany[]>;
+  youtube?: (q: string, ctx: CollectorCtx) => Promise<RawItem[]>;
   hn?: SignalSource;
   stackexchange?: SignalSource;
   github?: SignalSource;
@@ -104,7 +117,7 @@ export type MissionDeps = {
 };
 
 /** Real collectors bound to the owner's keys. Product Hunt only with its token; Reddit is never wired (MISSION_SOURCES). */
-export function buildCollectors(keys: { productHuntToken?: string; stackexchangeKey?: string; githubToken?: string }): Collectors {
+export function buildCollectors(keys: { productHuntToken?: string; stackexchangeKey?: string; githubToken?: string; youtubeApiKey?: string }): Collectors {
   const c: Collectors = {
     appReviews: (q, ctx) => {
       const country = ctx.countries.map((x) => x.toLowerCase()).find((x) => (APP_STORE_COUNTRIES as readonly string[]).includes(x)) ?? 'us';
@@ -118,6 +131,14 @@ export function buildCollectors(keys: { productHuntToken?: string; stackexchange
   if (keys.productHuntToken) {
     const token = keys.productHuntToken;
     c.productHunt = (q, ctx) => productHuntSearch(q, { token, limit: API_LIMIT, onCall: ctx.onCall });
+  }
+  if (keys.youtubeApiKey) {
+    const apiKey = keys.youtubeApiKey;
+    c.youtube = (q, ctx) =>
+      youtubeSearch(q, {
+        apiKey, db: ctx.db, missionId: ctx.missionId, state: ctx.youtube, onCall: ctx.onCall, onWarn: ctx.warn,
+        regionCode: ctx.countries.find((x) => /^[A-Za-z]{2}$/.test(x)),
+      });
   }
   return c;
 }
@@ -366,7 +387,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     if (kinds.length === 0) kinds.push(...SLICE_A_KINDS);
     const has: Record<MissionSource, boolean> = {
       web: true, hn: !!collectors.hn, stackexchange: !!collectors.stackexchange, github: !!collectors.github,
-      appreviews: !!collectors.appReviews, producthunt: !!collectors.productHunt, yc: !!collectors.yc,
+      appreviews: !!collectors.appReviews, producthunt: !!collectors.productHunt, yc: !!collectors.yc, youtube: !!collectors.youtube,
     };
     const allowed = MISSION_SOURCES.filter((s) => has[s] && kinds.some((k) => SOURCES_FOR_KIND[k].includes(s)));
     const countries = m.countries.length ? m.countries.join(', ') : 'any (global)';
@@ -410,7 +431,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     let anyFailed = false;
     const onCall: CallHook = (c) => logDataCall(db, { runId: null, missionId, provider: c.provider, endpoint: c.endpoint, ok: c.ok });
     const cctx: CollectorCtx = {
-      onCall, countries: m.countries,
+      onCall, countries: m.countries, warn, youtube: { searches: 0, stopped: false }, missionId, db,
       onApp: (app) => {
         const d = appPriceToDraft(app);
         if (d) addStructured([d]);
@@ -428,8 +449,11 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const addItems = (items: (RawItem & { via?: FetchVia; snapshotAt?: Date })[]) => {
       for (const it of items) {
         const text = (it.text ?? '').trim();
-        if (!text || seenUrls.has(it.url) || isBannedSource(it.url)) continue;
-        seenUrls.add(it.url);
+        // Every YouTube item shares its video's url (no comment ids), so those are told apart by their text.
+        const key = it.source === 'youtube' ? `${it.url}
+${text}` : it.url;
+        if (!text || seenUrls.has(key) || isBannedSource(it.url)) continue;
+        seenUrls.add(key);
         texts.push({ url: it.url, domain: hostOf(it.url), sourceType: it.source, title: it.title ?? '', text, publishedAt: it.publishedAt, via: it.via, snapshotAt: it.snapshotAt });
       }
     };
@@ -526,6 +550,9 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
           case 'yc':
             addStructured((await collectors.yc!(q, cctx)).map(ycToDraft));
             break;
+          case 'youtube':
+            addItems(await collectors.youtube!(q, cctx));
+            break;
         }
         anyOk = true;
       } catch (e) {
@@ -590,7 +617,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       const vectors = await router.embed(drafts.map((d) => `${d.title}\n${d.summary}`), ctx('library-embed.v1'));
       if (vectors.length !== drafts.length) throw new Error('mission: embedding count mismatch');
       for (let i = 0; i < drafts.length; i++) {
-        const r = await upsertKnowledgeItem(db, drafts[i]!, vectors[i]!, { missionId });
+        const r = await upsertKnowledgeItem(db, drafts[i]!, vectors[i]!, { missionId, now: deps.now?.() });
         if (r.outcome === 'added') itemsAdded++;
         else itemsMerged++;
       }

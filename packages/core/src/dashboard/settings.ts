@@ -71,13 +71,13 @@ export type WorkerStatus = {
   /** ISO time of the last heartbeat. */
   at: string;
   /** Which providers have a key configured on the worker (booleans only, never values). */
-  providers: { llm: boolean; github: boolean; stackexchange: boolean; places: boolean; producthunt: boolean };
+  providers: { llm: boolean; github: boolean; stackexchange: boolean; places: boolean; producthunt: boolean; youtube: boolean; browser: boolean };
   models: Record<ModelStage, string>;
 };
 
 const WorkerStatusSchema = z.object({
   at: z.string().max(40),
-  providers: z.object({ llm: z.boolean(), github: z.boolean(), stackexchange: z.boolean(), places: z.boolean(), producthunt: z.boolean().default(false) }),
+  providers: z.object({ llm: z.boolean(), github: z.boolean(), stackexchange: z.boolean(), places: z.boolean(), producthunt: z.boolean().default(false), youtube: z.boolean().default(false), browser: z.boolean().default(false) }),
   // Heartbeats from older workers lack newer stages: default them so the dashboard still shows the heartbeat.
   models: z.object(Object.fromEntries(MODEL_STAGES.map((s) => [s, z.string().max(200).default(DEFAULT_MODELS[s])])) as Record<ModelStage, z.ZodDefault<z.ZodString>>),
 });

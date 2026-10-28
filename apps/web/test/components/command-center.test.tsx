@@ -27,7 +27,7 @@ function data(o: Partial<CommandData> = {}): CommandData {
       { kind: 'reply', label: 'Check your inbox for Acme', href: '/cases/lead-flow?tab=validate', at: ago(4 * 86_400) },
     ],
     spend: { today: { llmUsd: 1.5, dataUsd: 0.25, llmCalls: 12 }, week: { llmUsd: 10, dataUsd: 0, llmCalls: 80 } },
-    worker: { at: ago(20).toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false, producthunt: false }, models: DEFAULT_MODELS },
+    worker: { at: ago(20).toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false, producthunt: false, youtube: false, browser: false }, models: DEFAULT_MODELS },
     runs: { queued: 2, running: 1, succeeded: 5, failed: 1 },
     recent: [run(), run({ id: '66666666-6666-4666-8666-666666666666', status: 'failed', error: 'boom' })],
     ...o,

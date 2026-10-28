@@ -14,3 +14,9 @@ it('names missing vars without leaking values', () => {
 it('parses MODEL_OVERRIDES JSON', () => {
   expect(loadEnv({ LLM_API_KEY: 'k', MODEL_OVERRIDES: '{"gate":"gemini-3.1-pro"}' }).MODEL_OVERRIDES).toEqual({ gate: 'gemini-3.1-pro' });
 });
+
+test('YOUTUBE_API_KEY is optional and empty counts as unset', () => {
+  expect(loadEnv({ LLM_API_KEY: 'k' }).YOUTUBE_API_KEY).toBeUndefined();
+  expect(loadEnv({ LLM_API_KEY: 'k', YOUTUBE_API_KEY: '' }).YOUTUBE_API_KEY).toBeUndefined();
+  expect(loadEnv({ LLM_API_KEY: 'k', YOUTUBE_API_KEY: 'abc' }).YOUTUBE_API_KEY).toBe('abc');
+});

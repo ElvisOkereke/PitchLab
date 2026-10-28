@@ -17,7 +17,7 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
       'sender.name': 'Al <b>Owner</b>', 'sender.company': '', 'sender.address': '1 Main St', 'sender.contact': 'https://al.example', 'sender.email': '',
       'landing.privacyContact': 'privacy@al.example', 'landing.formEndpoint': '',
     },
-    worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false, producthunt: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
+    worker: { at: '2026-10-20T14:59:50.000Z', providers: { llm: true, github: false, stackexchange: true, places: false, producthunt: false, youtube: false, browser: false }, models: { ...DEFAULT_MODELS, case: 'claude-custom' } },
     database: true,
     example: { hidden: false },
     research: { background: false, dailyCapUsd: 5 },
@@ -80,7 +80,7 @@ describe('SettingsView', () => {
     const { getByTestId } = render(<SettingsView data={data()} />);
     const c = getByTestId('connections');
     const items = Object.fromEntries([...c.querySelectorAll('li')].map((li) => [li.querySelector('.name')!.textContent, li.querySelector('.badge')!.textContent]));
-    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', Database: 'connected' });
+    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', YouTube: 'not set', 'Local browser (Chromium)': 'not installed', Database: 'connected' });
     expect(c.textContent).not.toMatch(/reddit/i);
     expect(c.textContent).not.toMatch(/postgres|key|secret|:\/\//i);
   });

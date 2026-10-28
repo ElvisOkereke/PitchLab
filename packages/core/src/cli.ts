@@ -34,7 +34,7 @@ import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
-import { openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
+import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -187,6 +187,8 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     // Browser profiles left by a crashed or killed mission (older than an hour) are deleted; never throws.
     const swept = await sweepStaleProfiles();
     if (swept > 0) out(`Removed ${swept} stale browser profile${swept === 1 ? '' : 's'}.`);
+    // Whether Chromium is installed, checked once at worker start (shown in Settings).
+    const browserAvailable = (await loadBrowser()) !== null;
     await runWorker({
       db,
       intervalMs: opts.interval * 1000,
@@ -196,7 +198,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       // Also finalises here: a run that failed during setup is marked failed by the worker after `execute` throws.
       heartbeat: async () => {
         try {
-          await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models));
+          await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models, { browser: browserAvailable }));
         } finally {
           await finaliseBenchmarks(db);
         }
@@ -218,7 +220,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
           browser = await openMissionBrowser();
           return await runMission({
             db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default', browser: browser?.renderer ?? null,
-            collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN }),
+            collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN, youtubeApiKey: env.YOUTUBE_API_KEY }),
           }, missionId);
         } finally {
           await browser?.close();

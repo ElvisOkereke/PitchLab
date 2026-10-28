@@ -7,6 +7,8 @@ export class SourceError extends Error {
     public code: SourceErrorCode,
     public source: string,
     message?: string,
+    /** A short machine reason from the API's error body (only when the caller asked for it, e.g. YouTube's `quotaExceeded`). */
+    public reason?: string,
   ) {
     super(message ?? `${source}: ${code}`);
     this.name = 'SourceError';
@@ -56,6 +58,18 @@ export function resetThrottle(): void {
   chains.clear();
 }
 
+/** The first `error.errors[].reason` of a Google-style JSON error body (small cap), or undefined. Never throws. */
+async function errorReasonOf(res: Response): Promise<string | undefined> {
+  try {
+    const j = JSON.parse(await readCapped(res, 16_384)) as { error?: { errors?: { reason?: unknown }[] } };
+    const r = j?.error?.errors?.[0]?.reason;
+    return typeof r === 'string' && /^[A-Za-z]{1,60}$/.test(r) ? r : undefined;
+  } catch {
+    await res.body?.cancel().catch(() => {});
+    return undefined;
+  }
+}
+
 async function notify(opts: HttpOpts, call: Parameters<CallHook>[0]): Promise<void> {
   try {
     await opts.onCall?.(call);
@@ -72,7 +86,7 @@ async function notify(opts: HttpOpts, call: Parameters<CallHook>[0]): Promise<vo
 export async function request(
   source: string,
   url: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number },
+  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; errorReason?: boolean },
   opts: HttpOpts = {},
 ): Promise<unknown> {
   const controller = new AbortController();
@@ -88,10 +102,11 @@ export async function request(
       body: init.body,
     });
     if (res.status >= 300) {
-      await res.body?.cancel().catch(() => {});
+      const reason = init.errorReason ? await errorReasonOf(res) : undefined;
+      if (!init.errorReason) await res.body?.cancel().catch(() => {});
       if (res.status === 429) throw new SourceError('rate_limited', source);
-      if (res.status === 401 || res.status === 403) throw new SourceError('auth', source, `${source}: HTTP ${res.status}`);
-      throw new SourceError('http_error', source, `${source}: HTTP ${res.status}`);
+      if (res.status === 401 || res.status === 403) throw new SourceError('auth', source, `${source}: HTTP ${res.status}`, reason);
+      throw new SourceError('http_error', source, `${source}: HTTP ${res.status}`, reason);
     }
     const text = await readCapped(res, init.maxBytes ?? 2_000_000);
     try {

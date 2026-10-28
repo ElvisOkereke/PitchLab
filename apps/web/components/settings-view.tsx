@@ -21,12 +21,14 @@ export type SettingsData = {
   research: ResearchSettings;
 };
 
-const PROVIDERS: [keyof WorkerStatus['providers'], string][] = [
+const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] = [
   ['llm', 'LLM API'],
   ['github', 'GitHub'],
   ['stackexchange', 'Stack Exchange'],
   ['places', 'Google Places'],
   ['producthunt', 'Product Hunt'],
+  ['youtube', 'YouTube'],
+  ['browser', 'Local browser (Chromium)', ['installed', 'not installed']],
 ];
 
 function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string }) {
@@ -72,9 +74,9 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
       <section aria-labelledby="connections-title" className="card" data-testid="connections" data-tour="settings-connections">
         <h2 id="connections-title">Connections</h2>
         <ul className="plain stack">
-          {PROVIDERS.map(([k, label]) => (
+          {PROVIDERS.map(([k, label, words]) => (
             <li key={k}>
-              <span className="name">{label}</span> <Badge ok={data.worker ? data.worker.providers[k] : null} yes="connected" no="not set" />
+              <span className="name">{label}</span> <Badge ok={data.worker ? data.worker.providers[k] : null} yes={words?.[0] ?? 'connected'} no={words?.[1] ?? 'not set'} />
             </li>
           ))}
           <li>

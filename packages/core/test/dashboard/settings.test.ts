@@ -59,7 +59,7 @@ describe('dashboard settings', () => {
     await setSetting(db, WORKER_STATUS_KEY, { garbage: 1 });
     expect(await readWorkerStatus(db)).toBeNull();
     const status = {
-      at: '2026-10-19T12:00:00.000Z', providers: { llm: true, github: false, stackexchange: false, places: true, producthunt: false }, models: DEFAULT_MODELS,
+      at: '2026-10-19T12:00:00.000Z', providers: { llm: true, github: false, stackexchange: false, places: true, producthunt: false, youtube: true, browser: false }, models: DEFAULT_MODELS,
     };
     await setSetting(db, WORKER_STATUS_KEY, status);
     expect(await readWorkerStatus(db)).toEqual(status);

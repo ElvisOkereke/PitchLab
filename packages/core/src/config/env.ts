@@ -25,6 +25,8 @@ const schema = z.object({
   GOOGLE_PLACES_API_KEY: z.string().min(1).optional(),
   /** Optional: enables the Product Hunt collector in research missions (Reddit is not used). */
   PRODUCTHUNT_TOKEN: z.string().min(1).optional(),
+  /** Optional: enables the YouTube comments source (official Data API v3) in research missions. */
+  YOUTUBE_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

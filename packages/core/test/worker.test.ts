@@ -206,7 +206,7 @@ describe('runWorker', () => {
     expect(seen).toEqual([oldest]);
     expect((await statusOf(db, newer)).status).toBe('queued');
     const hb = await readWorkerStatus(db);
-    expect(hb).toMatchObject({ providers: { llm: true, github: true, stackexchange: false, places: false, producthunt: false } });
+    expect(hb).toMatchObject({ providers: { llm: true, github: true, stackexchange: false, places: false, producthunt: false, youtube: false, browser: false } });
     expect(hb!.models).toEqual({ ...DEFAULT_MODELS, score: 'gemini-x' });
     expect(JSON.stringify(hb)).not.toContain('test-key-value');
     expect(JSON.stringify(hb)).not.toContain('gh-secret-value');
@@ -336,8 +336,10 @@ describe('runWorker', () => {
 describe('workerStatus', () => {
   it('reports which keys are set, never their values', () => {
     const s = workerStatus(loadEnv({ LLM_API_KEY: 'k1', STACKEXCHANGE_KEY: 'k2', GOOGLE_PLACES_API_KEY: 'k3' }), DEFAULT_MODELS);
-    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true, producthunt: false });
+    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true, producthunt: false, youtube: false, browser: false });
     expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1', PRODUCTHUNT_TOKEN: 'k4' }), DEFAULT_MODELS).providers.producthunt).toBe(true);
+    expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1', YOUTUBE_API_KEY: 'yt-secret' }), DEFAULT_MODELS, { browser: true }).providers).toMatchObject({ youtube: true, browser: true });
+    expect(JSON.stringify(workerStatus(loadEnv({ LLM_API_KEY: 'k1', YOUTUBE_API_KEY: 'yt-secret' }), DEFAULT_MODELS))).not.toContain('yt-secret');
     expect(Object.keys(s.providers)).not.toContain('reddit');
     expect(Number.isNaN(Date.parse(s.at))).toBe(false);
     expect(JSON.stringify(s)).not.toMatch(/k1|k2|k3/);
@@ -380,5 +382,14 @@ describe('runWorker maintenance', () => {
     await setSetting(db, 'maintenance.lastRun', old(2).toISOString());
     await run(db);
     expect(await db.select().from(pageFetches)).toHaveLength(0);
+  });
+});
+
+describe('older heartbeats', () => {
+  it('default providers.youtube and providers.browser to false', async () => {
+    const db = await testDb();
+    await setSetting(db, WORKER_STATUS_KEY, { at: new Date().toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false }, models: {} });
+    const hb = await readWorkerStatus(db);
+    expect(hb!.providers).toMatchObject({ youtube: false, browser: false, producthunt: false });
   });
 });
