@@ -50,10 +50,12 @@ describe('valueMultiple', () => {
   ])('unit %s uses %i periods', (unit, n) => {
     expect(valueMultiple(value, price(10, unit))).toBeCloseTo(1200 / (10 * n));
   });
-  it.each(['every 2 weeks', 'per 3 months', 'per 6 months', 'per year, billed monthly', '$10/month billed annually', 'seat'])(
+  it.each(['every 2 weeks', 'per 3 months', 'per 6 months', 'per year, billed monthly', '$10/month billed annually', 'weekly, billed annually', 'bi-weekly billed yearly', 'seat'])(
     'unit %s is null', (unit) => { expect(valueMultiple(value, price(10, unit))).toBeNull(); });
-  it('does not match once/flat inside other words', () => {
-    expect(valueMultiple(value, price(10, 'conference'))).toBeNull();
+  it('does not match once/flat inside other words, but does match them as words', () => {
+    expect(valueMultiple(value, price(10, 'flatten'))).toBeNull();
+    expect(valueMultiple(value, price(10, 'inflate'))).toBeNull();
+    expect(valueMultiple(value, price(10, 'flat fee'))).toBeCloseTo(120);
   });
   it('rejects negative and infinite prices', () => {
     expect(valueMultiple(value, price(-5, 'month'))).toBeNull();

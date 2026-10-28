@@ -42,7 +42,9 @@ export function valueMultiple(valueToUser: ValueToUser, priceHint: PriceHint, pe
   if (/\d/.test(unit)) return null;
   const year = /\b(year|yr|yearly|annual|annually)\b/.test(unit);
   const month = /\b(month|mo|monthly)\b/.test(unit);
-  if (year && month) return null;
+  // A year word together with a month or week word is ambiguous ("weekly, billed annually"): say nothing.
+  const week = /\b(bi-?weekly|fortnight\w*|week|wk|weekly)\b/.test(unit);
+  if (year && (month || week)) return null;
   let periods: number | undefined;
   if (/\b(bi-?weekly|fortnight\w*)\b/.test(unit)) periods = 26;
   else if (/\bsemi-?annual(ly)?\b|\bhalf[- ]year(ly)?\b/.test(unit)) periods = 2;
