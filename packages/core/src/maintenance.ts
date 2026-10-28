@@ -49,7 +49,7 @@ export type MaintenanceResult = {
   deletedItems: number;
   redactedSignals: number;
   redactedClaims: number;
-  /** Cases whose evidence signals had a YouTube quote replaced. */
+  /** Cases with at least one YouTube quote (evidence, claims or number sources) replaced. */
   redactedCases: number;
   /** One message per failed step (the other steps still ran). */
   errors: string[];
@@ -57,7 +57,7 @@ export type MaintenanceResult = {
 
 /**
  * Housekeeping: prune the fetch log, delete expired sources (and entries left empty), redact expired YouTube data, prune old YouTube quota rows. Idempotent.
- * Each step runs in its own transaction and is isolated: a failing step is reported in `errors` and the others still run.
+ * Each step is isolated (its own transaction, or one per case write for the case step): a failing step is reported in `errors` and the others still run.
  */
 export async function runMaintenance(db: Db, now: Date = new Date()): Promise<MaintenanceResult> {
   const fetchCutoff = new Date(now.getTime() - FETCH_RETENTION_DAYS * DAY);
