@@ -16,7 +16,7 @@ import { createGithubSource } from '../tools/sources/github';
 import { createHnSource } from '../tools/sources/hn';
 import { createStackExchangeSource } from '../tools/sources/stackexchange';
 import type { RawItem, SignalSource } from '../tools/sources/types';
-import type { ArchiveClient } from './archive';
+import { createArchiveClient, type ArchiveClient } from './archive';
 import { collectPage, type BrowserRenderer } from './collect';
 import type { FetchOutcome, FetchVia } from './fetch-log';
 import { SourceError, USER_AGENT, type CallHook } from './http';
@@ -95,7 +95,7 @@ export type MissionDeps = {
   router: ModelRouter;
   fetchPage: typeof fetchPageFn;
   /** Internet Archive fallback for gone pages (off when absent). */
-  archive?: ArchiveClient;
+  archive?: ArchiveClient | 'default';
   /** Renders thin pages (off when absent or null). */
   browser?: BrowserRenderer | null;
   collectors: Collectors;
@@ -421,6 +421,9 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const guardedFetch = (url: string, opts: FetchPageOpts = {}) =>
       deps.fetchPage(url, { ...opts, userAgent: USER_AGENT, blockHosts: [...(opts.blockHosts ?? []), ...BANNED_DOMAINS] });
 
+    const archive = deps.archive === 'default'
+      ? createArchiveClient({ fetchPage: guardedFetch, http: { onCall } })
+      : deps.archive;
     const webState = { archiveDisabled: false };
     const addItems = (items: (RawItem & { via?: FetchVia; snapshotAt?: Date })[]) => {
       for (const it of items) {
@@ -471,7 +474,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       for (const url of urls) {
         const host = hostOf(url);
         const page = await collectPage(url, {
-          db, fetchPage: guardedFetch, robotsAllows: (u) => robotsAllows(u, { fetchPage: guardedFetch }), archive: deps.archive,
+          db, fetchPage: guardedFetch, robotsAllows: (u) => robotsAllows(u, { fetchPage: guardedFetch }), archive: archive,
           browser: deps.browser, missionId, log: warn, state: webState,
         });
         await logDataCall(db, { runId: null, missionId, provider: 'web', endpoint: host, ok: !('failed' in page) });

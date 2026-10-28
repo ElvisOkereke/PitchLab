@@ -24,6 +24,8 @@ export interface FetchPageOpts {
   lookup?: (host: string) => Promise<{ address: string; family: number }[]>;
   /** Extra hosts refused on every hop like NEVER_FETCH_HOSTS (subdomains included; case and trailing dots ignored), e.g. a run's pilot site. */
   blockHosts?: readonly string[];
+  /** When set, every hop (entry and redirects) must be one of these hosts (subdomains not included). */
+  allowHosts?: readonly string[];
   /** User-Agent sent on every hop (default BusinessCaseGen). Research missions send their robots.txt identity. */
   userAgent?: string;
 }
@@ -132,9 +134,10 @@ function raceAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
 const normHost = (h: string) => h.toLowerCase().replace(/\.+$/, '');
 
 async function checkHost(
-  u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean, blockHosts: readonly string[],
+  u: URL, lookup: Resolver, signal: AbortSignal, isRedirect: boolean, blockHosts: readonly string[], allowHosts?: readonly string[],
 ): Promise<'ok' | 'blocked_host' | 'network' | 'timeout'> {
   if (u.username || u.password) return 'blocked_host';
+  if (allowHosts && !allowHosts.includes(normHost(u.hostname))) return 'blocked_host';
   const rawHost = u.hostname.toLowerCase();
   // The never-fetch / ".." rules see the raw hostname (an empty label, e.g. "example.com..", fails closed) before any
   // trailing dot is stripped; then ALL trailing dots go before the local-name checks.
@@ -189,6 +192,7 @@ export function extract(html: string): { title: string; text: string } {
 export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<PageResult> {
   const { timeoutMs = 15000, maxBytes = 2_000_000, fetchImpl = pinnedFetch, lookup = defaultLookup } = opts;
   const blockHosts = (opts.blockHosts ?? []).map(normHost);
+  const allowHosts = opts.allowHosts?.map(normHost);
   let current = url;
   let prevProtocol: string | null = null;
   const controller = new AbortController();
@@ -202,7 +206,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
         return fail('blocked_scheme', 0, current);
       }
       if (!isHttp(parsed)) return fail('blocked_scheme', 0, current);
-      const hostCheck = await checkHost(parsed, lookup, controller.signal, hop > 0, blockHosts);
+      const hostCheck = await checkHost(parsed, lookup, controller.signal, hop > 0, blockHosts, allowHosts);
       if (hostCheck !== 'ok') return fail(hostCheck, 0, current);
       if (prevProtocol === 'https:' && parsed.protocol === 'http:') return fail('blocked_scheme', 0, current);
       prevProtocol = parsed.protocol;

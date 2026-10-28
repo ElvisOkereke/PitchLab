@@ -109,12 +109,27 @@ describe('collectPage', () => {
     expect(await s.rows()).toEqual(['browser:ok', 'direct:thin_text']);
   });
 
-  it('keeps the thin text as thin_text when the browser is null or declines', async () => {
-    for (const browser of [null, undefined, { render: async () => null }]) {
+  it('keeps the thin text as thin_text when the browser is null or absent', async () => {
+    for (const browser of [null, undefined]) {
       const s = await setup({ direct: okPage('tiny'), browser });
       expect(await collectPage(URL_, s.ctx)).toMatchObject({ text: 'tiny', via: 'direct' });
       expect(await s.rows()).toEqual(['direct:thin_text']);
     }
+  });
+
+  it('logs a browser that declines', async () => {
+    const s = await setup({ direct: okPage('tiny'), browser: { render: async () => null } });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ text: 'tiny', via: 'direct' });
+    expect(await s.rows()).toEqual(['browser:network', 'direct:thin_text']);
+  });
+
+  it('logs an archive lookup that finds no snapshot, and treats an empty archived page as a failure', async () => {
+    const s = await setup({ direct: bad(404), archive: { snapshot: vi.fn(async () => null) } });
+    await collectPage(URL_, s.ctx);
+    expect(await s.rows()).toEqual(['archive:http_404', 'direct:http_404']);
+    const e = await setup({ direct: bad(404), archive: { fetch: vi.fn(async () => okPage('  ', SNAP.snapshotUrl)) } });
+    expect(await collectPage(URL_, e.ctx)).toEqual({ failed: 'http_404' });
+    expect(await e.rows()).toEqual(['archive:thin_text', 'direct:http_404']);
   });
 
   it('a browser that throws leaves the thin text', async () => {

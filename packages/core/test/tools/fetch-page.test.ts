@@ -105,6 +105,24 @@ describe('fetchPage', () => {
     expect((await fetchPage('https://notgamersgetaway.ca/', { fetchImpl: htmlFetch('<p>ok</p>') })).ok).toBe(true);
   });
 
+  it('allowHosts refuses an off-list hop without requesting it, including a chain that returns to the list', async () => {
+    const urls: string[] = [];
+    const chain = vi.fn(async (u: any) => {
+      urls.push(String(u));
+      const next: Record<string, string> = {
+        'https://web.archive.org/a': 'https://elsewhere.example/b',
+        'https://elsewhere.example/b': 'https://web.archive.org/c',
+      };
+      const loc = next[String(u)];
+      return loc ? new Response('', { status: 302, headers: { location: loc } }) : respond('<p>end</p>');
+    });
+    const r = await fetchPage('https://web.archive.org/a', { fetchImpl: chain, allowHosts: ['web.archive.org'] });
+    expect(r.reason).toBe('blocked_host');
+    expect(urls).toEqual(['https://web.archive.org/a']);
+    expect((await fetchPage('https://elsewhere.example/b', { fetchImpl: chain, allowHosts: ['web.archive.org'] })).reason).toBe('blocked_host');
+    expect(urls).toHaveLength(1);
+  });
+
   it('blockHosts refuses those hosts and their subdomains on every hop, without a request (P3-R21)', async () => {
     const direct = htmlFetch('<p>x</p>');
     for (const url of ['https://pilot.example.com/', 'https://WWW.Pilot.Example.com../x', 'https://shop.pilot.example.com./']) {

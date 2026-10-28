@@ -81,6 +81,7 @@ export async function upsertKnowledgeItem(
         set: {
           quote: sql`excluded.quote`, quoteVerified: sql`excluded.quote_verified`,
           voice: sql`coalesce(excluded.voice, ${knowledgeSources.voice})`,
+          via: sql`excluded.via`, snapshotAt: sql`excluded.snapshot_at`,
         },
         setWhere: sql`excluded.quote_verified and not ${knowledgeSources.quoteVerified}`,
       });

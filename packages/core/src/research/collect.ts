@@ -69,6 +69,7 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
     }
     await record(url, 'thin_text', 'direct', direct.status);
     const rendered = ctx.browser ? await renderSafely(ctx.browser, url, finalUrl, ctx) : null;
+    if (ctx.browser && !rendered) await record(finalUrl, 'network', 'browser'); // tried: declined or dropped
     if (rendered) {
       const thin = rendered.text.trim().length < THIN_TEXT_CHARS;
       await record(rendered.finalUrl, thin ? 'thin_text' : 'ok', 'browser');
@@ -88,14 +89,19 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
   };
   try {
     const snap = await archive.snapshot(url);
-    if (!snap) return { failed: outcome };
+    if (!snap) {
+      await record('https://archive.org/', 'http_404', 'archive', 404); // tried: no usable snapshot
+      return { failed: outcome };
+    }
+    await archive.pace?.();
     if (!(await ctx.robotsAllows(snap.snapshotUrl))) {
       await record(snap.snapshotUrl, 'blocked_robots', 'archive');
       return { failed: outcome };
     }
     const page = await archive.fetch(snap);
-    await record(snap.snapshotUrl, classifyFetch(page), 'archive', page.status || undefined);
-    if (!page.ok) {
+    const empty = page.ok && page.text.trim() === '';
+    await record(snap.snapshotUrl, empty ? 'thin_text' : classifyFetch(page), 'archive', page.status || undefined);
+    if (!page.ok || empty) {
       if (page.status === 429) disable();
       return { failed: outcome };
     }

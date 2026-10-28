@@ -1,7 +1,7 @@
-import { classifyFetch, recordFetch } from '../research/fetch-log';
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { claims } from '../db/schema';
+import { classifyFetch, recordFetch } from '../research/fetch-log';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { isBannedSource } from '../tools/banned-sources';

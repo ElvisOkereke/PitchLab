@@ -81,6 +81,16 @@ describe('upsertKnowledgeItem', () => {
     expect(it?.quote).toBe('verified one');
     expect(it?.quoteVerified).toBe(true);
   });
+  it('a verified-quote upgrade of the same source also takes the incoming via and snapshotAt', async () => {
+    const db = await testDb();
+    const u = 'https://a.example/1';
+    const a = await upsertKnowledgeItem(db, draft({ quote: 'old', source: unverifiedSource(u, 'a.example') }), unit(0), {});
+    const snapshotAt = new Date('2026-01-01T00:00:00Z');
+    await upsertKnowledgeItem(db, draft({ quote: 'new verified', source: { url: u, domain: 'a.example', sourceType: 'web', quote: 'new verified', quoteVerified: true, via: 'archive', snapshotAt } }), near(0.95), {});
+    const [src] = await db.select().from(knowledgeSources).where(eq(knowledgeSources.itemId, a.itemId));
+    expect(src).toMatchObject({ via: 'archive', quoteVerified: true });
+    expect(src!.snapshotAt?.toISOString()).toBe(snapshotAt.toISOString());
+  });
   it('keeps the existing verified quote when both are verified', async () => {
     const db = await testDb();
     const a = await upsertKnowledgeItem(db, draft({ quote: 'first', source: { url: 'https://a.example/1', domain: 'a.example', sourceType: 'hn', quote: 'first', quoteVerified: true } }), unit(0), {});

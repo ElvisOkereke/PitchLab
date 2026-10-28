@@ -33,7 +33,6 @@ import { getSetting, setSetting } from './validation/settings';
 import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
-import { createArchiveClient } from './research/archive';
 import { buildCollectors, runMission } from './research/mission';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
@@ -211,7 +210,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
         busy = true;
         try {
           return await runMission({
-            db, router: buildRouter(env, db), fetchPage, log: out, archive: createArchiveClient({ fetchPage }),
+            db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default',
             collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN }),
           }, missionId);
         } finally {

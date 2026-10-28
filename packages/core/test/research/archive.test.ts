@@ -45,6 +45,29 @@ describe('archiveSnapshot', () => {
   });
 });
 
+describe('archiveSnapshot policy', () => {
+  const opts = (fetchJson: () => Promise<unknown>) => ({ fetchJson, now: () => NOW, http: { sleep } });
+  it('requires status 200', async () => {
+    const j = avail('20260101000000');
+    (j.archived_snapshots as any).closest.status = '302';
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).toBeNull();
+  });
+  it('refuses a snapshot of a different original', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://other.example/p');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).toBeNull();
+  });
+  it('refuses a banned original even when it was requested', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://www.reddit.com/r/x');
+    expect(await archiveSnapshot('https://www.reddit.com/r/x', opts(async () => j))).toBeNull();
+    const k = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://gamersgetaway.ca/p');
+    expect(await archiveSnapshot('https://gamersgetaway.ca/p', opts(async () => k))).toBeNull();
+  });
+  it('matches the original after normalisation (host case, default port, trailing slash)', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://X.example:443/p/');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).not.toBeNull();
+  });
+});
+
 describe('fetchArchived', () => {
   const snap = { snapshotUrl: 'https://web.archive.org/web/20260101120000id_/https://x.example/p', timestamp: new Date('2026-01-01T12:00:00Z') };
   const ok = (finalUrl: string): PageResult => ({ ok: true, status: 200, finalUrl, title: 'T', text: 'archived text' });
@@ -64,5 +87,23 @@ describe('fetchArchived', () => {
     const r = await fetchArchived({ ...snap, snapshotUrl: 'https://evil.example/x' }, { fetchPage: fetchPage as never, http: { sleep } });
     expect(r).toMatchObject({ ok: false, reason: 'blocked_host' });
     expect(fetchPage).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchArchived embedded original', () => {
+  const snap = { snapshotUrl: 'https://web.archive.org/web/20260101120000id_/https://x.example/p', timestamp: new Date('2026-01-01T12:00:00Z') };
+  const page = (finalUrl: string): PageResult => ({ ok: true, status: 200, finalUrl, title: 'T', text: 'archived text' });
+  it('refuses an in-archive redirect to a different original', async () => {
+    const r = await fetchArchived(snap, { fetchPage: (async () => page('https://web.archive.org/web/20260101120000id_/https://other.example/q')) as never, http: { sleep } });
+    expect(r).toMatchObject({ ok: false, reason: 'blocked_host' });
+  });
+  it('refuses a banned original and passes allowHosts and blockHosts', async () => {
+    const fetchPage = vi.fn();
+    const r = await fetchArchived({ ...snap, snapshotUrl: 'https://web.archive.org/web/20260101120000id_/https://www.reddit.com/r/x' }, { fetchPage: fetchPage as never, http: { sleep } });
+    expect(r).toMatchObject({ ok: false, reason: 'blocked_host' });
+    expect(fetchPage).not.toHaveBeenCalled();
+    const ok = vi.fn(async () => page(snap.snapshotUrl));
+    await fetchArchived(snap, { fetchPage: ok as never, http: { sleep } });
+    expect(ok).toHaveBeenCalledWith(snap.snapshotUrl, expect.objectContaining({ allowHosts: ['web.archive.org'], blockHosts: expect.arrayContaining(['reddit.com']) }));
   });
 });
