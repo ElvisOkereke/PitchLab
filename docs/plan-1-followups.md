@@ -182,3 +182,9 @@ Open after tuning-4:
 - Edits made while a save is still pending are overwritten when its result arrives (the form takes the echoed values and remounts). (D2-R7 N2)
 - The queue-run form keeps the idea text and seed after a successful queue, so a second tap queues the same run again (the 3-queued cap bounds it). (D2-R7 N3)
 - The backtick guard in `apps/web/test/guards.test.ts` only sees JSX text runs without `{…}` expressions; a backtick in a text run that also contains an expression is missed.
+
+## Phase 3 follow-ups (generation rebuild, 2026-10-27)
+- Validation packs draft cold outreach even for consumer cases (CASL: no implied consent for individuals). Add consumer outreach rules or block packs for consumer cases.
+- Sector runs collect business-only evidence while the mix forces 30% consumer ideas; add a consumer research call for sector runs or exempt them from the forced share.
+- Open and consumer runs extract every item with the combined audience prompt; consider per-call audience tagging.
+- Thin candidates are still screened by the model before the pre-gate evidence filter rejects them; filter first to save spend.
