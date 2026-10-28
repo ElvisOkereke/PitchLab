@@ -170,7 +170,7 @@ function FetchDiagnostics({ fetches }: { fetches: FetchStats }) {
     <section aria-labelledby="fetch-title" className="card" data-testid="fetch-diagnostics">
       <div className="label-row">
         <h2 id="fetch-title">Page fetching, last 30 days</h2>
-        <HelpTip term="fetchSuccess" />
+        <HelpTip term="pagesRead" />
       </div>
       {fetches.total === 0 ? (
         <p className="muted">No page fetches logged yet — they appear after your next mission.</p>

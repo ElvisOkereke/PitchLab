@@ -19,6 +19,13 @@ describe('docs/glossary.md', () => {
     }
   });
 
+  it('names the fetch card term as the card does ("Pages read")', () => {
+    const labels = Object.values(GLOSSARY).map((g) => g.label);
+    expect(labels).toContain('Pages read');
+    expect(labels).not.toContain('Fetch success');
+    expect(headings).not.toContain('### Fetch success');
+  });
+
   it('covers the pipeline and validation terms', () => {
     const terms = ['harvest', 'signal', 'voice', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'claim', 'verify', 'score', 'validation pack', 'prospect', 'draft', 'landing page', 'run', 'notional spend'];
     const lower = headings.map((h) => h.toLowerCase());

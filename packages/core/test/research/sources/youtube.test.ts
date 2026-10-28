@@ -344,7 +344,7 @@ describe('30-day expiry end to end', () => {
     const r = await runMaintenance(db, new Date(NOW.getTime() + 31 * DAY));
     expect(r).toMatchObject({ expiredSources: 1, redactedSignals: 1, redactedClaims: 1, errors: [] });
     expect((await db.select().from(signals).where(eq(signals.id, sig!.id)))[0]!.quote).toBe('[expired YouTube data]');
-    expect((await db.select().from(claims))[0]).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+    expect((await db.select().from(claims))[0]).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)' });
   });
 
   it('re-collecting the same video with a different comment does not refresh the stored comment\'s expiry', async () => {

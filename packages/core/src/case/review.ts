@@ -2,6 +2,7 @@ import { listInputs } from '../calc/inputs';
 import type { claims } from '../db/schema';
 import { stripInvisible } from '../llm/untrusted';
 import { decodeEntities } from '../tools/entities';
+import { EXPIRED_PLACEHOLDER } from './expired';
 import { competitorPricingText, hasPriceFigure, type CaseSections } from './schema';
 
 // What the owner must check in a case, shared by the Markdown export and the dashboard so both say the same thing.
@@ -141,6 +142,8 @@ export function forYouToCheck(
     if (FOR_OWNER.has(r.verified)) item(SECTION_LABEL[r.section] ?? r.section, r.text, r.sourceUrl, r.reviewNote?.trim() || FIXED_REASON[r.verified] || r.verified);
   }
   for (const s of sections.evidence.signals) {
+    // An expired YouTube signal has no text left to check.
+    if (s.quote === EXPIRED_PLACEHOLDER) continue;
     if (!flags.signal.has(linkKey(s.url, s.quote))) item('Signal', s.quote, s.url, NOT_CHECKED_REASON);
   }
   for (const { label, sourced } of listInputs(sections.numbers.inputs)) {

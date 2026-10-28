@@ -4,6 +4,7 @@ import { listInputs } from '../../src/calc/inputs';
 import { computeNumbers } from '../../src/calc/numbers';
 import type { CaseSections } from '../../src/case/schema';
 import { safeHttpUrl } from '../../src/case/links';
+import { EXPIRED_PLACEHOLDER } from '../../src/case/expired';
 import {
   STATUS_EMOJI, STATUS_LABEL, cleanQuote, competitorChecks, forYouToCheck, inputStatus, linkFlags, signalStatus,
   type ClaimRow, type ClaimStatus,
@@ -101,6 +102,15 @@ describe('case review', () => {
     const labels = r.items.map((i) => i.label);
     expect(labels).toEqual(expect.arrayContaining(['Signal', 'Number input', 'Competitor', 'Competitor pricing']));
     expect(r.items.every((i) => i.reason === 'not checked yet — open it yourself')).toBe(true);
+  });
+
+  it('does not list an expired YouTube signal (placeholder quote) as not checked', () => {
+    const s = sectionsFixture((x) => {
+      x.evidence.signals.push({ quote: EXPIRED_PLACEHOLDER, url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa', sourceName: 'YouTube' });
+    });
+    const r = forYouToCheck(s, settled(s).filter((c) => c.quote !== EXPIRED_PLACEHOLDER));
+    expect(r.items.map((i) => i.text)).not.toContain(EXPIRED_PLACEHOLDER);
+    expect(r.items.filter((i) => i.label === 'Signal')).toEqual([]);
   });
 
   it('state is no_claims with zero claim rows and all_clear when every source is settled', () => {

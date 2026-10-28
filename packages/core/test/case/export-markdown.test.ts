@@ -422,3 +422,21 @@ describe('caseToMarkdown consumer pitch', () => {
     expect(old).not.toContain('### Channels');
   });
 });
+
+describe('caseToMarkdown with expired YouTube data', () => {
+  it('shows the placeholder in number inputs and signals, and does not list an expired signal to check', () => {
+    const PH = '[expired YouTube data]';
+    const yt = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
+    const md = caseToMarkdown(caseFixture({ mutate: (s) => {
+      s.numbers.inputs.price.unitsPerBuyer.source = { url: yt, quote: PH };
+      s.evidence.claims[0] = { ...s.evidence.claims[0]!, sourceUrl: yt, quote: PH };
+      s.evidence.signals.push({ quote: PH, url: yt, sourceName: 'YouTube' });
+    } }), [], []);
+    // Markdown-escaped like any quoted text.
+    const esc = String.raw`\[expired YouTube data\]`;
+    expect(md).toContain(`| price.unitsPerBuyer | 40 | [www.youtube.com](${yt}): "${esc}" |`);
+    expect(md).toContain(`- "${esc}" (YouTube, [www.youtube.com](${yt}))`);
+    // An expired signal is not something to check by hand.
+    expect(md).not.toContain(`**Signal:** ${esc}`);
+  });
+});

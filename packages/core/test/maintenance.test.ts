@@ -7,6 +7,11 @@ import { upsertKnowledgeItem } from '../src/library/store';
 import { runMaintenance, runMaintenanceQuietly } from '../src/maintenance';
 import { insertCase, insertIdea, insertRun, testDb, unit } from './helpers/db';
 import { defaultRunConfig } from '../src/pipeline/types';
+import { readFileSync } from 'node:fs';
+import { computeNumbers } from '../src/calc/numbers';
+import { EXPIRED_PLACEHOLDER, YOUTUBE_CLAIM_NOTE } from '../src/case/expired';
+
+const FIXTURE = new URL('./helpers/fixtures/case-draft.json', import.meta.url);
 
 const DAY = 86_400_000;
 const NOW = new Date('2026-10-28T12:00:00Z');
@@ -42,6 +47,11 @@ const sig = (db: Db, source: string, url: string, createdAt: Date, hash = 'h' + 
   db.insert(signals).values({ marketId: 'ca-us', source, url, title: 'real title', quote: 'real quote text here', quoteHash: hash, embedding: unit(3), createdAt }).returning();
 
 describe('runMaintenance', () => {
+  it('uses the shared placeholder and a review note true for any YouTube URL', () => {
+    expect(EXPIRED_PLACEHOLDER).toBe(PLACEHOLDER);
+    expect(YOUTUBE_CLAIM_NOTE).toBe('YouTube quote removed (YouTube data is kept for at most 30 days)');
+  });
+
   it('prunes page_fetches older than 90 days only', async () => {
     const db = await testDb();
     await db.insert(pageFetches).values([
@@ -125,7 +135,7 @@ describe('runMaintenance', () => {
     expect(r.redactedClaims).toBe(3);
     const all = await db.select().from(claims);
     const byUrl = (u: string, c: string) => all.find((x) => x.sourceUrl === u && x.caseId === c)!;
-    expect(byUrl('https://www.youtube.com/watch?v=aaaaaaaaaaa', oldCase.id)).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+    expect(byUrl('https://www.youtube.com/watch?v=aaaaaaaaaaa', oldCase.id)).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)' });
     expect(byUrl('https://youtu.be/aaaaaaaaaaa', oldCase.id).quote).toBeNull();
     expect(byUrl('https://news.example/a', oldCase.id)).toMatchObject({ quote: 'a news quote that is long enough', reviewNote: null });
     expect(byUrl('https://notyoutube.com/a', oldCase.id).quote).not.toBeNull();
@@ -228,8 +238,8 @@ describe('runMaintenance', () => {
     const by = (s: string) => all.find((c) => c.section === s)!;
     expect(by('signal').quote).toBe('Quoting jobs by hand loses us bids every month, honestly.');
     expect(by('evidence').quote).toBe('loses us bids every month');
-    expect(by('numbers')).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
-    expect(by('competitor')).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+    expect(by('numbers')).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)' });
+    expect(by('competitor')).toMatchObject({ quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)' });
     expect((await runMaintenance(db, NOW)).redactedClaims).toBe(0);
   });
 
@@ -276,8 +286,8 @@ describe('runMaintenance', () => {
     expect(r.redactedClaims).toBe(3);
     const get = async (id: string) => (await db.select().from(claims).where(eq(claims.id, id)))[0]!;
     expect(await get(backed!.id)).toMatchObject({ text: qA, quote: qA, reviewNote: null });
-    expect(await get(unbacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed after 30 days', section: 'signal', sourceUrl: uB });
-    expect(await get(oldBacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+    expect(await get(unbacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)', section: 'signal', sourceUrl: uB });
+    expect(await get(oldBacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed (YouTube data is kept for at most 30 days)' });
     expect(await get(web!.id)).toMatchObject({ text: 'A web quote that stays put.', quote: 'A web quote that stays put.' });
     expect(await get(quoteless!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: null });
     expect((await runMaintenance(db, NOW)).redactedClaims).toBe(0);
@@ -319,6 +329,57 @@ describe('runMaintenance', () => {
     expect((await get(old.id)).evidence.signals).toEqual([{ quote: PLACEHOLDER, url: uA, sourceName: 'YouTube' }]);
     expect(await get(untouched.id)).toEqual({ summary: { oneLiner: 'o' } });
     expect((await runMaintenance(db, NOW)).redactedCases).toBe(0);
+  });
+
+  it('replaces YouTube quotes in number inputs (nested) and evidence claims; numbers and other text are unchanged', async () => {
+    const db = await testDb();
+    const uA = 'https://www.youtube.com/watch?v=livelivelive';
+    const uB = 'https://m.youtube.com/watch?v=expiredexpi';
+    const { title: _t, usedSignalUrls: _u, ...draft } = JSON.parse(readFileSync(FIXTURE, 'utf8'));
+    const build = () => {
+      const s = structuredClone(draft);
+      s.numbers.inputs.price.unitsPerBuyer.source.url = uA; // backed below
+      s.numbers.inputs.problemCost[0].unitCost.source.url = uB; // expired source
+      s.evidence.claims[1].sourceUrl = uB;
+      s.evidence.signals = [];
+      s.summary = { ...s.summary, gateFlags: [] };
+      s.numbers = { inputs: s.numbers.inputs, results: computeNumbers(s.numbers.inputs) };
+      return s;
+    };
+    const before = build();
+    await ytSource(db, uA, `Intro words. ${before.numbers.inputs.price.unitsPerBuyer.source.quote} More words.`, ago(5));
+    await ytSource(db, uB, before.numbers.inputs.problemCost[0].unitCost.source.quote, ago(31));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 }));
+    const recent = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(1), sections: build() });
+    const old = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(31), slug: 'old-case', sections: build() });
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    expect(r.redactedCases).toBe(2);
+    const get = async (id: string) => (await db.select().from(cases).where(eq(cases.id, id)))[0]!.sections as unknown as typeof before;
+
+    const expected = build();
+    expected.numbers.inputs.problemCost[0].unitCost.source.quote = PLACEHOLDER;
+    expected.evidence.claims[1].quote = PLACEHOLDER;
+    const rs = await get(recent.id);
+    expect(rs).toEqual(expected);
+    expect(computeNumbers(rs.numbers.inputs)).toEqual(before.numbers.results);
+    expect(rs.numbers.results).toEqual(before.numbers.results);
+
+    const os = await get(old.id);
+    expect(os.numbers.inputs.price.unitsPerBuyer.source.quote).toBe(PLACEHOLDER);
+    expect(os.numbers.inputs.problemCost[0].unitCost.source.quote).toBe(PLACEHOLDER);
+    expect(os.evidence.claims[1].quote).toBe(PLACEHOLDER);
+    expect(os.evidence.claims[0]).toEqual(before.evidence.claims[0]);
+    expect(os.numbers.results).toEqual(before.numbers.results);
+    expect((await runMaintenance(db, NOW)).redactedCases).toBe(0);
+  });
+
+  it('deletes a source at exactly expires_at == now', async () => {
+    const db = await testDb();
+    await ytSource(db, 'https://www.youtube.com/watch?v=boundaryboun', 'A boundary comment long enough.', ago(30));
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src!.expiresAt!.getTime()).toBe(NOW.getTime());
+    expect(await runMaintenance(db, NOW)).toMatchObject({ expiredSources: 1, deletedItems: 1 });
   });
 });
 

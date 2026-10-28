@@ -20,7 +20,7 @@ export type GlossaryTerm =
   | 'barriers'
   | 'archivedCopy'
   | 'socialShare'
-  | 'fetchSuccess';
+  | 'pagesRead';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -108,8 +108,8 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
     label: 'Social share',
     text: 'The share of sources in the library that come from community sites, such as Hacker News, Stack Exchange, GitHub, Product Hunt, app stores and YouTube comments, where people describe problems in their own words. A higher share means more real voices and fewer company pages.',
   },
-  fetchSuccess: {
-    label: 'Fetch success',
+  pagesRead: {
+    label: 'Pages read',
     text: 'How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, or in the local browser). The sites that fail most are listed with their main reason.',
   },
 };

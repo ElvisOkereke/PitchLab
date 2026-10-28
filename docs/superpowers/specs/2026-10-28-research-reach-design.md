@@ -130,7 +130,7 @@ Migration `0011` only adds things: `page_fetches`, plus `knowledge_sources.expir
     - the quote and title become `[expired YouTube data]`;
     - the embedding is set to null;
     - `quoteHash` becomes a hash of the placeholder plus the signal id, which keeps `(url, quote_hash)` unique.
-  - **Case claims whose `sourceUrl` is a YouTube URL:** `quote` is set to null with the review note "YouTube quote removed after 30 days".
+  - **Case claims whose `sourceUrl` is a YouTube URL:** `quote` is set to null with the review note "YouTube quote removed (YouTube data is kept for at most 30 days)".
 
   The model's own paraphrases (claim text, case prose, entry summaries that also had other sources) are kept, because they are derived writing, not stored API data.
 - **No comment ids.** YouTube source URLs are the plain video URL (`https://www.youtube.com/watch?v=<id>`), with no comment id. Distinct comments stay distinct through their quote hash. YouTube rows are found through `signals.source = 'youtube'` and `knowledge_sources.source_type = 'youtube'`.

@@ -5,6 +5,7 @@ import { EvidenceTab } from '@/components/tabs/evidence';
 import { NumbersTab } from '@/components/tabs/numbers';
 import { PitchTab } from '@/components/tabs/pitch';
 import { SummaryTab } from '@/components/tabs/summary';
+import { EXPIRED_PLACEHOLDER, YOUTUBE_CLAIM_NOTE } from '@bcg/core/case/expired';
 import { caseViewFixture, claimRow, gateRow, sectionsFixture } from '../helpers/case-fixture';
 
 afterEach(cleanup);
@@ -67,15 +68,15 @@ describe('EvidenceTab', () => {
     expect(signals[1]!.textContent).toContain('not checked');
   });
   it('renders expired YouTube text as the placeholder, with the checker note, without breaking', () => {
-    const PH = '[expired YouTube data]';
+    const PH = EXPIRED_PLACEHOLDER;
     const yt = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
     const base = sectionsFixture();
     const sections = { ...base, evidence: { ...base.evidence, signals: [{ quote: PH, url: yt, sourceName: 'YouTube' }, ...base.evidence.signals] } };
     const view = caseViewFixture({
       sections,
       claims: [
-        claimRow('verified', { section: 'signal', text: PH, sourceUrl: yt, quote: null, reviewNote: 'YouTube quote removed after 30 days' }),
-        claimRow('verified', { section: 'evidence', text: 'Owners lose bids to slow quotes', sourceUrl: yt, quote: null, reviewNote: 'YouTube quote removed after 30 days' }),
+        claimRow('verified', { section: 'signal', text: PH, sourceUrl: yt, quote: null, reviewNote: YOUTUBE_CLAIM_NOTE }),
+        claimRow('verified', { section: 'evidence', text: 'Owners lose bids to slow quotes', sourceUrl: yt, quote: null, reviewNote: YOUTUBE_CLAIM_NOTE }),
       ],
     });
     const { container } = render(<EvidenceTab view={view} />);
@@ -84,7 +85,7 @@ describe('EvidenceTab', () => {
     expect(signals[0]!.textContent).toContain('YouTube');
     const claims = container.querySelector('[data-testid="claims"]') as HTMLElement;
     expect(claims.textContent).toContain('Owners lose bids to slow quotes');
-    expect(claims.textContent).toContain('Checker: YouTube quote removed after 30 days');
+    expect(claims.textContent).toContain('Checker: YouTube quote removed (YouTube data is kept for at most 30 days)');
     expect(claims.textContent).not.toContain('Quote:');
     cleanup();
     expect(() => render(<SummaryTab view={view} />)).not.toThrow();
@@ -102,6 +103,19 @@ describe('NumbersTab', () => {
     expect(units.querySelector('a')?.getAttribute('href')).toBe('https://agency-benchmarks.example/2026-small-agency-report');
     expect(container.querySelector('[data-testid="scenarios"] tbody tr')).toBeTruthy();
     for (const table of container.querySelectorAll('table')) expect(table.parentElement?.classList.contains('scroll-x')).toBe(true);
+  });
+});
+
+describe('NumbersTab with expired YouTube data', () => {
+  it('renders the placeholder quote and keeps the computed numbers', () => {
+    const PH = EXPIRED_PLACEHOLDER;
+    const base = sectionsFixture();
+    const inputs = structuredClone(base.numbers.inputs);
+    inputs.price.unitsPerBuyer.source = { url: 'https://www.youtube.com/watch?v=aaaaaaaaaaa', quote: PH };
+    const { container } = render(<NumbersTab view={caseViewFixture({ sections: { ...base, numbers: { ...base.numbers, inputs } } })} />);
+    const rows = [...container.querySelectorAll('[data-testid="inputs"] tbody tr')];
+    expect(rows.find((r) => r.textContent?.startsWith('price.unitsPerBuyer'))!.textContent).toContain(PH);
+    expect(container.textContent).toContain('Annual price = $8 × 40 × 12 = $3,840');
   });
 });
 

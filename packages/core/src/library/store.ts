@@ -284,7 +284,7 @@ export async function libraryCoverage(db: Db, now: Date = new Date()): Promise<L
   }).from(knowledgeItems).where(and(active, eq(knowledgeItems.kind, 'problem')));
   const [quotes] = await db.select({
     total: count(),
-    verified: sql<number>`count(*) filter (where ${knowledgeItems.quoteVerified})`.mapWith(Number),
+    verified: sql<number>`count(*) filter (where ${quoteVerifiedExpr(now)})`.mapWith(Number),
   }).from(knowledgeItems).where(active);
 
   const countryRows = await db.selectDistinct({ v: sql<string>`unnest(${knowledgeItems.countries})`.as('v') })

@@ -359,4 +359,28 @@ describe('expired sources are never used or shown (before maintenance runs)', ()
     expect((await retrieveForRun(db, unit(0), { limit: 10 })).map((r) => r.id)).toEqual([c.itemId]);
     expect(await countEligibleForRun(db, {})).toBe(1);
   });
+
+  it('hides a source at exactly expires_at == now', async () => {
+    const db = await testDb();
+    const fetched = new Date('2026-09-01T00:00:00Z');
+    const a = await upsertKnowledgeItem(db, draft({ title: 'boundary', source: ytSrc('https://www.youtube.com/watch?v=boundaryboun', 'A boundary comment long enough here.') }), unit(0), { now: fetched });
+    const [src] = await db.select().from(knowledgeSources);
+    const at = src!.expiresAt!;
+    const before = new Date(at.getTime() - 1);
+    expect(await getLibraryItem(db, a.itemId, before)).not.toBeNull();
+    expect(await getLibraryItem(db, a.itemId, at)).toBeNull();
+    expect((await searchLibrary(db, {}, at)).total).toBe(0);
+    expect(await retrieveForRun(db, unit(0), { limit: 5, now: at })).toEqual([]);
+    expect(await retrieveForRun(db, unit(0), { limit: 5, now: before })).toHaveLength(1);
+  });
+
+  it('the verified-quote share does not count a quote only an expired source had', async () => {
+    const db = await testDb();
+    const longAgo = new Date(Date.now() - 40 * 864e5);
+    const bDraft = draft({ title: 'mixed', quote: 'qb', source: unverifiedSource('https://web.example/b', 'web.example', 'web') });
+    await upsertKnowledgeItem(db, bDraft, unit(0), {});
+    await upsertKnowledgeItem(db, { ...bDraft, source: ytSrc('https://www.youtube.com/watch?v=bbbbbbbbbbb', 'An expired comment that is long enough.') }, unit(0), { now: longAgo });
+    await upsertKnowledgeItem(db, draft({ title: 'web verified' }), unit(1), {});
+    expect((await libraryCoverage(db)).verifiedQuoteShare).toBe(0.5);
+  });
 });
