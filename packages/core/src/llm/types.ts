@@ -18,6 +18,8 @@ export type AdapterResponse = {
   text: string;
   json?: unknown;
   sources: Source[];
+  /** The model stopped at its output limit, so the answer may be cut off. */
+  truncated?: boolean;
   usage: { inputTokens: number; outputTokens: number; searchRequests: number };
 };
 
@@ -26,7 +28,13 @@ export interface ProviderAdapter {
   embed(model: string, texts: string[]): Promise<{ vectors: number[][]; inputTokens: number }>;
 }
 
-export type CallCtx = { runId: string | null; missionId?: string | null; promptVersion: string };
+export type CallCtx = {
+  runId: string | null;
+  missionId?: string | null;
+  promptVersion: string;
+  /** Called once for every response the model cut off at its output limit. */
+  onTruncated?: () => void;
+};
 
 export interface ModelRouter {
   text(stage: ModelStage, req: { system?: string; prompt: string; maxTokens?: number }, ctx: CallCtx): Promise<string>;

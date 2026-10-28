@@ -54,6 +54,15 @@ describe('mapAnthropicMessage', () => {
     };
     expect(mapAnthropicMessage(msg as never).usage).toEqual({ inputTokens: 2510, outputTokens: 3, searchRequests: 0 });
   });
+
+  it('flags a max_tokens stop as truncated and an end_turn stop as not', () => {
+    const base = {
+      content: [{ type: 'text', text: 'ok', citations: null }],
+      usage: { input_tokens: 1, output_tokens: 1, server_tool_use: null },
+    };
+    expect(mapAnthropicMessage({ ...base, stop_reason: 'max_tokens' } as never).truncated).toBe(true);
+    expect(mapAnthropicMessage({ ...base, stop_reason: 'end_turn' } as never).truncated).toBeFalsy();
+  });
 });
 
 const noCreate = vi.fn().mockRejectedValue(new Error('non-streaming path not expected'));

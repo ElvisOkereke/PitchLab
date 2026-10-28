@@ -90,6 +90,7 @@ export function createRouter(opts: {
   function complete(stage: ModelStage, req: Omit<AdapterRequest, 'model'>, ctx: CallCtx): Promise<AdapterResponse> {
     return invoke(stage, ctx, async (adapter, model) => {
       const res = await adapter.complete({ ...req, model });
+      if (res.truncated) ctx.onTruncated?.();
       return { result: res, usage: res.usage };
     });
   }
@@ -125,7 +126,12 @@ export function createRouter(opts: {
         const previous = res.json !== undefined ? JSON.stringify(res.json) : res.text;
         messages.push(
           { role: 'assistant', content: previous || '(empty)' },
-          { role: 'user', content: `Your output was invalid: ${issues}. Return corrected JSON only.` },
+          {
+            role: 'user',
+            content: res.truncated
+              ? 'Your output was cut off before it finished. Return the same number of items, each shorter, as complete JSON only.'
+              : `Your output was invalid: ${issues}. Return corrected JSON only.`,
+          },
         );
       }
       throw new StructuredOutputError(`${stage}: structured output still invalid after ${MAX_REASKS} re-asks`, issues);

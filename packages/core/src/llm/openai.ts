@@ -38,11 +38,13 @@ export function createOpenAIAdapter(opts: { baseURL: string; key: string }): Pro
       });
 
       const text = res.choices[0]?.message?.content ?? '';
+      const truncated = res.choices[0]?.finish_reason === 'length';
       const json = r.jsonSchema ? parseJson(text) : undefined;
       return {
         text,
         ...(json !== undefined ? { json } : {}),
         sources: [],
+        ...(truncated ? { truncated: true } : {}),
         usage: {
           inputTokens: res.usage?.prompt_tokens ?? 0,
           outputTokens: res.usage?.completion_tokens ?? 0,

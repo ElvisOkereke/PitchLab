@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
@@ -58,6 +58,38 @@ describe('createRouter', () => {
     expect(calls[0].provider).toBe('anthropic');
     expect(calls[0].ok).toBe(true);
     expect(Number(calls[0].costUsd)).toBeCloseTo(costOf('claude-haiku-5-5', { inputTokens: 100, outputTokens: 50, searchRequests: 0 }));
+  });
+
+  it('reports a truncated invalid answer and re-asks with the cut-off text', async () => {
+    const db = await testDb();
+    const a = scriptedAdapter([{ text: '{"n":', truncated: true }, { json: { n: 2 } }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    const onTruncated = vi.fn();
+    expect(await r.structured('screen', { prompt: 'p', schema: z.object({ n: z.number() }), schemaName: 'x' }, { ...ctx, onTruncated }))
+      .toEqual({ n: 2 });
+    expect(onTruncated).toHaveBeenCalledTimes(1);
+    expect(a.requests[1].messages.at(-1)!.content)
+      .toBe('Your output was cut off before it finished. Return the same number of items, each shorter, as complete JSON only.');
+  });
+
+  it('returns a truncated but valid answer and still reports it', async () => {
+    const db = await testDb();
+    const a = scriptedAdapter([{ json: { n: 1 }, truncated: true }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    const onTruncated = vi.fn();
+    expect(await r.structured('screen', { prompt: 'p', schema: z.object({ n: z.number() }), schemaName: 'x' }, { ...ctx, onTruncated }))
+      .toEqual({ n: 1 });
+    expect(onTruncated).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports truncation from text and research calls too', async () => {
+    const db = await testDb();
+    const a = scriptedAdapter([{ text: 'cut', truncated: true }, { text: 'cut', truncated: true }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    const onTruncated = vi.fn();
+    await r.text('screen', { prompt: 'p' }, { ...ctx, onTruncated });
+    await r.research('screen', { prompt: 'p', maxSearches: 1 }, { ...ctx, onTruncated });
+    expect(onTruncated).toHaveBeenCalledTimes(2);
   });
 
   it('sends the zod schema as JSON Schema and default maxTokens', async () => {

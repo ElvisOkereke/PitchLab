@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { NO_FORCED_TOOL_CHOICE } from '../config/models';
 import type { AdapterRequest, AdapterResponse, ProviderAdapter, Source } from './types';
 
-type MappableMessage = Pick<Anthropic.Message, 'content' | 'usage'>;
+type MappableMessage = Pick<Anthropic.Message, 'content' | 'usage'> & Partial<Pick<Anthropic.Message, 'stop_reason'>>;
 
 /** Map a final Anthropic message to the provider-neutral response shape. */
 export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): AdapterResponse {
@@ -39,6 +39,7 @@ export function mapAnthropicMessage(msg: MappableMessage, toolName?: string): Ad
     text: texts.join('\n'),
     ...(json !== undefined ? { json } : {}),
     sources: [...sources.values()],
+    ...(msg.stop_reason === 'max_tokens' ? { truncated: true } : {}),
     usage: {
       // Cached prompt tokens are reported separately; count them so cost/usage logs don't drop them.
       inputTokens: msg.usage.input_tokens
