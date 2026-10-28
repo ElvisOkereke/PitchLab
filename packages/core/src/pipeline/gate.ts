@@ -1,6 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { parse } from 'tldts';
 import { z } from 'zod';
+import { ideationContext, renderIdeationContext } from '../library/context';
 import { gateVerdicts, ideas, signals, type SignalVoice } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
@@ -146,6 +147,10 @@ export async function gate(
     const evidencePass = evidence.units >= run.config.minSignals;
 
     const sourceUrls = research.sources.map((s) => s.url);
+    // Library startups already sold near this idea (needs the idea's embedding): extra evidence for the generic check.
+    const alreadySold = idea.embedding
+      ? renderIdeationContext(await ideationContext(db, idea.embedding, { alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0 })).alreadySold
+      : 'none found';
     const judged = await router.structured(
       'gate',
       {
@@ -154,6 +159,7 @@ export async function gate(
           signals: wrapUntrusted('signals', sigRows.map((s) => `- url: ${capField(s.url, 2000)}\n  quote: ${capField(s.quote, 1000)}`).join('\n')),
           competitors: wrapUntrusted('competitors', research.text),
           competitorUrls: wrapUntrusted('competitor-urls', sourceUrls.join('\n')),
+          alreadySold: wrapUntrusted('already-sold', alreadySold),
         }),
         schema: judgeSchema,
         schemaName: 'gate_verdicts',
