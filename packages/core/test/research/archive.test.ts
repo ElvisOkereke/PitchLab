@@ -107,3 +107,39 @@ describe('fetchArchived embedded original', () => {
     expect(ok).toHaveBeenCalledWith(snap.snapshotUrl, expect.objectContaining({ allowHosts: ['web.archive.org'], blockHosts: expect.arrayContaining(['reddit.com']) }));
   });
 });
+
+describe('archive original matching ignores scheme and a leading www', () => {
+  const opts = (fetchJson: () => Promise<unknown>) => ({ fetchJson, now: () => NOW, http: { sleep } });
+  it('accepts an http snapshot of an https request (and the reverse)', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/http://x.example/p');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).not.toBeNull();
+    const k = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://x.example/p');
+    expect(await archiveSnapshot('http://x.example/p', opts(async () => k))).not.toBeNull();
+  });
+  it('accepts a www snapshot of a bare-host request (and the reverse)', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://www.x.example/p');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).not.toBeNull();
+    const k = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/http://x.example/p');
+    expect(await archiveSnapshot('https://www.x.example/p', opts(async () => k))).not.toBeNull();
+  });
+  it('still refuses a different host, path or a banned host', async () => {
+    const j = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://wwwx.example/p');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => j))).toBeNull();
+    const k = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/https://x.example/q');
+    expect(await archiveSnapshot('https://x.example/p', opts(async () => k))).toBeNull();
+    const b = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/http://reddit.com/r/x');
+    expect(await archiveSnapshot('https://www.reddit.com/r/x', opts(async () => b))).toBeNull();
+    const n = avail('20260101000000', true, 'http://web.archive.org/web/20260101000000/http://www.gamersgetaway.ca/p');
+    expect(await archiveSnapshot('https://gamersgetaway.ca/p', opts(async () => n))).toBeNull();
+  });
+  it('fetchArchived accepts an in-archive hop to the http or www form of the same original', async () => {
+    const snap = { snapshotUrl: 'https://web.archive.org/web/20260101120000id_/https://x.example/p', timestamp: new Date('2026-01-01T12:00:00Z') };
+    const page = (finalUrl: string): PageResult => ({ ok: true, status: 200, finalUrl, title: 'T', text: 'archived text' });
+    for (const hop of ['https://web.archive.org/web/20260101120000id_/http://x.example/p', 'https://web.archive.org/web/20260101120000id_/https://www.x.example/p/']) {
+      const r = await fetchArchived(snap, { fetchPage: (async () => page(hop)) as never, http: { sleep } });
+      expect(r.ok).toBe(true);
+    }
+    const bad = await fetchArchived(snap, { fetchPage: (async () => page('https://web.archive.org/web/20260101120000id_/https://www.reddit.com/p')) as never, http: { sleep } });
+    expect(bad).toMatchObject({ ok: false, reason: 'blocked_host' });
+  });
+});

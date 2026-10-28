@@ -70,13 +70,16 @@ export function embeddedOriginal(archiveUrl: string): string | null {
   return m ? `${m[1]}://${m[2]}` : null;
 }
 
-/** Scheme and host case, default port, fragment and trailing slash ignored. */
+/**
+ * Comparison key for "the same page": scheme (http vs https), host case, one leading `www.`, the scheme's default port,
+ * fragment and trailing slash ignored. Only for matching; callers still run isBannedSource on the real URL.
+ */
 function normalizeUrl(url: string): string {
   try {
     const u = new URL(url);
-    u.hash = '';
+    const host = u.hostname.toLowerCase().replace(/^www\./, '');
     const path = u.pathname.length > 1 ? u.pathname.replace(/\/+$/, '') : '';
-    return `${u.protocol}//${u.host}${path}${u.search}`;
+    return `${host}${u.port ? `:${u.port}` : ''}${path}${u.search}`;
   } catch {
     return url;
   }
