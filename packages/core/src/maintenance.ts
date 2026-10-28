@@ -13,6 +13,12 @@ export const YOUTUBE_CLAIM_NOTE = 'YouTube quote removed after 30 days';
 /** Whitespace-collapsed text, as harvest's collapse() stores a promoted library quote (whitespace runs to one space, trimmed). */
 const collapsed = (col: SQL) => sql`btrim(regexp_replace(${col}, '\\s+', ' ', 'g'))`;
 
+/** youtube.com and any subdomain (www., m., music.), plus youtu.be; "notyoutube.com" does not match. */
+function isYoutubeUrl(url: SQL): SQL {
+  const host = sql`lower(regexp_replace(${url}, '^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/?#@]*@)?([^/?#:]*).*$', '\\1'))`;
+  return sql`(${host} in ('youtube.com', 'youtu.be') or ${host} like '%.youtube.com')`;
+}
+
 export type MaintenanceResult = {
   prunedFetches: number;
   prunedQuotaRows: number;
@@ -20,6 +26,8 @@ export type MaintenanceResult = {
   deletedItems: number;
   redactedSignals: number;
   redactedClaims: number;
+  /** Cases whose evidence signals had a YouTube quote replaced. */
+  redactedCases: number;
   /** One message per failed step (the other steps still ran). */
   errors: string[];
 };
@@ -35,6 +43,9 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
   /** Correlated on alias `s`: an unexpired YouTube library source for this url (raw qualified column names, never unqualified). */
   const liveYoutubeSource = (urlCol: SQL) =>
     sql`s.source_type = 'youtube' and s.expires_at is not null and s.expires_at > ${nowParam} and s.url = ${urlCol}`;
+  /** A copy of YouTube text is backed while an unexpired YouTube source for the same url contains it (copies may be excerpts). */
+  const backedBySource = (urlCol: SQL, text: SQL) => sql`exists (select 1 from knowledge_sources s where ${liveYoutubeSource(urlCol)}
+      and strpos(${collapsed(sql`s.quote`)}, ${collapsed(text)}) > 0)`;
   const errors: string[] = [];
   const step = async <T>(name: string, fallback: T, fn: () => Promise<T>): Promise<T> => {
     try {
@@ -94,19 +105,38 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
   }));
 
   const redactedClaims = await step('redact claims', 0, () => db.transaction(async (tx) => {
-    const host = sql`lower(regexp_replace(${claims.sourceUrl}, '^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^/?#@]*@)?([^/?#:]*).*$', '\\1'))`;
     const old = tx.select({ id: cases.id }).from(cases).where(lt(cases.createdAt, ytCutoff));
-    // youtube.com and any subdomain (www., m., music.), plus youtu.be; "notyoutube.com" does not match.
-    const isYoutube = sql`(${host} in ('youtube.com', 'youtu.be') or ${host} like '%.youtube.com')`;
-    // Claim quotes are the source text or an excerpt of it: backed while an unexpired YouTube source for the same url contains it.
-    const backed = sql`exists (select 1 from knowledge_sources s where ${liveYoutubeSource(sql`claims.source_url`)}
-      and strpos(${collapsed(sql`s.quote`)}, ${collapsed(sql`claims.quote`)}) > 0)`;
+    // Verbatim YouTube text on a claim: its quote, and the text of a 'signal' claim (the signal quote, capped). One statement,
+    // so a row is processed once: the quote goes (with the note), and a signal claim's text becomes the placeholder.
+    // Backing is checked on the quote, or on the text when the quote is already gone. Redacted rows no longer match.
+    const signalText = sql`(${claims.section} = 'signal' and ${claims.text} <> ${EXPIRED_PLACEHOLDER})`;
+    const backed = backedBySource(sql`claims.source_url`, sql`coalesce(claims.quote, claims.text)`);
     const res = await tx.update(claims)
-      .set({ quote: null, reviewNote: YOUTUBE_CLAIM_NOTE })
-      .where(and(isNotNull(claims.quote), isYoutube, or(inArray(claims.caseId, old), sql`not ${backed}`)))
+      .set({
+        quote: null,
+        reviewNote: sql`(case when ${claims.quote} is not null then ${YOUTUBE_CLAIM_NOTE} else ${claims.reviewNote} end)`,
+        text: sql`(case when ${claims.section} = 'signal' then ${EXPIRED_PLACEHOLDER} else ${claims.text} end)`,
+      })
+      .where(and(isYoutubeUrl(sql`${claims.sourceUrl}`), or(isNotNull(claims.quote), signalText), or(inArray(claims.caseId, old), sql`not ${backed}`)))
       .returning({ id: claims.id });
     return res.length;
   }));
+
+  const redactedCases = await step('redact case evidence', 0, async () => {
+    // cases.sections.evidence.signals[] entries are { quote, url, sourceName, voice? }: quote is the verbatim signal text
+    // (sourceName is a site label). Same rule as claims, per entry. One set-based statement; entries keep their order.
+    const signalsPath = sql`cases.sections->'evidence'->'signals'`;
+    const expired = (e: SQL) => sql`(${isYoutubeUrl(sql`(${e}->>'url')`)} and (${e}->>'quote') <> ${EXPIRED_PLACEHOLDER}
+      and (cases.created_at < ${ytCutoff.toISOString()}::timestamptz or not ${backedBySource(sql`(${e}->>'url')`, sql`(${e}->>'quote')`)}))`;
+    const res = await db.transaction((tx) => tx.execute(sql`
+      update cases set sections = jsonb_set(cases.sections, '{evidence,signals}', (
+        select jsonb_agg(case when ${expired(sql`t.e`)} then jsonb_set(t.e, '{quote}', to_jsonb(${EXPIRED_PLACEHOLDER}::text)) else t.e end order by t.i)
+        from jsonb_array_elements(${signalsPath}) with ordinality as t(e, i)))
+      where jsonb_typeof(${signalsPath}) = 'array'
+        and exists (select 1 from jsonb_array_elements(${signalsPath}) as u(e) where ${expired(sql`u.e`)})
+      returning cases.id`));
+    return (Array.isArray(res) ? res : ((res as { rows?: unknown[] }).rows ?? [])).length;
+  });
 
   const prunedQuotaRows = await step('prune quota rows', 0, async () => {
     // Keys look like youtube.quota.YYYY-MM-DD; ISO dates sort as text, and only well-formed keys are considered.
@@ -119,14 +149,14 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
     return (Array.isArray(res) ? res : ((res as { rows?: unknown[] }).rows ?? [])).length;
   });
 
-  return { prunedFetches, prunedQuotaRows, expiredSources, deletedItems, redactedSignals, redactedClaims, errors };
+  return { prunedFetches, prunedQuotaRows, expiredSources, deletedItems, redactedSignals, redactedClaims, redactedCases, errors };
 }
 
 /** runMaintenance for startup paths: logs one count line (only when something changed) and never throws. */
 export async function runMaintenanceQuietly(db: Db, log: (line: string) => void, now?: Date): Promise<void> {
   try {
     const m = await runMaintenance(db, now);
-    const total = m.prunedFetches + m.prunedQuotaRows + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
+    const total = m.prunedFetches + m.prunedQuotaRows + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims + m.redactedCases;
     if (total > 0) log(`Maintenance: ${total} old records cleaned up.`);
     for (const e of m.errors) log(`Maintenance step failed: ${e}`);
   } catch (err) {

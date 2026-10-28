@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Db } from '../src/db/client';
-import { claims, knowledgeItems, knowledgeSources, pageFetches, settings, signals } from '../src/db/schema';
+import { cases, claims, knowledgeItems, knowledgeSources, pageFetches, settings, signals } from '../src/db/schema';
 import { upsertKnowledgeItem } from '../src/library/store';
 import { runMaintenance, runMaintenanceQuietly } from '../src/maintenance';
 import { insertCase, insertIdea, insertRun, testDb, unit } from './helpers/db';
@@ -249,8 +249,76 @@ describe('runMaintenance', () => {
     await db.insert(pageFetches).values({ urlDomain: 'a.example', outcome: 'ok', via: 'direct', at: ago(100) });
     await item(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(1));
     await sig(db, 'youtube', 'https://www.youtube.com/watch?v=aaaaaaaaaaa', ago(31));
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, prunedQuotaRows: 0, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0, errors: [] });
-    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, prunedQuotaRows: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0, errors: [] });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 1, prunedQuotaRows: 0, expiredSources: 1, deletedItems: 1, redactedSignals: 1, redactedClaims: 0, redactedCases: 0, errors: [] });
+    expect(await runMaintenance(db, NOW)).toEqual({ prunedFetches: 0, prunedQuotaRows: 0, expiredSources: 0, deletedItems: 0, redactedSignals: 0, redactedClaims: 0, redactedCases: 0, errors: [] });
+  });
+
+  it('replaces the verbatim text of YouTube signal claims when unbacked or the case is old, once', async () => {
+    const db = await testDb();
+    const uA = 'https://www.youtube.com/watch?v=livelivelive';
+    const uB = 'https://www.youtube.com/watch?v=expiredexpi';
+    const qA = 'Quoting jobs by hand loses us bids every month, honestly.';
+    const qB = 'Our scheduling app double books the crew weekly.';
+    await ytSource(db, uA, qA, ago(5));
+    await ytSource(db, uB, qB, ago(31));
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 }));
+    const recent = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(1) });
+    const old = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(31), slug: 'old-case' });
+    const [backed, unbacked, oldBacked, web, quoteless] = await db.insert(claims).values([
+      { caseId: recent.id, section: 'signal', text: qA, sourceUrl: uA, quote: qA },
+      { caseId: recent.id, section: 'signal', text: qB, sourceUrl: uB, quote: qB },
+      { caseId: old.id, section: 'signal', text: qA, sourceUrl: uA, quote: qA },
+      { caseId: recent.id, section: 'signal', text: 'A web quote that stays put.', sourceUrl: 'https://web.example/a', quote: 'A web quote that stays put.' },
+      { caseId: recent.id, section: 'signal', text: qB, sourceUrl: uB, quote: null },
+    ]).returning();
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    expect(r.redactedClaims).toBe(3);
+    const get = async (id: string) => (await db.select().from(claims).where(eq(claims.id, id)))[0]!;
+    expect(await get(backed!.id)).toMatchObject({ text: qA, quote: qA, reviewNote: null });
+    expect(await get(unbacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed after 30 days', section: 'signal', sourceUrl: uB });
+    expect(await get(oldBacked!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: 'YouTube quote removed after 30 days' });
+    expect(await get(web!.id)).toMatchObject({ text: 'A web quote that stays put.', quote: 'A web quote that stays put.' });
+    expect(await get(quoteless!.id)).toMatchObject({ text: PLACEHOLDER, quote: null, reviewNote: null });
+    expect((await runMaintenance(db, NOW)).redactedClaims).toBe(0);
+  });
+
+  it('replaces YouTube quotes in case evidence signals when unbacked or the case is old, keeping everything else', async () => {
+    const db = await testDb();
+    const uA = 'https://www.youtube.com/watch?v=livelivelive';
+    const uB = 'https://youtu.be/expiredexpi';
+    const qA = 'Quoting jobs by hand loses us bids every month, honestly.';
+    const qB = 'Our scheduling app double books the crew weekly.';
+    await ytSource(db, uA, qA, ago(5));
+    await ytSource(db, uB, qB, ago(31));
+    const sections = (signals: { quote: string; url: string; sourceName: string; voice?: string }[]) =>
+      ({ summary: { oneLiner: 'o' }, evidence: { signals, claims: [{ text: 'c', sourceUrl: 'https://web.example/c', quote: 'cq' }] } }) as never;
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 }));
+    const recent = await insertCase(db, (await insertIdea(db, run.id)).id, {
+      createdAt: ago(1),
+      sections: sections([
+        { quote: qA, url: uA, sourceName: 'YouTube', voice: 'operator' },
+        { quote: qB, url: uB, sourceName: 'YouTube' },
+        { quote: 'A web quote that stays put.', url: 'https://web.example/a', sourceName: 'web.example' },
+      ]),
+    });
+    const old = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(31), slug: 'old-case', sections: sections([{ quote: qA, url: uA, sourceName: 'YouTube' }]) });
+    const untouched = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(1), slug: 'no-evidence' });
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    expect(r.redactedCases).toBe(2);
+    const get = async (id: string) => (await db.select().from(cases).where(eq(cases.id, id)))[0]!.sections as unknown as { summary: unknown; evidence: { signals: unknown[]; claims: unknown[] } };
+    const rs = await get(recent.id);
+    expect(rs.evidence.signals).toEqual([
+      { quote: qA, url: uA, sourceName: 'YouTube', voice: 'operator' },
+      { quote: PLACEHOLDER, url: uB, sourceName: 'YouTube' },
+      { quote: 'A web quote that stays put.', url: 'https://web.example/a', sourceName: 'web.example' },
+    ]);
+    expect(rs.evidence.claims).toEqual([{ text: 'c', sourceUrl: 'https://web.example/c', quote: 'cq' }]);
+    expect(rs.summary).toEqual({ oneLiner: 'o' });
+    expect((await get(old.id)).evidence.signals).toEqual([{ quote: PLACEHOLDER, url: uA, sourceName: 'YouTube' }]);
+    expect(await get(untouched.id)).toEqual({ summary: { oneLiner: 'o' } });
+    expect((await runMaintenance(db, NOW)).redactedCases).toBe(0);
   });
 });
 

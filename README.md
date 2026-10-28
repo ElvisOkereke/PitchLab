@@ -94,7 +94,7 @@ missions** card.
 - **YouTube (optional):** with `YOUTUBE_API_KEY` set, missions also read public YouTube comments through the official API
   (a free key; at most 5 searches per mission, and PitchLab stops at 90 searches or 9,000 quota units per Pacific day).
   No channel or author names are stored, and the URL is the plain video URL. **YouTube comments and video text are kept
-  for 30 days, then deleted** (the entry they supported is removed if nothing else backs it, and any case quote that used
+  for 30 days, then deleted** (the entry they supported is removed if nothing else backs it, and any case quote or signal that used
   them is replaced by a note). Without the key, YouTube is skipped.
 - **Archive fallback:** after a direct fetch fails with 403, 404, 410, a 5xx error or a timeout, and only if robots.txt
   allowed the page, PitchLab asks the Internet Archive (Wayback Machine) for a snapshot, at most 1 request per second. A

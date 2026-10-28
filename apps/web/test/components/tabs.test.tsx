@@ -5,7 +5,7 @@ import { EvidenceTab } from '@/components/tabs/evidence';
 import { NumbersTab } from '@/components/tabs/numbers';
 import { PitchTab } from '@/components/tabs/pitch';
 import { SummaryTab } from '@/components/tabs/summary';
-import { caseViewFixture, claimRow, gateRow } from '../helpers/case-fixture';
+import { caseViewFixture, claimRow, gateRow, sectionsFixture } from '../helpers/case-fixture';
 
 afterEach(cleanup);
 
@@ -65,6 +65,29 @@ describe('EvidenceTab', () => {
     // Legacy entity-encoded quotes are decoded (cleanQuote) and still shown as text; an unchecked signal says so.
     expect(signals[1]!.textContent).toContain('Leads vanish ’silently’');
     expect(signals[1]!.textContent).toContain('not checked');
+  });
+  it('renders expired YouTube text as the placeholder, with the checker note, without breaking', () => {
+    const PH = '[expired YouTube data]';
+    const yt = 'https://www.youtube.com/watch?v=aaaaaaaaaaa';
+    const base = sectionsFixture();
+    const sections = { ...base, evidence: { ...base.evidence, signals: [{ quote: PH, url: yt, sourceName: 'YouTube' }, ...base.evidence.signals] } };
+    const view = caseViewFixture({
+      sections,
+      claims: [
+        claimRow('verified', { section: 'signal', text: PH, sourceUrl: yt, quote: null, reviewNote: 'YouTube quote removed after 30 days' }),
+        claimRow('verified', { section: 'evidence', text: 'Owners lose bids to slow quotes', sourceUrl: yt, quote: null, reviewNote: 'YouTube quote removed after 30 days' }),
+      ],
+    });
+    const { container } = render(<EvidenceTab view={view} />);
+    const signals = within(container.querySelector('[data-testid="signals"]') as HTMLElement).getAllByRole('listitem');
+    expect(signals[0]!.textContent).toContain(PH);
+    expect(signals[0]!.textContent).toContain('YouTube');
+    const claims = container.querySelector('[data-testid="claims"]') as HTMLElement;
+    expect(claims.textContent).toContain('Owners lose bids to slow quotes');
+    expect(claims.textContent).toContain('Checker: YouTube quote removed after 30 days');
+    expect(claims.textContent).not.toContain('Quote:');
+    cleanup();
+    expect(() => render(<SummaryTab view={view} />)).not.toThrow();
   });
 });
 
