@@ -4,8 +4,28 @@ import { loadPrompt } from '../../src/llm/prompts';
 import * as screenModule from '../../src/pipeline/screen';
 import { barrierScore, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand, screen, weightedScreenTotal } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
-import { getIdea, insertCase, insertIdea, insertRun, testDb, unit } from '../helpers/db';
+import { signals, type SignalVoice } from '../../src/db/schema';
+import { getIdea, insertCase, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
+
+type TestDb = Awaited<ReturnType<typeof testDb>>;
+let sigSeq = 0;
+/** Inserts one signal per entry (voice, domain) and returns the ids. */
+async function sigs(db: TestDb, list: { voice: SignalVoice | null; domain?: string }[]): Promise<string[]> {
+  if (list.length === 0) return [];
+  const rows = await db.insert(signals).values(list.map(({ voice, domain }) => {
+    const n = ++sigSeq;
+    return {
+      marketId: 'ca-us', source: 'web', url: `https://${domain ?? `d${n}.test`}/post/${n}`, title: 'T', quote: `q${n}`, quoteHash: `h${n}`, voice,
+    };
+  })).returning({ id: signals.id });
+  return rows.map((r) => r.id);
+}
+/** Evidence that meets the gate's rule at the default minSignals 3: three operator signals on distinct domains. */
+const enough = (db: TestDb) => sigs(db, [{ voice: 'operator' }, { voice: 'operator' }, { voice: 'operator' }]);
+/** Like the shared helper, but an idea gets enough evidence unless the test passes its own signalIds. */
+const insertIdea: typeof insertBareIdea = async (db, runId, overrides = {}) =>
+  insertBareIdea(db, runId, { ...(overrides.signalIds ? {} : { signalIds: await enough(db) }), ...overrides });
 
 const scores = (v: number, opts: { novelty?: number } = {}) =>
   Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'novelty' && opts.novelty !== undefined ? opts.novelty : v, note: 'n' }]));
@@ -263,6 +283,49 @@ describe('screen', () => {
     });
   });
 
+  describe('pre-gate evidence filter: only candidates that meet the gate evidence rule can become entrants', () => {
+    it('skips a candidate whose cited signals give fewer than minSignals independent sources, logs it and the count', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const vendor = await insertIdea(db, run.id, { title: 'Vendor-backed', signalIds: await sigs(db, [{ voice: 'operator' }, { voice: 'operator' }, { voice: 'vendor' }]) });
+      const oneSite = await insertIdea(db, run.id, { title: 'One site', signalIds: await sigs(db, [{ voice: 'operator', domain: 'same.test' }, { voice: 'operator', domain: 'same.test' }, { voice: 'neutral' }]) });
+      const untagged = await insertIdea(db, run.id, { title: 'Untagged', signalIds: await sigs(db, [{ voice: 'operator' }, { voice: 'operator' }, { voice: null }]) });
+      const none = await insertIdea(db, run.id, { title: 'None', signalIds: [] });
+      const ok = await insertIdea(db, run.id, { title: 'Ok', signalIds: await sigs(db, [{ voice: 'operator' }, { voice: 'operator' }, { voice: 'neutral' }]) });
+      const ok2 = await insertIdea(db, run.id, { title: 'Ok2' });
+      const logs: string[] = [];
+      const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(5), scores(5), scores(3), scores(2)] } });
+      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [vendor, oneSite, untagged, none, ok, ok2].map((i) => i.id) });
+      expect(out.ideaIds).toEqual([ok.id, ok2.id]);
+      for (const i of [vendor, oneSite, untagged, none]) expect((await getIdea(db, i.id)).status).toBe('screened_out');
+      expect(logs.some((l) => l.includes('"Vendor-backed"') && l.includes('2 independent sources') && l.includes('gate needs 3'))).toBe(true);
+      expect(logs.some((l) => l.includes('"None"') && l.includes('0 independent sources'))).toBe(true);
+      expect(logs).toContain('screen: 4 of 6 candidates have too little evidence for the gate (fewer than 3 independent sources) and cannot advance');
+    });
+
+    it('applies to the consumer swap too: a consumer candidate without enough evidence is passed over', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const b1 = await insertIdea(db, run.id, { audience: 'business', businessModel: 'subscription' });
+      const b2 = await insertIdea(db, run.id, { audience: 'business', businessModel: 'usage' });
+      const thin = await insertIdea(db, run.id, { audience: 'consumer', businessModel: 'ads', signalIds: await sigs(db, [{ voice: 'operator' }]) });
+      const backed = await insertIdea(db, run.id, { audience: 'consumer', businessModel: 'affiliate' });
+      const router = fakeRouter({ structured: { screen: [scores(5), scores(4), scores(3), scores(2)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: [b1.id, b2.id, thin.id, backed.id] });
+      expect(out.ideaIds).toEqual([b1.id, backed.id]);
+      expect((await getIdea(db, thin.id)).status).toBe('screened_out');
+    });
+
+    it('uses the run minSignals and never filters owner ideas', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', advanceCount: 1, minSignals: 1 }));
+      const owner = await insertIdea(db, run.id, { origin: 'owner', signalIds: [] });
+      const single = await insertIdea(db, run.id, { signalIds: await sigs(db, [{ voice: 'neutral' }]) });
+      const out = await screen(deps(db, fakeRouter({ structured: { screen: [scores(3)] } })), run, { ideaIds: [owner.id, single.id] });
+      expect(out.ideaIds).toEqual([owner.id, single.id]);
+    });
+  });
+
   it('advances owner ideas without scoring or using a slot', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', advanceCount: 1 }));
@@ -315,6 +378,26 @@ describe('screen', () => {
       expect(router.calls[0]!.prompt).toMatch(/Money case \(computed[^\n]*\): 1 of 5/);
       expect(router.calls[1]!.prompt).toMatch(/Money case \(computed[^\n]*\): 5 of 5/);
       expect(router.calls[1]!.prompt).toMatch(/Barrier \(computed[^\n]*\): 5 of 5/);
+    });
+
+    it('ads and affiliate ideas: the user pays nothing, so no multiple and the neutral band 3 (not the ad revenue per user)', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 3 }));
+      // priceHint here is our revenue per user (ideate.v8): dividing by it would give 120x and band 5.
+      const ads = await insertIdea(db, run.id, { businessModel: 'ads', valueToUser: value, priceHint: price(10, 'year') });
+      const aff = await insertIdea(db, run.id, { businessModel: 'affiliate' });
+      const data = await insertIdea(db, run.id, { businessModel: 'data_sales', valueToUser: value, priceHint: price(100, 'year') }); // client side: 12x
+      const logs: string[] = [];
+      const router = fakeRouter({ structured: { screen: [scores(3), scores(3), scores(3)] } });
+      await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [ads.id, aff.id, data.id] });
+      for (const i of [ads, aff]) {
+        const sc = (await getIdea(db, i.id)).screenScores as Record<string, { value: number; note: string }>;
+        expect(sc.moneyCase).toEqual({ value: 3, note: 'no value multiple: user pays nothing (ad/affiliate funded)' });
+      }
+      expect(((await getIdea(db, data.id)).screenScores as Record<string, { value: number }>).moneyCase!.value).toBe(5);
+      expect(router.calls[0]!.prompt).toMatch(/Money case \(computed[^\n]*user pays nothing[^\n]*\): 3 of 5/);
+      expect(logs.some((l) => l.includes('0 of 3') && l.includes('no value multiple'))).toBe(true);
+      expect(logs.some((l) => l.includes('2 of 3') && l.includes('user pays nothing'))).toBe(true);
     });
 
     it('missing money or barrier data scores moneyCase 2 and barrier 3, and the null count is logged', async () => {

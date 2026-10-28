@@ -1,11 +1,12 @@
 import { and, cosineDistance, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { AiScoresSchema, CRITERIA, type AiScores } from '../case/schema';
 import type { Db } from '../db/client';
-import { cases, ideas } from '../db/schema';
+import { cases, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
+import { countEvidenceForSignals } from './gate';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
@@ -19,12 +20,19 @@ export const MAX_KILLED_SIMILARITY = 0.75;
 
 /**
  * Money case band from the value multiple (value to the user per year over price per year): >=10 -> 5, >=5 -> 4,
- * >=3 -> 3, >=1.5 -> 2, else 1. A null multiple (cannot be worked out) is 2.
+ * >=3 -> 3, >=1.5 -> 2, else 1. A null multiple (cannot be worked out) is 2. Ads and affiliate ideas, where the user
+ * pays nothing, have no multiple and get the neutral band USER_PAYS_NOTHING_BAND instead (see screen).
  */
 export function moneyBand(multiple: number | null): number {
   if (multiple === null || !Number.isFinite(multiple)) return 2;
   return multiple >= 10 ? 5 : multiple >= 5 ? 4 : multiple >= 3 ? 3 : multiple >= 1.5 ? 2 : 1;
 }
+
+/** Business models where the user pays nothing: the idea's price hint is our revenue per user, not a price. */
+const USER_PAYS_NOTHING = new Set(['ads', 'affiliate']);
+/** The neutral money case band for those models: no multiple to reward or punish. */
+export const USER_PAYS_NOTHING_BAND = 3;
+const USER_PAYS_NOTHING_NOTE = 'user pays nothing (ad/affiliate funded)';
 
 /** Barrier score: easy to start (low toStart) and hard to copy (high toCopy) score high. round(((6 - toStart) + toCopy) / 2), 1-5; null is 3. */
 export function barrierScore(b: Pick<Barriers, 'toStart' | 'toCopy'> | null | undefined): number {
@@ -51,6 +59,8 @@ export function weightedScreenTotal(scores: AiScores | ScreenScores): number {
 type Scored = {
   id: string; title: string; total: number; index: number; embedding: number[] | null;
   businessModel: string | null; audience: string | null;
+  /** Independent evidence units of the idea's cited signals, counted exactly as the gate's evidence rule counts them. */
+  evidence: number;
 };
 const isConsumer = (s: { audience: string | null }) => s.audience === 'consumer' || s.audience === 'both';
 
@@ -70,7 +80,11 @@ async function closest(db: Db, s: Scored & { embedding: number[] }, extra: 'has_
 }
 
 /** Why a ranked candidate must not advance, or null when it may. */
-async function skipReason(db: Db, s: Scored, perModel: Map<string, number>, advancedVecs: number[][]): Promise<string | null> {
+async function skipReason(
+  db: Db, s: Scored, perModel: Map<string, number>, advancedVecs: number[][], minSignals: number,
+): Promise<string | null> {
+  // The gate would kill it on evidence alone, so it must not take an entrant slot.
+  if (s.evidence < minSignals) return `${s.evidence} independent sources, the gate needs ${minSignals}`;
   if (s.businessModel && (perModel.get(s.businessModel) ?? 0) >= MAX_PER_BUSINESS_MODEL) {
     return `${MAX_PER_BUSINESS_MODEL} ideas with business model ${s.businessModel} already advanced`;
   }
@@ -120,18 +134,34 @@ export async function screen(
 
   for (const i of owner) await db.update(ideas).set({ status: 'advanced' }).where(eq(ideas.id, i.id));
 
+  // The gate's evidence rule, applied before the gate: one bounded query for every cited signal of the generated ideas.
+  const citedIds = [...new Set(generated.flatMap((i) => i.signalIds))];
+  const sigRows = citedIds.length
+    ? await db.select({ id: signals.id, url: signals.url, voice: signals.voice }).from(signals).where(inArray(signals.id, citedIds))
+    : [];
+  const sigById = new Map(sigRows.map((r) => [r.id, r]));
+  const evidenceOf = (idea: typeof ideas.$inferSelect) =>
+    countEvidenceForSignals(idea.signalIds.flatMap((id) => sigById.get(id) ?? [])).units;
+
   const prompt = loadPrompt('screen');
   const scored: Scored[] = [];
   let noMultiple = 0;
+  let paysNothing = 0;
   for (const [index, idea] of generated.entries()) {
-    const multiple = idea.valueToUser && idea.priceHint ? valueMultiple(idea.valueToUser, idea.priceHint) : null;
-    if (multiple === null) noMultiple++;
-    const money = moneyBand(multiple);
+    // Ads and affiliate: the user pays nothing, so there is no multiple (the price hint is our revenue per user).
+    const free = !!idea.businessModel && USER_PAYS_NOTHING.has(idea.businessModel);
+    const multiple = !free && idea.valueToUser && idea.priceHint ? valueMultiple(idea.valueToUser, idea.priceHint) : null;
+    if (free) paysNothing++;
+    else if (multiple === null) noMultiple++;
+    const money = free ? USER_PAYS_NOTHING_BAND : moneyBand(multiple);
     const barrier = barrierScore(idea.barriers);
-    const moneyNote = multiple === null ? 'no value multiple (value or price missing or not annual)' : `value multiple ${multiple.toFixed(1)}x`;
+    const moneyNote = free ? `no value multiple: ${USER_PAYS_NOTHING_NOTE}`
+      : multiple === null ? 'no value multiple (value or price missing or not annual)' : `value multiple ${multiple.toFixed(1)}x`;
     const barrierNote = idea.barriers ? `toStart ${idea.barriers.toStart}, toCopy ${idea.barriers.toCopy}` : 'no barrier ratings';
+    const moneyFrom = free ? `no value multiple, because the ${USER_PAYS_NOTHING_NOTE}; neutral band`
+      : multiple === null ? 'a value multiple that cannot be worked out' : `the value multiple ${multiple.toFixed(1)}x`;
     const computed = [
-      `Money case (computed from ${multiple === null ? 'a value multiple that cannot be worked out' : `the value multiple ${multiple.toFixed(1)}x`}): ${money} of 5`,
+      `Money case (computed from ${moneyFrom}): ${money} of 5`,
       `Barrier (computed from ${barrierNote}; easy to start and hard to copy score high): ${barrier} of 5`,
     ].join('\n');
     // The model scores the seven criteria only; the two computed scores are added here and cannot be overridden.
@@ -144,11 +174,21 @@ export async function screen(
     const total = weightedScreenTotal(scores);
     log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}`);
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
-    scored.push({ id: idea.id, title: idea.title, total, index, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience });
+    scored.push({
+      id: idea.id, title: idea.title, total, index, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience,
+      evidence: evidenceOf(idea),
+    });
   }
-  if (generated.length) log(`screen: ${noMultiple} of ${generated.length} ideas had no value multiple (moneyCase set to 2)`);
+  if (generated.length) {
+    log(`screen: ${noMultiple} of ${generated.length} ideas had no value multiple (moneyCase set to 2)`);
+    if (paysNothing) log(`screen: ${paysNothing} of ${generated.length} ideas are ads or affiliate, where the user pays nothing (moneyCase set to ${USER_PAYS_NOTHING_BAND})`);
+    const thin = scored.filter((s) => s.evidence < run.config.minSignals).length;
+    log(`screen: ${thin} of ${generated.length} candidates have too little evidence for the gate (fewer than ${run.config.minSignals} independent sources) and cannot advance`);
+  }
 
   // Top advanceCount by score, in rank order, skipping (-> screened_out) a candidate when
+  //   (0) its cited signals fall short of the gate's evidence rule (fewer than minSignals operator/neutral sources on
+  //       distinct registrable domains, counted by countEvidenceForSignals), or
   //   (a) MAX_PER_BUSINESS_MODEL generated ideas with its business model already advanced (a null model is never capped),
   //   (b) it is a near-twin (cosine > 0.8, embeddings from dedupe) of an idea already advanced in this run, or
   //   (c) it is close (cosine >= 0.82) to an idea from any run that already has a case (a regenerated copy), or
@@ -169,7 +209,7 @@ export async function screen(
       losers.push(s);
       continue;
     }
-    const skip = await skipReason(db, s, tally(winners), vecsOf(winners));
+    const skip = await skipReason(db, s, tally(winners), vecsOf(winners), run.config.minSignals);
     if (skip) {
       log(`screen: skipped "${capField(s.title, 120)}": ${skip}`);
       losers.push(s);
@@ -185,7 +225,7 @@ export async function screen(
     if (victim) {
       const rest = winners.filter((w) => w !== victim);
       for (const c of losers.filter(isConsumer)) {
-        if (await skipReason(db, c, tally(rest), vecsOf(rest))) continue;
+        if (await skipReason(db, c, tally(rest), vecsOf(rest), run.config.minSignals)) continue;
         log(`screen: "${capField(c.title, 120)}" replaces "${capField(victim.title, 120)}" to keep a consumer entrant`);
         winners = [...rest, c].sort((a, b) => b.total - a.total || a.index - b.index);
         losers.splice(losers.indexOf(c), 1, victim);

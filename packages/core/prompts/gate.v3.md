@@ -22,6 +22,6 @@ Rule on exactly these five checks. Return one verdict per check, each exactly on
 - regulation: FAIL if delivering the service requires a license, certification or regulatory approval.
 - control: FAIL if it depends on unofficial APIs, a partnership, or one platform's terms of service or goodwill.
 - autonomy: judge on the labour the idea describes, not on the default. FAIL only if delivery is mostly human labour, meaning consulting or done-for-you work where people do most of the work for each customer. PASS when delivery is software-led with light per-customer setup or review (as a guide, under about 2 hours of human work per customer per month), and note the labour in the reasoning (who does what, and roughly how many hours per customer).
-- reachability: FAIL if the buyers cannot be identified and contacted at scale.
+- reachability: FAIL if the buyers cannot be identified and contacted at scale. For individuals: reachable at scale through channels such as communities, search, app stores, content or partners we don't depend on; PASS when such a channel plausibly reaches them, and FAIL when none does.
 
 Do not judge evidence volume; that is checked separately. Do not return any check other than these five.

@@ -108,14 +108,23 @@ describe('ideate prompt', () => {
         '`toStartWhy` and `toCopyWhy` up to 300 each, and at most 10 `libraryItemIds`. Write ids bare, without the square brackets.',
     );
   });
-  it('asks for a yearly or monthly price per user, converting usage and percentage pricing, and our revenue per user for free-to-user models', () => {
+  it('asks for a yearly or monthly price per user, converting usage and percentage pricing, and our revenue per user for ads and affiliate', () => {
     const text = render();
     expect(text).toContain(
       '`priceHint` is the equivalent price per user or buyer, with `unit` "year" or "month", even for `usage`, `transaction_fee`, `marketplace` or percentage pricing: convert it and explain the conversion in `basis`.',
     );
     expect(text).toContain(
-      'For `ads`, `affiliate` and `data_sales`, where the user pays nothing, set `priceHint` to the revenue we earn per user per year (`unit` "year") and say so in `basis`.',
+      'For `ads` and `affiliate`, where the user pays nothing, set `priceHint` to the revenue we earn per user per year (`unit` "year") and say so in `basis`; ' +
+        'these ideas have no value multiple, so that revenue is never treated as a price.',
     );
+  });
+  it('works out data_sales value and price from the data client\'s side, and freemium from the paid tier', () => {
+    const text = render();
+    expect(text).toContain(
+      'For `data_sales`, work out both from the data client\'s side: `valueToUser` is the value to the client who buys the data per year, and `priceHint` is what that client pays per year.',
+    );
+    expect(text).toContain('For `freemium`, `priceHint` is the price of the paid tier, and `valueToUser` is the value to a user on that tier.');
+    expect(text).not.toContain('`data_sales`, where the user pays nothing');
   });
   it('places the fill-the-gap instruction when given', () => {
     expect(render('Fill the gap. X')).toContain('Fill the gap. X');

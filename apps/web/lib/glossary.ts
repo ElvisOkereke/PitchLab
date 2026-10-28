@@ -91,7 +91,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   valueMultiple: {
     label: 'Value multiple',
-    text: 'How much a year of the product is worth to the person who pays, divided by what it costs them for a year. A multiple of 3× means they get three times the price back. Ideas where the user pays nothing, such as ad-funded ones, have none.',
+    text: 'How much a year of the product is worth to the person who pays, divided by what it costs them for a year. A multiple of 3× means they get three times the price back, and ad- or affiliate-funded ideas, where the user pays nothing, have none (they sit in the middle of the money ranking). Data sales use the value and price for the client who buys the data, and freemium the paid tier\'s price.',
   },
   barriers: {
     label: 'Barriers',

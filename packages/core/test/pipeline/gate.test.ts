@@ -42,6 +42,20 @@ describe('gate.v3', () => {
     expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v3');
   });
 
+  it('judges reachability for individuals by channels, keeping the business wording', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { audience: 'consumer' });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
+    const reach = prompt.split('\n').find((l) => l.startsWith('- reachability:'))!;
+    expect(reach).toContain('FAIL if the buyers cannot be identified and contacted at scale.');
+    expect(reach).toContain(
+      "For individuals: reachable at scale through channels such as communities, search, app stores, content or partners we don't depend on",
+    );
+  });
+
   it('gives the generic check the already-sold library startups for the idea, wrapped as untrusted', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
