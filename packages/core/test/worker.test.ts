@@ -10,8 +10,9 @@ import { WORKER_STATUS_KEY, readWorkerStatus } from '../src/dashboard/settings';
 import { createRun } from '../src/pipeline/run';
 import { defaultRunConfig, type RunConfig } from '../src/pipeline/types';
 import { saveResearchSettings } from '../src/dashboard/missions';
-import { setSetting } from '../src/validation/settings';
+import { getSetting, setSetting } from '../src/validation/settings';
 import { claimNextMission, claimNextRun, claimNextValidationJob, resolveModels, runWorker, workerStatus } from '../src/worker';
+import { pageFetches } from '../src/db/schema';
 import { insertCase, insertIdea, insertRun, testDb } from './helpers/db';
 
 const cfg = defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 });
@@ -340,5 +341,29 @@ describe('workerStatus', () => {
     expect(Object.keys(s.providers)).not.toContain('reddit');
     expect(Number.isNaN(Date.parse(s.at))).toBe(false);
     expect(JSON.stringify(s)).not.toMatch(/k1|k2|k3/);
+  });
+});
+
+describe('runWorker maintenance', () => {
+  const old = (days: number) => new Date(Date.now() - days * 86_400_000);
+  const seed = (db: Db) => db.insert(pageFetches).values({ urlDomain: 'a.example', outcome: 'ok', via: 'direct', at: old(100) });
+  const run = (db: Db) => runWorker({ db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation });
+
+  it('runs at start and records maintenance.lastRun', async () => {
+    const db = await testDb();
+    await seed(db);
+    await run(db);
+    expect(await db.select().from(pageFetches)).toHaveLength(0);
+    expect(typeof (await getSetting(db, 'maintenance.lastRun'))).toBe('string');
+  });
+  it('does not run again within 24 hours of lastRun, runs after', async () => {
+    const db = await testDb();
+    await run(db);
+    await seed(db);
+    await run(db);
+    expect(await db.select().from(pageFetches)).toHaveLength(1);
+    await setSetting(db, 'maintenance.lastRun', old(2).toISOString());
+    await run(db);
+    expect(await db.select().from(pageFetches)).toHaveLength(0);
   });
 });

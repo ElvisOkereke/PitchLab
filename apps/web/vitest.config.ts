@@ -11,6 +11,7 @@ export default defineConfig({
   test: {
     // Each DB test boots its own PGlite (wasm + migrations), which can exceed the 5 s default under parallel workers.
     testTimeout: 30_000,
+    hookTimeout: 30_000,
     // Vitest 5 inline projects inherit the plugins and aliases above.
     projects: [
       { test: { name: 'node', include: ['test/**/*.test.ts'], environment: 'node' } },

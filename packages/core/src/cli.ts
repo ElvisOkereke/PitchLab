@@ -30,6 +30,7 @@ import { parseProspectCsv, upsertProspects } from './validation/prospects';
 import { executeValidationJob } from './validation/job';
 import { runValidation, type ValidationDeps } from './validation/run';
 import { getSetting, setSetting } from './validation/settings';
+import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
@@ -63,6 +64,8 @@ async function openDb(url: string): Promise<Db> {
   await runMigrations(db);
   await seedDefaults(db);
   await ensureExampleQuietly(db, (l) => console.error(l));
+  // Expired YouTube data goes before anything else uses the database (a worker down for weeks must not leave it behind).
+  await runMaintenanceQuietly(db, (l) => console.error(l));
   return db;
 }
 

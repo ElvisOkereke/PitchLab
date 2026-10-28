@@ -30,7 +30,7 @@ function row(o: Partial<LibraryRow> = {}): LibraryRow {
 function coverage(o: Partial<LibraryCoverage> = {}): LibraryCoverage {
   return {
     byKind: { problem: 6, pricing: 3, startup: 1 }, bySourceType: { hn: 7, producthunt: 3 }, byVoice: { operator: 4, neutral: 2, vendor: 1 },
-    problemIndependentShare: 0.75, verifiedQuoteShare: 0.5, countries: ['US', 'CA', 'GB'], industries: ['retail', 'hvac'], newest: NOW, oldest: new Date('2026-09-01T00:00:00Z'), ...o,
+    problemIndependentShare: 0.75, verifiedQuoteShare: 0.5, socialShare: 0.4, countries: ['US', 'CA', 'GB'], industries: ['retail', 'hvac'], newest: NOW, oldest: new Date('2026-09-01T00:00:00Z'), ...o,
   };
 }
 function mission(o: Partial<MissionView> = {}): MissionView {

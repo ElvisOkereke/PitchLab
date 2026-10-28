@@ -389,6 +389,11 @@ export const knowledgeKind = pgEnum('knowledge_kind', ['problem', 'startup', 'pr
 export const knowledgeStatus = pgEnum('knowledge_status', ['active', 'rejected']);
 export const missionOrigin = pgEnum('mission_origin', ['owner', 'background']);
 
+export const FETCH_OUTCOMES = ['ok', 'http_403', 'http_404', 'http_410', 'http_4xx', 'http_5xx', 'timeout', 'blocked_robots', 'blocked_host', 'too_large', 'not_html', 'thin_text', 'network'] as const;
+export const FETCH_VIAS = ['direct', 'archive', 'browser'] as const;
+export const fetchOutcome = pgEnum('fetch_outcome', FETCH_OUTCOMES);
+export const fetchVia = pgEnum('fetch_via', FETCH_VIAS);
+
 export const KNOWLEDGE_AUDIENCES = ['business', 'consumer', 'both'] as const;
 
 /** A research mission: one owner- or worker-started collection pass with a soft budget. */
@@ -450,8 +455,26 @@ export const knowledgeSources = pgTable('knowledge_sources', {
   quoteVerified: boolean('quote_verified').notNull().default(false),
   /** Who wrote this source's text; signals take their voice from the source they quote (the entry voice is for display and ranking). */
   voice: text('voice', { enum: SIGNAL_VOICES }),
+  /** When this source's data must be deleted (YouTube: 30 days after fetch); null = never. */
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  /** How the text was obtained. */
+  via: fetchVia('via').notNull().default('direct'),
+  /** The archive snapshot time when via = 'archive'. */
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }),
 }, (t) => [
   uniqueIndex('knowledge_sources_item_url_uq').on(t.itemId, t.url),
   index('knowledge_sources_source_type_idx').on(t.sourceType),
   index('knowledge_sources_domain_idx').on(t.domain),
 ]);
+
+/** One row per page fetch attempt (registrable domain only, never the URL). Pruned after 90 days by maintenance. */
+export const pageFetches = pgTable('page_fetches', {
+  id: id(),
+  urlDomain: text('url_domain').notNull(),
+  outcome: fetchOutcome('outcome').notNull(),
+  via: fetchVia('via').notNull().default('direct'),
+  status: integer('status'),
+  missionId: uuid('mission_id').references((): AnyPgColumn => researchMissions.id),
+  runId: uuid('run_id').references(() => runs.id),
+  at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index('page_fetches_at_idx').on(t.at), index('page_fetches_url_domain_idx').on(t.urlDomain)]);

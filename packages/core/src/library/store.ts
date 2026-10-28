@@ -209,12 +209,17 @@ export async function getLibraryItem(db: Db, id: string): Promise<(LibraryRow & 
   return { ...(row as LibraryRow & { facts: unknown }), sources };
 }
 
+/** Source types that count as social/community platforms in the coverage view. */
+export const SOCIAL_SOURCE_TYPES = ['youtube', 'hn', 'stackexchange', 'github', 'appstore', 'producthunt'] as const;
+
 export type LibraryCoverage = {
   byKind: Record<string, number>;
   bySourceType: Record<string, number>;
   byVoice: Record<string, number>;
   problemIndependentShare: number | null;
   verifiedQuoteShare: number | null;
+  /** Share of active entries' sources from social/community platforms (null when there are no sources). */
+  socialShare: number | null;
   countries: string[];
   industries: string[];
   newest: Date | null;
@@ -230,6 +235,11 @@ export async function libraryCoverage(db: Db): Promise<LibraryCoverage> {
   const byVoiceRows = await db.select({ k: knowledgeItems.voice, n: count() }).from(knowledgeItems).where(active).groupBy(knowledgeItems.voice);
   const bySourceRows = await db.select({ k: knowledgeSources.sourceType, n: sql<number>`count(distinct ${knowledgeSources.itemId})`.mapWith(Number) })
     .from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(active).groupBy(knowledgeSources.sourceType);
+
+  const [social] = await db.select({
+    total: count(),
+    social: sql<number>`count(*) filter (where ${inArray(knowledgeSources.sourceType, [...SOCIAL_SOURCE_TYPES])})`.mapWith(Number),
+  }).from(knowledgeSources).innerJoin(knowledgeItems, eq(knowledgeItems.id, knowledgeSources.itemId)).where(active);
 
   const [problems] = await db.select({
     total: count(),
@@ -256,6 +266,7 @@ export async function libraryCoverage(db: Db): Promise<LibraryCoverage> {
     byVoice: tally(byVoiceRows),
     problemIndependentShare: problems && Number(problems.total) > 0 ? problems.independent / Number(problems.total) : null,
     verifiedQuoteShare: quotes && Number(quotes.total) > 0 ? quotes.verified / Number(quotes.total) : null,
+    socialShare: social && Number(social.total) > 0 ? social.social / Number(social.total) : null,
     countries: countryRows.map((r) => r.v),
     industries: industryRows.map((r) => r.v),
     newest: span?.newest ?? null,

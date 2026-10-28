@@ -78,6 +78,13 @@
       "when": 1793141909370,
       "tag": "0010_generation_rebuild",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793168955388,
+      "tag": "0011_research_reach",
+      "breakpoints": true
     }
   ]
 }

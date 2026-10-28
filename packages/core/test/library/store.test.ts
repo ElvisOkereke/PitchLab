@@ -210,8 +210,19 @@ describe('libraryCoverage', () => {
     expect(c.newest).toBeInstanceOf(Date);
     expect(c.oldest).toBeInstanceOf(Date);
   });
+  it('socialShare is the share of active sources from social/community source types', async () => {
+    const db = await testDb();
+    await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/1', 'y.example', 'youtube') }), unit(0), {});
+    await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/2', 'y.example', 'producthunt') }), unit(1), {});
+    await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/3', 'y.example', 'web') }), unit(2), {});
+    await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/4', 'y.example', 'reddit') }), unit(3), {});
+    const gone = await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/5', 'y.example', 'hn') }), unit(4), {});
+    await rejectItem(db, gone.itemId);
+    expect((await libraryCoverage(db)).socialShare).toBe(0.5);
+  });
   it('is null-safe when empty', async () => {
     const c = await libraryCoverage(await testDb());
+    expect(c.socialShare).toBeNull();
     expect(c.problemIndependentShare).toBeNull();
     expect(c.verifiedQuoteShare).toBeNull();
     expect(c.newest).toBeNull();

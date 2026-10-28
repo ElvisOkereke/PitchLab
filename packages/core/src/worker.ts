@@ -7,6 +7,8 @@ import { researchMissions, runs, validationJobs } from './db/schema';
 import { RunConfigSchema } from './dashboard/runs';
 import type { WorkerStatus } from './dashboard/settings';
 import { spendSql } from './research/mission';
+import { runMaintenance } from './maintenance';
+import { getSetting, setSetting } from './validation/settings';
 import { errorMessage, scrubError } from './tools/scrub';
 
 // A minimal executor for runs queued from the dashboard. No leases: a worker killed mid-run leaves the run `running`
@@ -98,6 +100,23 @@ export type WorkerOptions = {
 };
 
 const ERROR_MAX = 1000;
+export const MAINTENANCE_KEY = 'maintenance.lastRun';
+const MAINTENANCE_EVERY_MS = 24 * 3_600_000;
+
+/** Runs maintenance when it has never run or the last run is 24 hours old; never throws. */
+async function maintainIfDue(db: Db, log: (m: string) => void): Promise<void> {
+  try {
+    const last = await getSetting(db, MAINTENANCE_KEY);
+    const lastMs = typeof last === 'string' ? Date.parse(last) : NaN;
+    if (Number.isFinite(lastMs) && Date.now() - lastMs < MAINTENANCE_EVERY_MS) return;
+    const m = await runMaintenance(db);
+    await setSetting(db, MAINTENANCE_KEY, new Date().toISOString());
+    const total = m.prunedFetches + m.expiredSources + m.deletedItems + m.redactedSignals + m.redactedClaims;
+    if (total > 0) log(`maintenance: ${total} old records cleaned up`);
+  } catch (err) {
+    log(`maintenance failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 const messageOf = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -141,6 +160,7 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
     }
   };
   while (!o.signal.aborted) {
+    await maintainIfDue(o.db, o.log);
     await beat();
     // D2-R3: a stop requested while the heartbeat was in flight must not start a run.
     if (o.signal.aborted) return;
