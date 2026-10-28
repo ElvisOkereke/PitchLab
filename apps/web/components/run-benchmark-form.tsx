@@ -5,12 +5,12 @@ import { runBenchmarkAction } from '@/actions/bench';
 import type { FormState } from '@/lib/form';
 
 /** The Run benchmark button. Takes no input; a refusal shows as an alert. The cost note comes from the server page. */
-export function RunBenchmarkForm({ costNote, runCount }: { costNote: string; runCount?: number }) {
+export function RunBenchmarkForm({ costNote, runCount }: { costNote: string; runCount: number }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(runBenchmarkAction, {});
   return (
     <form action={formAction} data-testid="run-benchmark">
       <p>
-        Queues {runCount ?? 'the'} runs, <span>{costNote}</span>. Nothing is queued until you press the button.
+        Queues {runCount} runs, <span>{costNote}</span>. Nothing is queued until you press the button.
       </p>
       {state.error ? (
         <p className="error" role="alert">

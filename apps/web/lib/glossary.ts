@@ -87,7 +87,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   businessModel: {
     label: 'Business model',
-    text: 'The way an idea earns money, such as a subscription, a one-off sale, a fee per transaction, ads or affiliate links. Ideas are written with one of these models, and an idea from before this existed reads as a subscription.',
+    text: 'The way an idea earns money, such as a subscription, a one-off sale, a fee per transaction, ads or affiliate links. Ideas are written with one of these models, and an idea from before this existed reads as a subscription (the scorecard leaves them out).',
   },
   valueMultiple: {
     label: 'Value multiple',

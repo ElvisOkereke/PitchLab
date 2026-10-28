@@ -19,7 +19,7 @@ const pass = (o: Partial<PassRow>): PassRow => ({
   id: 'p', version: 'bench-v1', label: 'bench-v1 #1', kind: 'pass', status: 'complete', runIds: [], metrics: card(),
   sourcePassId: null, createdAt: new Date('2026-10-20T12:00:00Z'), completedAt: new Date('2026-10-20T13:00:00Z'), ...o,
 });
-const base = { costNote: COST, running: null, scoreCases: null };
+const base = { costNote: COST, runCount: 5, running: null, scoreCases: null };
 
 describe('ProgressView', () => {
   it('shows a row per metric with its target, and the baseline-missing text', () => {

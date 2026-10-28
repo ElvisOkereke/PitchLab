@@ -386,7 +386,7 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   costs them, with the source of each figure. Ideas where the user pays nothing show a note instead. A multiple under
   1× gets the "value below price" flag and the case is kept for you to judge. The older return figure is still shown.
 - **Consumer lenses:** six lenses aim at individuals: earn on the side, save on a car or home, life stages, solo
-  creators, leapfrogging a market, and AI for chores. Tick them under **Lenses** when you start a run. Runs without
+  creators, leapfrogging a market, and an AI assistant or free-to-user attention product. Tick them under **Lenses** when you start a run. Runs without
   a lens pick at most 6 lenses and include at least 2 consumer ones when the seed allows.
 
 ## Track idea quality

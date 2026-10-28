@@ -43,7 +43,7 @@ export function ProgressView({
   running: RunningPass | null;
   scoreCases: ScoreCases | null;
   costNote: string;
-  runCount?: number;
+  runCount: number;
 }) {
   // The list is newest first and the oldest baseline is the canonical one (baseline-0), as in `gen bench report`.
   const baseline = passes.filter((p) => p.kind === 'baseline').at(-1) ?? null;
