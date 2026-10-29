@@ -94,23 +94,33 @@ const clip = (v: unknown, max: number) => (typeof v === 'string' && v.length > m
 
 /**
  * The number a model wrote as text: `"$1,200/yr"` → 1200, `"about 300"` → 300, `"2.5"` → 2.5. Only a leading number
- * (after an optional "about"-style word and currency) is read. Anything else is returned unchanged so it still fails
- * validation: no number (`"N/A"`), a minus sign, a malformed group (`"1,2"`) or a magnitude word (`"$15k"`, `"2 million"`)
- * that would misread the amount by orders of magnitude.
+ * (after an optional "about"-style word and currency) is read, and only when the text after it matches `restOk`.
+ * Anything else is returned unchanged so it still fails validation and drops with a reason: no number (`"N/A"`), a
+ * minus sign, a malformed or space-grouped number (`"1,2"`, `"2 000"`, `"1e5"`), a magnitude word (`"$15k"`,
+ * `"2 million"`) or a remainder the field does not allow (a per-month amount where a yearly one is asked for).
  */
-function leadingNumber(v: unknown): unknown {
+function leadingNumber(v: unknown, restOk: RegExp): unknown {
   if (typeof v !== 'string') return v;
   const m = /^\s*(?:(?:about|around|approximately|approx\.?|roughly|~)\s*)?(?:USD|CAD|EUR|GBP|AUD)?\s*(?:US|CA|C|A)?[$€£]?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(.*)$/i.exec(v);
   if (!m) return v;
-  const rest = m[3]!.trimStart();
-  if (/^[\d.,]/.test(m[3]!) || /^(?:k|m|mm|bn|b|thousand|million|billion)\b/i.test(rest)) return v;
+  const rest = m[3]!.trim();
+  if (/^[\d.,]|^e\d/i.test(rest) || /^(?:k|m|mm|bn|b|thousand|million|billion)\b/i.test(rest) || !restOk.test(rest)) return v;
   const n = Number(m[1]!.replace(/,/g, '') + (m[2] ?? ''));
   return Number.isFinite(n) ? n : v;
 }
+const CURRENCY = String.raw`(?:USD|CAD|EUR|GBP|AUD|[$€£])`;
+/** After a yearly value: nothing, a currency, a year marker (`/yr`, `per year`, `a year`, `annually`, `yearly`). */
+const YEARLY_REST = new RegExp(
+  String.raw`^(?:${CURRENCY}\s*)?(?:\/\s*(?:yr|year|annum)|(?:per|a|an|each|every)\s+(?:year|annum)|annually|yearly)?\.?$`, 'i',
+);
+/** After a price amount: nothing or a currency (its period lives in `priceHint.unit`). */
+const CURRENCY_REST = new RegExp(String.raw`^${CURRENCY}?\.?$`, 'i');
+/** After a barrier score: anything that is not a number or magnitude (`"4/5"`, `"3 - moderate"`). */
+const SCORE_REST = /^/;
 
 /** A 1–5 barrier score: a number (or number text) rounded and clamped; anything else unchanged. */
 function score(v: unknown): unknown {
-  const n = leadingNumber(v);
+  const n = leadingNumber(v, SCORE_REST);
   return typeof n === 'number' && Number.isFinite(n) ? Math.min(5, Math.max(1, Math.round(n))) : n;
 }
 
@@ -136,9 +146,10 @@ function enumValue(v: unknown, allowed: readonly string[]): unknown {
 /**
  * Before validation, conservative repairs so an easy slip never drops a whole idea:
  * - over-long text is cut to its limit (v8 text fields, `functionalGap` 600, each incumbent 120, the first 8 incumbents);
- * - number text becomes a number for the value, the price and the barrier scores; scores are rounded and clamped to 1–5;
- * - enum values are trimmed, lower-cased and matched through a short synonym list; an unknown mechanism (only a label)
- *   becomes `other`;
+ * - number text becomes a number for the value (bare, currency or a year marker only), the price (bare or currency
+ *   only) and the barrier scores; scores are rounded and clamped to 1–5;
+ * - enum values are trimmed, lower-cased and matched through a short synonym list; a mechanism that is not on the list
+ *   (only a label; unknown, missing or not text) becomes `other`;
  * - cited library ids are unwrapped, filtered to well-formed uuids and capped at 10.
  * Still strict: an unknown business model, audience or value kind is left as is and drops the idea (no relabelling).
  */
@@ -152,21 +163,20 @@ export function normalizeIdea(raw: unknown): unknown {
   if (Array.isArray(idea.knownIncumbents)) idea.knownIncumbents = idea.knownIncumbents.slice(0, 8).map((s) => clip(s, 120));
   set(idea, 'audience', (v) => enumValue(v, AUDIENCES));
   set(idea, 'businessModel', (v) => enumValue(v, BUSINESS_MODELS));
-  set(idea, 'mechanism', (v) => {
-    const m = enumValue(v, IDEA_MECHANISMS);
-    return typeof m === 'string' && !(IDEA_MECHANISMS as readonly string[]).includes(m) ? 'other' : m;
-  });
+  // The mechanism is only a label: anything not on the list (unknown, missing, null, not text) becomes `other`.
+  const mechanism = enumValue(idea.mechanism, IDEA_MECHANISMS);
+  idea.mechanism = typeof mechanism === 'string' && (IDEA_MECHANISMS as readonly string[]).includes(mechanism) ? mechanism : 'other';
   const value = asRecord(idea.valueToUser);
   if (value) {
     cut(value, 'basis', 400); cut(value, 'source', 300);
     set(value, 'kind', (v) => enumValue(v, VALUE_KINDS));
-    set(value, 'amountPerYear', leadingNumber);
+    set(value, 'amountPerYear', (v) => leadingNumber(v, YEARLY_REST));
     idea.valueToUser = value;
   }
   const price = asRecord(idea.priceHint);
   if (price) {
     cut(price, 'unit', 60); cut(price, 'basis', 300); cut(price, 'source', 300);
-    set(price, 'amount', leadingNumber);
+    set(price, 'amount', (v) => leadingNumber(v, CURRENCY_REST));
     idea.priceHint = price;
   }
   const barriers = asRecord(idea.barriers);

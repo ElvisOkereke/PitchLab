@@ -861,11 +861,46 @@ describe('normalizeIdea', () => {
   });
 
   it('leaves a string with no usable number unchanged, so it still fails validation', () => {
-    for (const s of ['N/A', 'unknown', '$15k', '2 million', '-5', '1,2']) {
+    for (const s of ['N/A', 'unknown', '$15k', '2 million', '-5', '1,2', '2 000', '1e5']) {
       expect(norm({ valueToUser: { kind: 'save', amountPerYear: s, basis: 'b' } }).valueToUser.amountPerYear).toBe(s);
     }
     expect(norm({ barriers: { toStart: 'easy', toStartWhy: 'w', toCopy: 3, toCopyWhy: 'w', soloBuildable: true } }).barriers.toStart)
       .toBe('easy');
+    for (const s of ['2 000', '1e5']) {
+      expect(norm({ barriers: { toStart: s, toStartWhy: 'w', toCopy: 3, toCopyWhy: 'w', soloBuildable: true } }).barriers.toStart).toBe(s);
+    }
+  });
+
+  it('a yearly value accepts only a bare amount, a currency or a year marker; any other period is refused', () => {
+    const amount = (s: string) => norm({ valueToUser: { kind: 'save', amountPerYear: s, basis: 'b' } }).valueToUser.amountPerYear;
+    for (const s of ['$1,200/yr', '1200 per year', 'USD 1200', '1,200 a year', '$1200 annually', '1200 USD yearly', '1200/year']) {
+      expect(amount(s)).toBe(1200);
+    }
+    for (const s of ['$15/mo', '$100 per month', '12 months', '$5 a week', '300 per user']) expect(amount(s)).toBe(s);
+  });
+
+  it('a price amount accepts only a bare amount or a currency (its period lives in the unit)', () => {
+    const amount = (s: string) => norm({ priceHint: { amount: s, unit: 'month', basis: 'b' } }).priceHint.amount;
+    expect(amount('$15')).toBe(15);
+    expect(amount('15 USD')).toBe(15);
+    for (const s of ['$15/mo', '$180 per year', '15 a month']) expect(amount(s)).toBe(s);
+  });
+
+  it('ideate drops a per-month yearly value with the amount reason instead of storing a 12× understatement', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const monthly = named('M', 1, { valueToUser: { kind: 'save', amountPerYear: '$15/mo', basis: 'Assumption: b' } });
+    const t = await setup(config, { structured: { ideate: [monthly, { ideas: [] }] } });
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.ideaIds).toHaveLength(0);
+    expect(out.dropReasons).toEqual({ 'valueToUser.amountPerYear:invalid_type': 1 });
+  });
+
+  it('a missing, null or non-text mechanism becomes `other` too', () => {
+    const { mechanism: _drop, ...noMechanism } = idea();
+    expect((normalizeIdea(noMechanism) as Record<string, unknown>).mechanism).toBe('other');
+    expect(norm({ mechanism: null }).mechanism).toBe('other');
+    expect(norm({ mechanism: 7 }).mechanism).toBe('other');
   });
 
   it('trims and lower-cases enum values with a short synonym list; an unknown mechanism becomes `other`', () => {
