@@ -2,7 +2,7 @@ import { and, desc, eq, gte, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
 import { dataCalls, llmCalls, researchMissions, type runStatus } from '../db/schema';
-import { SLICE_A_KINDS } from '../library/kinds';
+import { KNOWLEDGE_KINDS } from '../library/kinds';
 import { libraryCoverage } from '../library/store';
 import { BACKGROUND_TOPICS, GAP_COUNTRIES, GAP_INDUSTRIES } from '../research/topics';
 import { getSetting, setSetting } from '../validation/settings';
@@ -14,7 +14,7 @@ type RunStatus = (typeof runStatus.enumValues)[number];
 
 export const MissionInputSchema = z.object({
   topic: z.string().trim().min(3).max(200),
-  kinds: z.array(z.enum(SLICE_A_KINDS)).min(1).max(3).default(['problem', 'pricing', 'startup']),
+  kinds: z.array(z.enum(KNOWLEDGE_KINDS)).min(1).max(6).default(['problem', 'pricing', 'startup']),
   countries: z.array(z.string().regex(/^([A-Z]{2}|global)$/)).max(10).default([]),
   audience: z.enum(['business', 'consumer', 'both']).optional(),
   budgetUsd: z.number().min(0.5).max(25).default(2),

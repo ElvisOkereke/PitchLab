@@ -9,7 +9,21 @@ export type LibraryItemDetail = LibraryRow & { facts: unknown; sources: SourceRo
 /** "frequencyOrCost" as "frequency or cost". */
 const humanize = (k: string) => k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase();
 
-function factValue(v: unknown): string {
+/** Facts that are lists of small records, shown one line each (all text). */
+const LINE_FORMATS: Record<string, (r: Record<string, unknown>) => string> = {
+  evidence: (r) => `${r.metric}: ${r.value} (${r.period})`,
+  sizeClues: (r) => `${r.metric}: ${r.value} ${r.unit} (${r.year})`,
+  growthClues: (r) => `${r.metric}: ${r.change} (${r.period})`,
+};
+const NEW_KIND_DATES = new Set(['effectiveDate', 'publishedDate']);
+
+function factValue(v: unknown, key = ''): string {
+  const line = LINE_FORMATS[key];
+  if (line && Array.isArray(v)) {
+    const lines = v.filter((r): r is Record<string, unknown> => !!r && typeof r === 'object').map((r) => line(r));
+    return lines.length > 0 ? lines.join('\n') : 'none';
+  }
+  if (v === null && NEW_KIND_DATES.has(key)) return 'not stated';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
   return JSON.stringify(v);
@@ -53,7 +67,7 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
             {facts.map(([k, v]) => (
               <div key={k}>
                 <dt>{humanize(k)}</dt>
-                <dd className="pre">{factValue(v)}</dd>
+                <dd className="pre">{factValue(v, k)}</dd>
               </div>
             ))}
           </dl>

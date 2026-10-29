@@ -158,6 +158,28 @@ describe('LibraryView entry detail', () => {
     expect(lis[3]).not.toMatch(/archived|local browser|expires/);
   });
 
+  it('renders trend, rule change and market facts as readable text', () => {
+    const at = (kind: LibraryRow['kind'], facts: unknown) => {
+      const r = render(<LibraryView {...props({ item: { ...item, kind, facts }, query: { q: '', status: 'active', page: 1, item: ID } })} />);
+      const text = r.getByTestId('library-detail').textContent!;
+      const html = r.getByTestId('library-detail').innerHTML;
+      cleanup();
+      return { text, html };
+    };
+    const t = at('trend', { topic: 'pickleball', direction: 'rising', evidence: [{ metric: 'Wikipedia monthly views', value: '+42%', period: 'last 12 months' }, { metric: '<i>HN stories</i>', value: '120', period: '2025' }], window: '36 months', basis: 'measured' });
+    expect(t.text).toContain('Wikipedia monthly views: +42% (last 12 months)');
+    expect(t.text).toContain('<i>HN stories</i>: 120 (2025)');
+    expect(t.html).not.toContain('<i>HN');
+    expect(t.text).not.toContain('{"metric"');
+    const r = at('rule_change', { title: 'Junk fee rule', change: 'Bans hidden fees', whoIsAffected: 'Sellers', jurisdiction: 'US-federal', status: 'proposed', effectiveDate: '2027-01-01', publishedDate: null });
+    expect(r.text).toContain('proposed');
+    expect(r.text).toContain('2027-01-01');
+    expect(r.text).toContain('not stated');
+    const m = at('market', { segment: 'dog walking', geography: 'CA', sizeClues: [{ metric: 'revenue', value: '1.2', unit: 'billion USD', year: '2024' }], growthClues: [{ metric: 'visitors', change: '+5%', period: '2023-2024' }] });
+    expect(m.text).toContain('revenue: 1.2 billion USD (2024)');
+    expect(m.text).toContain('visitors: +5% (2023-2024)');
+  });
+
   it('a rejected entry offers Restore instead', () => {
     const { getByTestId } = render(<LibraryView {...props({ item: { ...item, status: 'rejected' }, query: { q: '', status: 'all', page: 1, item: ID } })} />);
     const d = within(getByTestId('library-detail'));
@@ -247,7 +269,10 @@ describe('LibraryView missions', () => {
   it('the form has topic, one checkbox per kind, countries, audience and budget', () => {
     const { getByTestId } = render(<LibraryView {...props()} />);
     const f = getByTestId('mission-form');
-    expect([...f.querySelectorAll('input[name="kinds"]')].map((i) => (i as HTMLInputElement).value)).toEqual(['problem', 'startup', 'pricing']);
+    const boxes = [...f.querySelectorAll<HTMLInputElement>('input[name="kinds"]')];
+    expect(boxes.map((i) => i.value)).toEqual(['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market']);
+    expect(boxes.map((i) => i.checked)).toEqual([true, true, true, false, false, false]);
+    expect([...f.querySelectorAll('.choice label')].map((l) => l.textContent)).toEqual(['Problems', 'Startups', 'Pricing', "What's growing or shrinking", 'A rule or platform change', 'Market size clues']);
     for (const n of ['topic', 'countries', 'audience', 'budgetUsd']) expect(f.querySelector(`[name="${n}"]`), n).toBeTruthy();
     const b = f.querySelector<HTMLInputElement>('[name="budgetUsd"]')!;
     expect([b.min, b.max, b.value]).toEqual(['0.5', '25', '2']);

@@ -161,8 +161,13 @@ describe('gen research', () => {
     expect(h.research).toHaveBeenCalledWith('freight brokers', { countries: ['CA', 'US', 'global'] });
   });
 
+  it('accepts all six kinds', async () => {
+    const h = await parse(['research', 'x topic', '--kinds', 'problem,startup,pricing,trend,rule_change,market']);
+    expect(h.research).toHaveBeenCalledWith('x topic', { kinds: ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market'] });
+  });
+
   it('rejects bad kinds, audience, countries and budget', async () => {
-    await expect(parse(['research', 'x topic', '--kinds', 'trend'])).rejects.toThrow(/kinds/);
+    await expect(parse(['research', 'x topic', '--kinds', 'gossip'])).rejects.toThrow(/kinds/);
     await expect(parse(['research', 'x topic', '--audience', 'everyone'])).rejects.toThrow();
     await expect(parse(['research', 'x topic', '--countries', 'canada'])).rejects.toThrow(/countries/);
     await expect(parse(['research', 'x topic', '--budget', '0.1'])).rejects.toThrow(/budget/);

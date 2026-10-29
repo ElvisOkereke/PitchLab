@@ -13,7 +13,7 @@ import { formToObject, pickValues, type FormState } from '@/lib/form';
 const WAITING = '3 research missions are already waiting. Wait for the worker.';
 const FIELD_MESSAGE: Record<string, string> = {
   topic: 'Topic must be 3 to 200 characters.',
-  kinds: 'Pick 1 to 3 kinds.',
+  kinds: 'Pick 1 to 6 kinds.',
   countries: 'Countries must be two-letter codes or global, up to 10, separated by commas.',
   audience: 'Audience must be business, consumer or both.',
   budgetUsd: 'Budget must be a number from 0.5 to 25.',
@@ -31,7 +31,7 @@ function decimal(v: unknown): unknown {
   return typeof v === 'string' && /^\d{1,6}(\.\d{1,4})?$/.test(v) ? Number(v) : v;
 }
 
-/** Queues a research mission for `npm run worker` (topic, 1 to 3 kinds, countries, audience, budget). */
+/** Queues a research mission for `npm run worker` (topic, 1 to 6 kinds, countries, audience, budget). */
 export async function queueMissionAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
   const raw = formToObject(fd, ['kinds']);

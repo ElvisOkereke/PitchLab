@@ -1,5 +1,5 @@
 import { Argument, Command, Option } from 'commander';
-import { SLICE_A_KINDS } from './library/kinds';
+import { KNOWLEDGE_KINDS } from './library/kinds';
 import type { RunConfig } from './pipeline/types';
 import { pilotSiteDomain } from './validation/prospects';
 
@@ -77,9 +77,9 @@ export type ResearchCliOpts = { kinds?: string[]; countries?: string[]; audience
 
 function kindsArg(v: string): string[] {
   const kinds = v.split(',').map((s) => s.trim()).filter(Boolean);
-  const bad = kinds.filter((k) => !(SLICE_A_KINDS as readonly string[]).includes(k));
-  if (kinds.length === 0 || kinds.length > 3 || bad.length > 0) {
-    throw new CliError(`--kinds takes up to 3 of ${SLICE_A_KINDS.join(', ')} (comma-separated), got: ${v}`, 2);
+  const bad = kinds.filter((k) => !(KNOWLEDGE_KINDS as readonly string[]).includes(k));
+  if (kinds.length === 0 || kinds.length > 6 || bad.length > 0) {
+    throw new CliError(`--kinds takes up to 6 of ${KNOWLEDGE_KINDS.join(', ')} (comma-separated), got: ${v}`, 2);
   }
   return kinds;
 }
@@ -175,7 +175,7 @@ export function buildProgram(h: CliHandlers): Command {
   program.command('research')
     .description('Queue a research mission that adds to the library (start `gen worker` to run it); "gen research status" lists recent missions')
     .argument('<topic>', 'what to research, or "status"')
-    .option('--kinds <list>', `comma-separated: ${SLICE_A_KINDS.join(', ')} (default problem,pricing,startup)`, kindsArg)
+    .option('--kinds <list>', `comma-separated: ${KNOWLEDGE_KINDS.join(', ')} (default problem,pricing,startup)`, kindsArg)
     .option('--countries <list>', 'comma-separated two-letter codes, e.g. CA,US (or global)', countriesArg)
     .addOption(new Option('--audience <who>', 'who the topic is about').choices(['business', 'consumer', 'both']))
     .option('--budget <usd>', 'most to spend, 0.5 to 25 (default 2)', budgetArg)

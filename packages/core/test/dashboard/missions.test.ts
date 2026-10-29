@@ -36,7 +36,10 @@ describe('MissionInputSchema', () => {
     expect(MissionInputSchema.safeParse({ topic: 'freight', budgetUsd: 25 }).success).toBe(true);
     expect(MissionInputSchema.safeParse({ topic: 'ab' }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'x'.repeat(201) }).success).toBe(false);
-    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['trend'] }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['trend'] }).success).toBe(true);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market'] }).success).toBe(true);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market', 'market'] }).success).toBe(false);
+    expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: ['gossip'] }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'freight', kinds: [] }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'freight', countries: ['ca'] }).success).toBe(false);
     expect(MissionInputSchema.safeParse({ topic: 'freight', countries: ['CA', 'global'] }).success).toBe(true);

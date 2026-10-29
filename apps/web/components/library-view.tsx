@@ -1,4 +1,5 @@
 import type { MissionView, ResearchSettings } from '@bcg/core/dashboard/missions';
+import { KIND_LABELS } from '@bcg/core/library/kinds';
 import type { LibraryCoverage, LibraryRow } from '@bcg/core/library/store';
 import type { FetchStats } from '@bcg/core/research/fetch-log';
 import Link from 'next/link';
@@ -62,7 +63,7 @@ function Filters({ query, coverage }: { query: LibraryQuery; coverage: LibraryCo
         <label htmlFor="lib-q">Search</label>
         <input id="lib-q" type="search" name="q" maxLength={100} defaultValue={query.q} placeholder="words in the title or summary" />
       </div>
-      <Select id="lib-kind" name="kind" label="Kind" value={query.kind ?? ''} options={[any('Any kind'), ...LIBRARY_KINDS.map((k) => ({ value: k, label: k.replace('_', ' ') }))]} />
+      <Select id="lib-kind" name="kind" label="Kind" value={query.kind ?? ''} options={[any('Any kind'), ...LIBRARY_KINDS.map((k) => ({ value: k, label: KIND_LABELS[k] }))]} />
       <Select id="lib-audience" name="audience" label="Audience" value={query.audience ?? ''} options={[any('Any audience'), ...LIBRARY_AUDIENCES.map((a) => ({ value: a, label: a }))]} />
       <Select id="lib-country" name="country" label="Country" value={query.country ?? ''} options={[any('Any country'), ...countries.map((c) => ({ value: c, label: c }))]} />
       <Select id="lib-voice" name="voice" label="Voice" value={query.voice ?? ''} options={[any('Any voice'), ...LIBRARY_VOICES.map((v) => ({ value: v, label: v }))]} />

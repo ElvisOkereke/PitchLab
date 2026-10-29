@@ -1,24 +1,22 @@
 'use client';
 
+import { KIND_LABELS, KNOWLEDGE_KINDS } from '@bcg/core/library/kinds';
 import { useActionState } from 'react';
 import { queueMissionAction } from '@/actions/library';
 import type { FormState } from '@/lib/form';
 import { usd } from '@/lib/time';
 import { useFormFields } from '@/lib/use-form-fields';
 
-// Plain copies of core's mission limits and kinds (MissionInputSchema, SLICE_A_KINDS): core's missions module pulls in
-// drizzle, which must stay out of client bundles. The server re-checks every value.
-const KINDS = [
-  { value: 'problem', label: 'Problems' },
-  { value: 'startup', label: 'Startups' },
-  { value: 'pricing', label: 'Pricing' },
-] as const;
+// Plain copies of core's mission limits (MissionInputSchema): core's missions module pulls in drizzle, which must stay
+// out of client bundles. The kind list and labels come from core's web-safe kinds module. The server re-checks every value.
+const KINDS = KNOWLEDGE_KINDS.map((value) => ({ value, label: KIND_LABELS[value] }));
+const DEFAULT_KINDS: string[] = ['problem', 'startup', 'pricing'];
 const BUDGET = { min: 0.5, max: 25, step: 0.5, initial: '2' } as const;
 
 /** Start a research mission. A refused mission keeps everything typed (useFormFields). */
 export function MissionForm({ typicalCost }: { typicalCost: number | null }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(queueMissionAction, {});
-  const f = useFormFields({ topic: '', kinds: KINDS.map((k) => k.value), countries: '', audience: '', budgetUsd: BUDGET.initial }, state);
+  const f = useFormFields({ topic: '', kinds: DEFAULT_KINDS, countries: '', audience: '', budgetUsd: BUDGET.initial }, state);
   const budget = Number(f.text('budgetUsd'));
   const shownBudget = Number.isFinite(budget) && budget >= BUDGET.min && budget <= BUDGET.max ? budget : Number(BUDGET.initial);
   return (

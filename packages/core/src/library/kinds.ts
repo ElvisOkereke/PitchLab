@@ -33,7 +33,39 @@ export const FactsSchemas = {
     buyer: z.string(),
     complaints: z.array(z.string()),
   }),
+  trend: z.object({
+    topic: z.string(),
+    direction: z.enum(['rising', 'falling', 'steady']),
+    evidence: z.array(z.object({ metric: z.string(), value: z.string(), period: z.string() })).min(1).max(6),
+    window: z.string(),
+    basis: z.enum(['measured', 'reported']),
+  }),
+  rule_change: z.object({
+    title: z.string(),
+    change: z.string(),
+    whoIsAffected: z.string(),
+    jurisdiction: z.string(),
+    status: z.enum(['final', 'proposed', 'announced']),
+    effectiveDate: z.iso.date().nullable(),
+    publishedDate: z.iso.date().nullable(),
+  }),
+  market: z.object({
+    segment: z.string(),
+    geography: z.string(),
+    sizeClues: z.array(z.object({ metric: z.string(), value: z.string(), unit: z.string(), year: z.string() })).min(1).max(8),
+    growthClues: z.array(z.object({ metric: z.string(), change: z.string(), period: z.string() })).max(6),
+  }),
 } as const;
+
+/** Plain labels for the web (forms and filters). */
+export const KIND_LABELS: Record<KnowledgeKind, string> = {
+  problem: 'Problems',
+  startup: 'Startups',
+  pricing: 'Pricing',
+  trend: "What's growing or shrinking",
+  rule_change: 'A rule or platform change',
+  market: 'Market size clues',
+};
 
 export type KnowledgeDraft = {
   kind: KnowledgeKind;
