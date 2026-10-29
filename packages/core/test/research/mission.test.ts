@@ -3,7 +3,8 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, pageFetches, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
-import { buildCollectors, COLLECT_SHARE, maxQueriesFor, runMission, withStartupQueries, type PlannedQuery, type Collectors, type MissionDeps } from '../../src/research/mission';
+import { buildCollectors, COLLECT_SHARE, filterStaleRules, maxQueriesFor, runMission, withStartupQueries, type PlannedQuery, type Collectors, type CollectorCtx, type MissionDeps } from '../../src/research/mission';
+import type { KnowledgeDraft } from '../../src/library/kinds';
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
@@ -718,9 +719,9 @@ describe('runMission', () => {
 describe('buildCollectors', () => {
   it('never wires Reddit; wires Product Hunt only with its token', () => {
     const c = buildCollectors({ stackexchangeKey: 'k', githubToken: 't' });
-    expect(Object.keys(c).sort()).toEqual(['appReviews', 'github', 'hn', 'stackexchange', 'yc']);
+    expect(Object.keys(c).sort()).toEqual(['appReviews', 'federalRegister', 'github', 'hn', 'hnTrend', 'stackexchange', 'wikiTrend', 'worldBank', 'yc']);
     const k = buildCollectors({ productHuntToken: 'tok' });
-    expect(Object.keys(k).sort()).toEqual(['appReviews', 'github', 'hn', 'productHunt', 'stackexchange', 'yc']);
+    expect(Object.keys(k).sort()).toEqual(['appReviews', 'federalRegister', 'github', 'hn', 'hnTrend', 'productHunt', 'stackexchange', 'wikiTrend', 'worldBank', 'yc']);
     expect(k).not.toHaveProperty('reddit');
   });
 
@@ -1014,5 +1015,365 @@ describe('runMission startup reservation', () => {
     const yc = async () => { ycCalls++; return []; };
     expect(await runMission({ ...deps, router, collectors: { yc } }, id)).toBe('succeeded');
     expect(ycCalls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---- Slice B: trends, rule changes and markets ---------------------------------------------------------
+
+const NOW = new Date('2026-10-29T12:00:00Z');
+
+function trendDraft(topic: string, url: string, sourceType = 'wikipedia'): KnowledgeDraft {
+  return {
+    kind: 'trend', title: `Interest in ${topic}`, summary: `Views of ${topic} rose 30% (last 12 months vs the 12 before)`, audience: 'both',
+    countries: [], industries: [], voice: 'neutral',
+    facts: { topic, direction: 'rising', evidence: [{ metric: 'views', value: '1300', period: 'last 12 months' }], window: 'last 36 full months', basis: 'measured' },
+    source: { url, domain: new URL(url).hostname, sourceType, quoteVerified: false },
+  };
+}
+function marketDraft(iso: string): KnowledgeDraft {
+  return {
+    kind: 'market', title: `Market size clues for ${iso}`, summary: `World Bank figures for ${iso}: population 40,000,000 (2024)`, audience: 'both',
+    countries: [iso], industries: [], voice: 'neutral',
+    facts: { segment: `everyone in ${iso}`, geography: iso, sizeClues: [{ metric: 'Population', value: '40,000,000', unit: 'people', year: '2024' }], growthClues: [] },
+    source: { url: `https://data.worldbank.org/country/${iso}`, domain: 'data.worldbank.org', sourceType: 'worldbank', quoteVerified: false },
+  };
+}
+
+const FR_URL = 'https://www.federalregister.gov/documents/2026/05/01/2026-01234/overtime-pay';
+const FR_QUOTE = 'The Department raises the salary threshold for overtime exemption to $58,656 per year for all covered employers.';
+const frItem = (over: Partial<RawItem> = {}): RawItem => ({
+  source: 'federalregister', url: FR_URL, title: 'Overtime pay for salaried workers', text: `Overtime pay for salaried workers. ${FR_QUOTE}`,
+  publishedAt: new Date('2026-05-01'), hints: { effectiveDate: '2026-12-01', publishedDate: '2026-05-01', status: 'final' }, ...over,
+});
+function ruleEntry(s: { n: number; text: string }, facts: Record<string, unknown> = {}): Entry {
+  return {
+    source: s.n, kind: 'rule_change', title: `Overtime threshold rises ${s.n}`, summary: `Employers must pay overtime to more salaried staff (${s.n}).`,
+    quote: FR_QUOTE, audience: 'business', countries: ['US'], industries: ['employers'], voice: 'neutral',
+    facts: { title: 'Overtime threshold', change: 'The salary threshold rises', whoIsAffected: 'employers', jurisdiction: 'US-federal', status: 'final', effectiveDate: null, publishedDate: null, ...facts },
+  };
+}
+
+type Spies = { order: string[] };
+/** Slice A collectors that record every call in a shared order list. */
+function oldCollectors(spy: Spies): Collectors {
+  const sig = (id: string): SignalSource => ({
+    id,
+    async search(q) {
+      spy.order.push(`${id}:${q}`);
+      return [item(id, `https://${id}.example/${encodeURIComponent(q)}`, HN_TEXT)];
+    },
+  });
+  return {
+    hn: sig('hn'), stackexchange: sig('stackexchange'), github: sig('github'),
+    appReviews: async (q) => { spy.order.push(`appreviews:${q}`); return []; },
+    yc: async (q) => { spy.order.push(`yc:${q}`); return []; },
+  };
+}
+/** Slice B collectors: trend drafts per query, one market draft per country, FR items as given. */
+function newCollectors(spy: Spies, over: Partial<Collectors> = {}): Collectors {
+  return {
+    wikiTrend: async (q) => { spy.order.push(`wikipedia:${q}`); return trendDraft(q, `https://en.wikipedia.org/wiki/${encodeURIComponent(q)}`); },
+    hnTrend: async (q) => { spy.order.push(`hnTrend:${q}`); return trendDraft(`hn ${q}`, `https://hn.algolia.com/?type=story&query=${encodeURIComponent(q)}`, 'hn'); },
+    federalRegister: async (q) => { spy.order.push(`federalregister:${q}`); return []; },
+    worldBank: async (c) => { spy.order.push(`worldbank:${c}`); return marketDraft(c); },
+    ...over,
+  };
+}
+
+function sliceBDeps(db: Db, script: Script, collectors: Collectors, pages: Record<string, string> = {}) {
+  const router = mockRouter(db, script);
+  const deps: MissionDeps = { db, router, fetchPage: mockFetchPage(pages).fn, collectors, log: () => {}, now: () => NOW };
+  return { deps, router };
+}
+
+/** The source names offered in a plan prompt, in order. */
+const offered = (prompt: string) => {
+  const section = /use no other source\):\n([\s\S]*?)(?:\n\n|$)/.exec(prompt)?.[1] ?? '';
+  return [...section.matchAll(/^- `(\w+)`:/gm)].map((m) => m[1]!);
+};
+
+describe('runMission: trends, rule changes and markets', () => {
+  it('offers each new source only when its kind is selected (World Bank is never planned)', async () => {
+    const cases: [string[], string[]][] = [
+      [['trend'], ['web', 'hn', 'wikipedia']],
+      [['rule_change'], ['web', 'federalregister']],
+      [['market'], ['web']],
+      [['problem'], ['web', 'hn', 'stackexchange', 'github', 'appreviews']],
+      [['problem', 'trend', 'rule_change', 'market'], ['web', 'hn', 'stackexchange', 'github', 'appreviews', 'federalregister', 'wikipedia']],
+    ];
+    for (const [kinds, expected] of cases) {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds });
+      const spy: Spies = { order: [] };
+      const { deps, router } = sliceBDeps(db, { plan: { queries: [] } }, { ...oldCollectors(spy), ...newCollectors(spy) });
+      expect(await runMission(deps, id)).toBe('succeeded');
+      const prompt = router.calls[0]!.prompt;
+      expect(offered(prompt), kinds.join(',')).toEqual(expected);
+      expect(prompt).not.toMatch(/worldbank/i);
+      expect(router.calls[0]!.ctx.promptVersion).toBe('library-plan.v4');
+    }
+  });
+
+  it('does not offer a new source whose collector is not wired', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend', 'rule_change'] });
+    const { deps, router } = sliceBDeps(db, { plan: { queries: [] } }, {});
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(offered(router.calls[0]!.prompt)).toEqual(['web']);
+  });
+
+  it('a Slice A mission plans and collects exactly as before when the new collectors are wired', async () => {
+    const plan = {
+      queries: [
+        { source: 'hn', q: 'invoice chasing' }, { source: 'web', q: 'crew scheduling pain' }, { source: 'wikipedia', q: 'Heat pump' },
+        { source: 'federalregister', q: 'overtime' }, { source: 'hn', q: 'quoting', purpose: 'trend' }, { source: 'appreviews', q: 'JobQuote' },
+        { source: 'stackexchange', q: 'crew app' }, { source: 'yc', q: 'trades' },
+      ],
+    };
+    const run = async (withNew: boolean, kinds: string[]) => {
+      const db = await testDb();
+      const id = await insertMission(db, { kinds, countries: ['CA', 'US'] });
+      const spy: Spies = { order: [] };
+      const collectors = { ...oldCollectors(spy), ...(withNew ? newCollectors(spy) : {}) };
+      const { deps, router } = sliceBDeps(db, { plan }, collectors);
+      expect(await runMission(deps, id)).toBe('succeeded');
+      const m = await mission(db, id);
+      return {
+        prompt: router.calls[0]!.prompt, order: spy.order, warnings: m.warnings, itemsAdded: m.itemsAdded,
+        research: router.calls.filter((c) => c.kind === 'research').map((c) => /<query>\n?([\s\S]*?)\n?<\/query>/.exec(c.prompt)?.[1]),
+      };
+    };
+    for (const kinds of [['problem', 'pricing', 'startup'], ['problem'], ['legacy-kind'], ['pricing', 'retired']]) {
+      const before = await run(false, kinds);
+      const after = await run(true, kinds);
+      expect(after, kinds.join(',')).toEqual(before);
+    }
+    const full = await run(true, ['problem', 'pricing', 'startup']);
+    expect(offered(full.prompt)).toEqual(['web', 'hn', 'stackexchange', 'github', 'appreviews', 'yc']);
+    // Free sources in plan order (the planner's trend purpose is ignored: hn is a plain search here), then the startup reservation.
+    expect(full.order.slice(0, 5)).toEqual(['hn:invoice chasing', 'hn:quoting', 'appreviews:JobQuote', 'stackexchange:crew app', 'yc:trades']);
+    expect(full.order.some((o) => /^(wikipedia|federalregister|worldbank|hnTrend):/.test(o))).toBe(false);
+    expect(full.warnings).toEqual(['plan: ignored 2 queries for unused sources']);
+  });
+
+  it('trend: Wikipedia and HN trend drafts are stored with no extraction call; hn serves both roles', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['problem', 'trend'], countries: ['CA'] });
+    const spy: Spies = { order: [] };
+    const plan = {
+      queries: [
+        { source: 'wikipedia', q: 'Heat pump' }, { source: 'hn', q: 'heat pumps', purpose: 'trend' }, { source: 'hn', q: 'invoice chasing' },
+        { source: 'hn', q: 'heat pumps' },
+      ],
+    };
+    const { deps, router } = sliceBDeps(db, { plan, extract: () => null }, { ...oldCollectors(spy), ...newCollectors(spy) });
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['wikipedia:Heat pump', 'hnTrend:heat pumps', 'hn:invoice chasing', 'hn:heat pumps']);
+    expect(offered(router.calls[0]!.prompt)).toContain('wikipedia');
+    expect(router.calls[0]!.prompt).toMatch(/purpose/);
+    const items = await db.select().from(knowledgeItems);
+    expect(items.filter((i) => i.kind === 'trend').map((i) => i.title).sort()).toEqual(['Interest in Heat pump', 'Interest in hn heat pumps']);
+    expect((await mission(db, id)).warnings).toEqual([]);
+  });
+
+  it('trend only: every hn query is a trend count (no plain HN search) and no extraction runs for structured drafts', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend'] });
+    const spy: Spies = { order: [] };
+    const plan = { queries: [{ source: 'hn', q: 'solar' }, { source: 'hn', q: 'heat pumps', purpose: 'trend' }, { source: 'federalregister', q: 'x' }] };
+    const { deps, router } = sliceBDeps(db, { plan }, { ...oldCollectors(spy), ...newCollectors(spy) });
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['hnTrend:solar', 'hnTrend:heat pumps']);
+    expect(router.calls.filter((c) => c.stage === 'library_extract')).toEqual([]);
+    expect(await db.select().from(knowledgeItems)).toHaveLength(2);
+    expect((await mission(db, id)).warnings).toEqual(['plan: ignored 1 query for unused sources']);
+  });
+
+  it('caps trend queries per source', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend'], budgetUsd: '5' });
+    const spy: Spies = { order: [] };
+    const plan = { queries: Array.from({ length: 9 }, (_, i) => ({ source: 'wikipedia', q: `topic ${i}` })) };
+    const { deps } = sliceBDeps(db, { plan }, newCollectors(spy));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toHaveLength(6);
+    expect((await mission(db, id)).warnings).toEqual(['plan: dropped 3 queries over a source limit']);
+  });
+
+  it('Federal Register items go through extraction and the hints fill dates the model left null', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const spy: Spies = { order: [] };
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const { deps, router } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s) }, newCollectors(spy, { federalRegister: async () => [frItem()] }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const extract = router.calls.filter((c) => c.stage === 'library_extract');
+    expect(extract).toHaveLength(1);
+    expect(extract[0]!.prompt).toContain(FR_QUOTE);
+    expect(extract[0]!.ctx.promptVersion).toBe('library-extract.v3');
+    const [it] = await db.select().from(knowledgeItems);
+    expect(it!.kind).toBe('rule_change');
+    expect(it!.quoteVerified).toBe(true);
+    expect(it!.facts).toMatchObject({ effectiveDate: '2026-12-01', publishedDate: '2026-05-01', jurisdiction: 'US-federal' });
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src!.sourceType).toBe('federalregister');
+  });
+
+  it('keeps a date the model gave; a malformed date is stored as null (no hint to fill it)', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const fr = async () => [frItem({ hints: { effectiveDate: '2026-12-01', publishedDate: null, status: 'final' } })];
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, { effectiveDate: '2027-01-15', publishedDate: '2026-02-30' }) }, newCollectors({ order: [] }, { federalRegister: fr }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    expect(it!.facts).toMatchObject({ effectiveDate: '2027-01-15', publishedDate: null });
+    expect((await mission(db, id)).warnings).toEqual([]);
+  });
+
+  it('drops stale rule changes before storage and counts them in the warnings', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const old = frItem({ url: `${FR_URL}-old`, publishedAt: new Date('2022-03-01'), hints: { effectiveDate: '2022-06-01', publishedDate: '2022-03-01', status: 'final' } });
+    const fr = async () => [frItem(), old];
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s) }, newCollectors({ order: [] }, { federalRegister: fr }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const items = await db.select().from(knowledgeItems);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.facts).toMatchObject({ publishedDate: '2026-05-01' });
+    const m = await mission(db, id);
+    expect(m.warnings).toEqual(['rule_change: 1 stale entry dropped (published over 3 years ago or in force over 2 years)']);
+    expect(m.status).toBe('succeeded');
+  });
+
+  it('World Bank runs once per non-global country when market is a kind, with no extraction', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['market'], countries: ['CA', 'US', 'global'] });
+    const spy: Spies = { order: [] };
+    const { deps, router } = sliceBDeps(db, { plan: { queries: [{ source: 'web', q: 'dental clinics market size' }, { source: 'web', q: 'clinic count statistics' }] } }, newCollectors(spy));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['worldbank:CA', 'worldbank:US']);
+    expect(router.calls.filter((c) => c.stage === 'library_extract')).toEqual([]);
+    const items = await db.select().from(knowledgeItems);
+    expect(items.map((i) => i.title).sort()).toEqual(['Market size clues for CA', 'Market size clues for US']);
+    expect(items.every((i) => i.kind === 'market')).toBe(true);
+  });
+
+  it('World Bank is not called without the market kind or for a global-only mission', async () => {
+    for (const over of [{ kinds: ['problem', 'trend'], countries: ['CA'] }, { kinds: ['market'], countries: ['global'] }, { kinds: ['market'], countries: [] as string[] }]) {
+      const db = await testDb();
+      const id = await insertMission(db, over);
+      const spy: Spies = { order: [] };
+      const { deps } = sliceBDeps(db, { plan: { queries: [] } }, newCollectors(spy));
+      expect(await runMission(deps, id)).toBe('succeeded');
+      expect(spy.order.filter((o) => o.startsWith('worldbank'))).toEqual([]);
+    }
+  });
+
+  it('a 429 from Wikipedia or World Bank stops that source with a warning, and the mission continues', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend', 'market'], countries: ['CA', 'US', 'GB'] });
+    const spy: Spies = { order: [] };
+    const collectors = newCollectors(spy, {
+      wikiTrend: async (q) => { spy.order.push(`wikipedia:${q}`); throw new SourceError('rate_limited', 'wikipedia'); },
+      worldBank: async (c) => { spy.order.push(`worldbank:${c}`); if (c === 'US') throw new SourceError('rate_limited', 'worldbank'); return marketDraft(c); },
+    });
+    const plan = { queries: [{ source: 'wikipedia', q: 'a' }, { source: 'wikipedia', q: 'b' }, { source: 'hn', q: 'c', purpose: 'trend' }, { source: 'wikipedia', q: 'd' }] };
+    const { deps } = sliceBDeps(db, { plan }, collectors);
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['wikipedia:a', 'hnTrend:c', 'worldbank:CA', 'worldbank:US']);
+    const m = await mission(db, id);
+    expect(m.warnings).toEqual(['wikipedia: rate limited, stopped for this mission', 'worldbank: rate limited, stopped for this mission']);
+    expect((await db.select().from(knowledgeItems)).map((i) => i.title).sort()).toEqual(['Interest in hn c', 'Market size clues for CA']);
+  });
+
+  it('collector messages become warnings (bounded per source); empty trend results are counted, never echoed one by one', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend', 'market'], countries: ['CA'] });
+    const spy: Spies = { order: [] };
+    let n = 0;
+    const collectors = newCollectors(spy, {
+      wikiTrend: async (q, ctx: CollectorCtx) => {
+        if (q === 'odd') for (let i = 1; i <= 5; i++) ctx.log(`wikipedia: odd response ${i}`);
+        n++;
+        return null;
+      },
+      hnTrend: async () => null,
+      worldBank: async (_c, ctx: CollectorCtx) => { ctx.log('worldbank: unexpected response for SP.POP.TOTL'); return null; },
+    });
+    const plan = { queries: [{ source: 'wikipedia', q: 'odd' }, { source: 'wikipedia', q: 'thin one' }, { source: 'wikipedia', q: 'thin two' }, { source: 'hn', q: 'quiet', purpose: 'trend' }] };
+    const { deps } = sliceBDeps(db, { plan }, collectors);
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(n).toBe(3);
+    expect((await mission(db, id)).warnings).toEqual([
+      'wikipedia: odd response 1', 'wikipedia: odd response 2', 'wikipedia: odd response 3',
+      'worldbank: unexpected response for SP.POP.TOTL',
+      'wikipedia: 2 topics had no usable article or too few views',
+      'hn trend: 1 topic had too few stories',
+    ]);
+  });
+
+  it('an extracted trend needs a verified quote containing its number; its basis is always reported', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend'], countries: ['CA'] });
+    const url = 'https://stats.example/heat-pumps';
+    const withNumber = 'Heat pump sales in Canada rose 34% in 2025, according to the national installers association.';
+    const noNumber = 'Everyone seems to want a heat pump these days and installers are busier than they have ever been.';
+    const trendEntry = (s: { n: number }, quote: string, value: string): Entry => ({
+      source: s.n, kind: 'trend', title: `Heat pumps ${value}`, summary: `Heat pump demand ${value}.`, quote, audience: 'consumer', countries: ['CA'],
+      industries: ['hvac'], voice: 'neutral',
+      facts: { topic: 'heat pumps', direction: 'rising', evidence: [{ metric: 'sales', value, period: '2025' }], window: '2024–2025', basis: 'measured' },
+    });
+    const { deps } = sliceBDeps(
+      db,
+      {
+        plan: { queries: [{ source: 'web', q: 'heat pump sales growth' }] },
+        research: [{ text: '', sources: [{ url }] }],
+        extract: (s) => [trendEntry(s, withNumber, '34%'), trendEntry(s, noNumber, 'up')],
+      },
+      {},
+      { [url]: `${withNumber} ${noNumber}` },
+    );
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const items = await db.select().from(knowledgeItems);
+    expect(items).toHaveLength(1);
+    expect(items[0]!.quoteVerified).toBe(true);
+    expect(items[0]!.facts).toMatchObject({ basis: 'reported', evidence: [{ value: '34%' }] });
+    expect((await mission(db, id)).warnings).toEqual(['extract: 1 invalid draft dropped']);
+  });
+});
+
+describe('filterStaleRules', () => {
+  const rule = (facts: { effectiveDate?: string | null; publishedDate?: string | null }, src: { sourceType?: string; publishedAt?: Date } = {}): KnowledgeDraft => ({
+    kind: 'rule_change', title: 't', summary: 's', audience: 'business', countries: ['US'], industries: [],
+    facts: { title: 't', change: 'c', whoIsAffected: 'w', jurisdiction: 'US-federal', status: 'final', effectiveDate: null, publishedDate: null, ...facts },
+    source: { url: 'https://x.example/r', domain: 'x.example', sourceType: src.sourceType ?? 'web', quoteVerified: true, publishedAt: src.publishedAt },
+  });
+
+  it('drops rules published over 3 years ago or in force over 2 years; keeps current and upcoming ones', () => {
+    const cases: [KnowledgeDraft, boolean][] = [
+      [rule({ publishedDate: '2023-10-28' }), false],
+      [rule({ publishedDate: '2023-10-30' }), true],
+      [rule({ effectiveDate: '2024-10-28', publishedDate: '2024-01-01' }), false],
+      [rule({ effectiveDate: '2024-10-30', publishedDate: '2024-01-01' }), true],
+      [rule({ effectiveDate: '2027-07-01' }), true],
+      [rule({ publishedDate: '2026-01-10' }), true],
+      [rule({}, { sourceType: 'federalregister' }), true],
+      [rule({}, { sourceType: 'web' }), false],
+      [rule({}, { publishedAt: new Date('2025-03-01') }), true],
+      [rule({}, { publishedAt: new Date('2022-03-01'), sourceType: 'federalregister' }), false],
+    ];
+    for (const [d, keep] of cases) {
+      const r = filterStaleRules([d], NOW);
+      expect(r.kept.length, JSON.stringify(d.facts) + JSON.stringify(d.source)).toBe(keep ? 1 : 0);
+      expect(r.dropped).toBe(keep ? 0 : 1);
+    }
+  });
+
+  it('leaves other kinds alone', () => {
+    const t = trendDraft('x', 'https://en.wikipedia.org/wiki/X');
+    const mk = marketDraft('CA');
+    expect(filterStaleRules([t, mk], NOW)).toEqual({ kept: [t, mk], dropped: 0 });
   });
 });

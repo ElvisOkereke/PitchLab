@@ -166,6 +166,28 @@ describe('maybeQueueBackgroundMission', () => {
     expect(new Set(gaps).size).toBe(3);
   });
 
+  it('list picks keep the Slice A kinds and rotate one new kind each (trend, rule change, market); gap picks stay Slice A', async () => {
+    await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
+    const kinds: string[][] = [];
+    for (let i = 0; i < 8; i++) {
+      expect(await maybeQueueBackgroundMission(db, now)).toBe('queued');
+      const [m] = await db.select().from(researchMissions).where(eq(researchMissions.status, 'queued'));
+      kinds.push(m!.kinds);
+      await finishAll();
+    }
+    // Picks 4 and 8 are gap topics; the other six are list topics 0..5.
+    expect(kinds).toEqual([
+      ['problem', 'pricing', 'startup', 'trend'],
+      ['problem', 'pricing', 'startup', 'rule_change'],
+      ['problem', 'pricing', 'startup', 'market'],
+      ['problem', 'pricing', 'startup'],
+      ['problem', 'pricing', 'startup', 'trend'],
+      ['problem', 'pricing', 'startup', 'rule_change'],
+      ['problem', 'pricing', 'startup', 'market'],
+      ['problem', 'pricing', 'startup'],
+    ]);
+  });
+
   it('40 list picks visit all 40 topics', async () => {
     await saveResearchSettings(db, { background: true, dailyCapUsd: 50 });
     const picked = await pickN(Math.ceil(40 / 3 * 4));

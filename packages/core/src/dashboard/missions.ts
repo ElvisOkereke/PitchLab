@@ -140,7 +140,9 @@ export async function backgroundSpendToday(db: Db, now: Date): Promise<number> {
 }
 
 
-const ALL_KINDS: MissionInput['kinds'] = ['problem', 'pricing', 'startup'];
+const ALL_KINDS: NonNullable<MissionInput['kinds']> = ['problem', 'pricing', 'startup'];
+/** List topics add one of these in turn, so background research also fills what is changing and market size. */
+export const BACKGROUND_ROTATING_KINDS = ['trend', 'rule_change', 'market'] as const;
 const countryGap = (c: string): MissionInput => ({
   topic: `problems and pricing for small businesses and households in ${c}`, countries: [c], kinds: ALL_KINDS, budgetUsd: BACKGROUND_BUDGET_USD,
 });
@@ -179,7 +181,8 @@ export const STALE_MISSION_MS = 2 * 60 * 60 * 1000;
  * double-queue.
  *
  * Counters: `research.pickCount` counts every background pick (every 4th is a gap topic); `research.topicIndex`
- * advances only when a list topic is used, so the rotation visits all of BACKGROUND_TOPICS.
+ * advances only when a list topic is used, so the rotation visits all of BACKGROUND_TOPICS. Each list topic also gets one
+ * of BACKGROUND_ROTATING_KINDS by the same index (40 topics, 3 kinds: every topic meets every kind over the cycles).
  */
 export async function maybeQueueBackgroundMission(db: Db, now: Date): Promise<'queued' | 'off' | 'cap_reached' | 'busy'> {
   return db.transaction(async (t) => {
@@ -203,7 +206,8 @@ export async function maybeQueueBackgroundMission(db: Db, now: Date): Promise<'q
     if ((pickNo + 1) % GAP_EVERY === 0) input = await nextGapTopic(tx, now, pickNo);
     if (!input) {
       const bt = BACKGROUND_TOPICS[topicIdx % BACKGROUND_TOPICS.length]!;
-      input = { topic: bt.topic, audience: bt.audience, countries: bt.countries, kinds: ALL_KINDS, budgetUsd: BACKGROUND_BUDGET_USD };
+      const extra = BACKGROUND_ROTATING_KINDS[topicIdx % BACKGROUND_ROTATING_KINDS.length]!;
+      input = { topic: bt.topic, audience: bt.audience, countries: bt.countries, kinds: [...ALL_KINDS, extra], budgetUsd: BACKGROUND_BUDGET_USD };
       usedList = true;
     }
     const result = await insertMission(tx, input, 'background');
