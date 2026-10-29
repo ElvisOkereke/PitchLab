@@ -48,7 +48,7 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'consumerShare', label: 'Consumer share', target: 'at least 30%' },
   { id: 'modelVariety', label: 'Business-model variety', target: 'at least 4 per run' },
   { id: 'realNeed', label: 'Real-need evidence', target: 'at least 50%' },
-  { id: 'demandEvidence', label: 'Demand evidence', target: 'at least 80%', phase: 2 },
+  { id: 'demandEvidence', label: 'Demand evidence', target: 'at least 80%' },
   { id: 'customerReturn', label: 'Customer return', target: '100%, median at least 3×' },
   { id: 'margin', label: 'Our margin', target: '100%' },
   { id: 'wastedEntrants', label: 'Wasted gate entrants', target: 'below 30% of entrants' },

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import type { CaseSections } from '../../src/case/schema';
-import { dataCalls, gateVerdicts, llmCalls, runs, scores, signals } from '../../src/db/schema';
+import { dataCalls, gateVerdicts, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
 import { METRIC_DEFS, type MetricId } from '../../src/bench/definitions';
 import { computeScorecard, type MetricResult, type Scorecard } from '../../src/bench/scorecard';
 import { ensureExample } from '../../src/example/example';
@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'costPerCase'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -310,13 +310,9 @@ describe('computeScorecard: exclusions and empty sets', () => {
         const m = metric(sc, def.id);
         expect(m.value).toBeNull();
         expect(m.meets).toBeNull();
-        if (def.phase) {
-          expect(m).toMatchObject({ status: 'not_measured', display: `not measured yet (Phase ${def.phase})` });
-        } else {
-          expect(MEASURED).toContain(def.id);
-          expect(m.status).toBe('no_data');
-          expect(m.note).toBeTruthy();
-        }
+        expect(MEASURED).toContain(def.id);
+        expect(m.status).toBe('no_data');
+        expect(m.note).toBeTruthy();
       }
       expect(metric(sc, 'ownerVerdict').display).toBe('no scores yet');
       expect(sc.extra).toMatchObject({ ideas: 0, cases: 0, scoredCases: 0, medianRoi: null, newVsHistory: null });
@@ -407,9 +403,46 @@ describe('computeScorecard: consumer, model and barrier metrics', () => {
     expect(metric(await computeScorecard(db, [r]), 'customerReturn')).toMatchObject({ status: 'no_data', value: null });
   });
 
-  it('demandEvidence stays not measured', async () => {
-    const db = await testDb();
-    const r = await newRun(db);
-    expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ status: 'not_measured', display: 'not measured yet (Phase 2)' });
+  describe('demandEvidence', () => {
+    let seq = 0;
+    const entry = async (db: Db, kind: 'trend' | 'rule_change' | 'market' | 'startup') => {
+      seq += 1;
+      const [row] = await db.insert(knowledgeItems).values({ kind, title: `k${seq}`, summary: 's', audience: 'business', countries: [], industries: [], facts: {}, contentHash: `ch-${kind}-${seq}` }).returning({ id: knowledgeItems.id });
+      return row!.id;
+    };
+    it('3 of 4 ideas citing a trend, rule change or market is 75%', async () => {
+      const db = await testDb();
+      const r = await newRun(db);
+      const trend = await entry(db, 'trend'), rule = await entry(db, 'rule_change'), market = await entry(db, 'market'), startup = await entry(db, 'startup');
+      await insertIdea(db, r, { libraryItemIds: [trend] });
+      await insertIdea(db, r, { libraryItemIds: [startup, rule] });
+      await insertIdea(db, r, { libraryItemIds: [market] });
+      await insertIdea(db, r, { libraryItemIds: [startup] });
+      await insertIdea(db, r, { libraryItemIds: [trend], origin: 'owner' }); // owner idea: not counted
+      const m = metric(await computeScorecard(db, [r]), 'demandEvidence');
+      expect(m).toMatchObject({ status: 'measured', value: 0.75, display: '75% (3 of 4)', meets: false });
+    });
+    it('is no_data when no idea has libraryItemIds (older ideas)', async () => {
+      const db = await testDb();
+      const r = await newRun(db);
+      await insertIdea(db, r);
+      await insertIdea(db, r);
+      expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ status: 'no_data', value: null });
+    });
+    it('an empty Slice B library counts ideas as not citing (0 of n), not no_data', async () => {
+      const db = await testDb();
+      const r = await newRun(db);
+      await insertIdea(db, r, { libraryItemIds: [] });
+      await insertIdea(db, r, { libraryItemIds: [] });
+      expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ status: 'measured', value: 0, display: '0% (0 of 2)', meets: false });
+    });
+    it('meets at 80% or more', async () => {
+      const db = await testDb();
+      const r = await newRun(db);
+      const trend = await entry(db, 'trend');
+      for (let i = 0; i < 4; i++) await insertIdea(db, r, { libraryItemIds: [trend] });
+      await insertIdea(db, r, { libraryItemIds: [] });
+      expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ value: 0.8, meets: true });
+    });
   });
 });

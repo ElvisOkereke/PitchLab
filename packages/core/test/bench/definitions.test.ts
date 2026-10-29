@@ -52,7 +52,7 @@ describe('bench definitions', () => {
     ]);
     expect(new Set(METRIC_DEFS.map((m) => m.id)).size).toBe(13);
     const phased = Object.fromEntries(METRIC_DEFS.filter((m) => m.phase).map((m) => [m.id, m.phase]));
-    expect(phased).toEqual({ demandEvidence: 2 });
+    expect(phased).toEqual({});
   });
 });
 

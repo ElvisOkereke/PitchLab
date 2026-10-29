@@ -28,8 +28,8 @@ export const MIN_MODELS = 4;
 /** Consumer segments an open seed (and the mix re-ask) shows next to the business sectors. */
 const SEGMENTS_PER_RUN = 5;
 const MAX_FOCUS_SECTORS = 8;
-/** Library context per lens: startups already selling, dead startups, pricing entries. */
-const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15 } as const;
+/** Library context per lens: startups already selling, dead startups, pricing entries, what is changing, market size. */
+const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15, changingMax: 10, marketsMax: 6 } as const;
 /** The one re-ask round (mix gap and count top-up) asks for at most this many ideas. */
 const REASK_MAX_IDEAS = 6;
 /** Each ideate call asks for at most this many ideas: long v8 ideas in bigger calls hit the output cap and were lost. */
@@ -412,14 +412,14 @@ function ground<T extends Grounded>(v: T, basisMax: number, known: Known, prefix
 }
 
 type LibraryBlocks = {
-  alreadySold: string; lessons: string; pricing: string;
+  alreadySold: string; lessons: string; pricing: string; changing: string; markets: string;
   ids: Set<string>;
   /** Lower-cased id, url and rendered url of each shown entry, to its id. */
   sources: Known;
   /** Rendered urls that were cut off (lower case), to the entry id. */
   prefixes: [string, string][];
 };
-const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [] });
+const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [], changing: [], markets: [] });
 
 /**
  * Words that name a way to be hard to copy (ideate.v9). A sanity check, not a judgement of quality: forgiving about word
@@ -562,7 +562,7 @@ export async function ideate(
       const [vector] = await router.embed([text], { runId: run.id, promptVersion: 'library-query.v1' });
       if (vector) {
         const ctx = await ideationContext(db, vector, { countries: market.countries, ...LIBRARY_LIMITS });
-        const shown = [...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing];
+        const shown = [...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing, ...ctx.changing, ...ctx.markets];
         const sources: Known = new Map();
         const prefixes: [string, string][] = [];
         for (const e of shown) {
@@ -623,6 +623,8 @@ export async function ideate(
             alreadySold: wrapUntrusted('already-sold', library.alreadySold),
             lessons: wrapUntrusted('lessons', library.lessons),
             pricing: wrapUntrusted('pricing', library.pricing),
+            changing: wrapUntrusted('changing', library.changing),
+            markets: wrapUntrusted('markets', library.markets),
             priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
             gateKilled,
             alreadyCovered,

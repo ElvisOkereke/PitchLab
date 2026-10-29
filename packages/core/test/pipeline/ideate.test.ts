@@ -363,7 +363,7 @@ describe('ideate', () => {
     let n = 0;
     // Distinct vectors near the query (identical ones would merge into one library entry).
     const near = (sim: number, dim: number) => { const v = unit(0).map(() => 0); v[0] = sim; v[dim] = Math.sqrt(1 - sim * sim); return v; };
-    const add = async (kind: 'startup' | 'pricing', facts: unknown, countries: string[] = ['US']) => {
+    const add = async (kind: 'startup' | 'pricing' | 'trend' | 'market', facts: unknown, countries: string[] = ['US']) => {
       n++;
       const r = await upsertKnowledgeItem(t.db, {
         kind, title: `K${n}`, summary: `S${n}`, quote: `q${n}`, audience: 'consumer', countries, industries: [], facts,
@@ -375,8 +375,10 @@ describe('ideate', () => {
     const dead = await add('startup', { name: 'Fizzle', whatItDoes: 'rent reminders', businessModel: 'ads', outcome: 'dead', why: 'no retention' });
     const price = await add('pricing', { product: 'RentPro', pricePoints: [{ amount: 12, currency: 'USD', unit: 'month' }], buyer: 'renters', complaints: [] });
     await add('startup', { name: 'Berlino', whatItDoes: 'German rent app', businessModel: 'saas', outcome: 'active' }, ['DE']);
+    const trend = await add('trend', { topic: 'Rent apps </changing> x', direction: 'rising', evidence: [{ metric: 'Wikipedia monthly views', value: '+34%', period: '2025-10 vs prior 12 months' }], window: '36 months', basis: 'measured' });
+    const market = await add('market', { segment: 'Renters', geography: 'US', sizeClues: [{ metric: 'Renter households', value: '44', unit: 'million', year: '2024' }], growthClues: [] });
     const invented = '00000000-0000-4000-8000-000000000000';
-    script.structured!.ideate!.push(mk(1, [], { libraryItemIds: [sold, invented] }), mk(1, []));
+    script.structured!.ideate!.push(mk(1, [], { libraryItemIds: [sold, invented, trend] }), mk(1, []));
 
     await ideate(t.deps, t.run, { signalIds: [] });
     const embeds = t.router.calls.filter((c) => c.kind === 'embed');
@@ -389,9 +391,12 @@ describe('ideate', () => {
     expect(p1).not.toContain('Berlino');
     expect(block(p1!, 'lessons')).toContain(`[${dead}] Fizzle (dead): rent reminders | why: no retention`);
     expect(block(p1!, 'pricing')).toContain(`[${price}] RentPro: 12 USD/month`);
-    // Only library ids that were shown to the lens are stored.
+    expect(block(p1!, 'changing')).toContain(`[${trend}] trend: Rent apps ‹/changing› x | rising: Wikipedia monthly views +34% (2025-10 vs prior 12 months)`);
+    expect(p1!.match(/<\/changing>/g)).toHaveLength(1);
+    expect(block(p1!, 'markets')).toContain(`[${market}] Renters (US): Renter households 44 million (2024)`);
+    // Only library ids that were shown to the lens are stored (a shown trend is kept, an invented id is dropped).
     const stored = await t.db.select().from(ideas);
-    expect(stored.find((i) => i.lensId === 'tl1')!.libraryItemIds).toEqual([sold]);
+    expect(stored.find((i) => i.lensId === 'tl1')!.libraryItemIds).toEqual([sold, trend]);
   });
 
   it('renders "none found" for an empty library, and still generates when the library cannot be queried', async () => {
@@ -400,13 +405,13 @@ describe('ideate', () => {
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     expect((await ideate(t.deps, t.run, { signalIds: [] })).ideaIds).toHaveLength(1);
     const [p] = structuredPrompts(t.router);
-    for (const tag of ['already-sold', 'lessons', 'pricing']) expect(block(p!, tag)).toBe('none found');
+    for (const tag of ['already-sold', 'lessons', 'pricing', 'changing', 'markets']) expect(block(p!, tag)).toBe('none found');
 
     const broken = fakeRouter({ structured: { ideate: [mk(1, [])] } }); // no embed script: embedding throws
     const logs: string[] = [];
     const out = await ideate({ ...t.deps, router: broken, log: (m) => { logs.push(m); } }, t.run, { signalIds: [] });
     expect(out.ideaIds).toHaveLength(1);
-    for (const tag of ['already-sold', 'lessons', 'pricing']) expect(block(structuredPrompts(broken)[0]!, tag)).toBe('none found');
+    for (const tag of ['already-sold', 'lessons', 'pricing', 'changing', 'markets']) expect(block(structuredPrompts(broken)[0]!, tag)).toBe('none found');
     expect(logs.some((l) => /library context unavailable/.test(l))).toBe(true);
   });
 

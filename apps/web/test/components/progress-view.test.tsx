@@ -62,6 +62,15 @@ describe('ProgressView', () => {
     expect(container.querySelector('section b')).toBeNull();
   });
 
+  it('renders demand evidence as a measured row, not "not measured yet"', () => {
+    const passes = [pass({ metrics: card({ demandEvidence: metric({ value: 0.75, display: '75% (3 of 4)', meets: false, status: 'measured' }) }) })];
+    const { container } = render(<ProgressView {...base} passes={passes} />);
+    const row = container.querySelector('tr[data-metric="demandEvidence"]')!;
+    expect(row.textContent).toContain('75% (3 of 4)');
+    expect(row.textContent).not.toContain('not measured yet');
+    expect(row.textContent).toContain('at least 80%');
+  });
+
   it('shows at most 5 passes after the baseline', () => {
     const passes = [pass({ id: 'b', kind: 'baseline', label: 'baseline-0' }),
       ...Array.from({ length: 7 }, (_, i) => pass({ id: `x${i}`, label: `bench-v1 #${7 - i}` }))];

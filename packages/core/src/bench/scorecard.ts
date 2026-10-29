@@ -3,7 +3,7 @@
 import { and, count, countDistinct, desc, eq, inArray, isNotNull, lt, min, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client';
-import { cases, dataCalls, gateVerdicts, ideas, llmCalls, runs, scores, signals } from '../db/schema';
+import { cases, dataCalls, gateVerdicts, ideas, knowledgeItems, llmCalls, runs, scores, signals } from '../db/schema';
 import { METRIC_DEFS, type MetricId } from './definitions';
 
 /**
@@ -37,6 +37,7 @@ const NEAR_DUPLICATE_SIM = 0.8;
 const NEAR_DUPLICATES_TARGET = 0.1;
 const BUYER_VARIETY_TARGET = 8;
 const REAL_NEED_TARGET = 0.5;
+const DEMAND_EVIDENCE_TARGET = 0.8;
 const ROI_BAR = 3;
 const MARGIN_BAR = 60;
 const WASTED_TARGET = 0.3;
@@ -140,6 +141,8 @@ type Data = {
   history: number[];
   buyerCounts: number[];
   cited: { total: number; yes: number };
+  /** Generated ideas with libraryItemIds set (v8 and later), and those citing a trend, rule_change or market entry. */
+  demand: { total: number; yes: number };
   /** roi is valueMultiple (else roiMultiple); skip marks a user-pays-nothing case, left out of customer return. */
   caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null }[];
   audience: { total: number; consumer: number };
@@ -150,7 +153,7 @@ type Data = {
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], entrants: { total: 0, wasted: 0 }, cost: 0,
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], entrants: { total: 0, wasted: 0 }, cost: 0,
 });
 
 function extraOf(d: Data, runCount: number): Scorecard['extra'] {
@@ -179,7 +182,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const within = await nearestSims(db, embedded.ids, embedded.ids);
   const history = await nearestSims(db, embedded.ids, historyIds.ids);
 
-  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], caseRows, [entrantRow], [llm], [dat]] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat]] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
     db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
@@ -191,6 +194,10 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
         yes: sql<number>`(count(*) filter (where ${inArray(signals.voice, ['operator', 'neutral'])}))::int`,
       }).from(cited).leftJoin(signals, sql`${signals.id} = ${cited.sid}`);
     })(),
+    db.select({
+      total: sql<number>`count(*)::int`,
+      yes: sql<number>`(count(*) filter (where exists (select 1 from ${knowledgeItems} where ${knowledgeItems.id} = any(${ideas.libraryItemIds}) and ${inArray(knowledgeItems.kind, ['trend', 'rule_change', 'market'])})))::int`,
+    }).from(ideas).where(and(generated, isNotNull(ideas.libraryItemIds))),
     db.select({
       id: cases.id,
       roi: sectionNumber(sql`'{numbers,results,buyer,roiMultiple}'`),
@@ -236,6 +243,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     history,
     buyerCounts: [...perRun.values()].map((s) => s.size),
     cited: { total: Number(citedRow?.total ?? 0), yes: Number(citedRow?.yes ?? 0) },
+    demand: { total: Number(demandRow?.total ?? 0), yes: Number(demandRow?.yes ?? 0) },
     audience: {
       total: audienceRows.reduce((t, r) => t + Number(r.n), 0),
       consumer: audienceRows.filter((r) => r.audience === 'consumer' || r.audience === 'both').reduce((t, r) => t + Number(r.n), 0),
@@ -283,6 +291,8 @@ function buildMetrics(d: Data): MetricResult[] {
     })(),
     realNeed: d.cited.total === 0 ? noData('No generated idea in this set cites a signal.')
       : share(d.cited.yes, d.cited.total, (v) => v >= REAL_NEED_TARGET),
+    demandEvidence: d.demand.total === 0 ? noData('No generated idea in this set records which library entries it used.')
+      : share(d.demand.yes, d.demand.total, (v) => v >= DEMAND_EVIDENCE_TARGET),
     consumerShare: d.audience.total === 0 ? noData('No generated idea in this set has an audience.')
       : share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
     modelVariety: d.modelCounts.length === 0 ? noData('No run in this set has ideas with a business model.') : (() => {
