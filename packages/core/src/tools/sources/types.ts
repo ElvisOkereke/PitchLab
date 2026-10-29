@@ -1,4 +1,12 @@
-export type RawItem = { source: string; url: string; title: string; text: string; publishedAt: Date | null };
+export type RawItem = {
+  source: string;
+  url: string;
+  title: string;
+  text: string;
+  publishedAt: Date | null;
+  /** Structured values a collector already knows (for example a rule change's dates); never model output. */
+  hints?: Record<string, unknown>;
+};
 
 import { decodeEntities } from '../entities';
 import { readCapped, TooLarge } from '../fetch-page';
