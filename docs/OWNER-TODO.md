@@ -30,8 +30,8 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 
 ## Slice B (what is changing, market size)
 
-- [ ] Nothing new to sign up for: every Slice B source is free and needs no key.
-- [ ] Score the bench-v2 #5 cases when they appear (Score tab, **Your gut**), then press **Recompute** on the pass.
+- [x] Nothing new to sign up for: every Slice B source is free and needs no key.
+- [ ] Score the 3 bench-v2 #5 cases (pre-bid permit timing packs for multi-city contractors, login-free caregiver fraud watch, dispute deadline clock for shoppers) (Score tab, **Your gut**), then press **Recompute** on the pass.
 
 ## Use the app
 
