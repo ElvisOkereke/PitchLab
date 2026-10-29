@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, pageFetches, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
-import { buildCollectors, COLLECT_SHARE, filterStaleRules, maxQueriesFor, runMission, withStartupQueries, type PlannedQuery, type Collectors, type CollectorCtx, type MissionDeps } from '../../src/research/mission';
+import { buildCollectors, COLLECT_SHARE, filterStaleRules, keepQuotedNumbers, maxQueriesFor, runMission, withStartupQueries, type PlannedQuery, type Collectors, type CollectorCtx, type MissionDeps } from '../../src/research/mission';
 import type { KnowledgeDraft } from '../../src/library/kinds';
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
@@ -1138,9 +1138,12 @@ describe('runMission: trends, rule changes and markets', () => {
       const { deps, router } = sliceBDeps(db, { plan }, collectors);
       expect(await runMission(deps, id)).toBe('succeeded');
       const m = await mission(db, id);
+      const stored = await db.select().from(knowledgeItems);
       return {
         prompt: router.calls[0]!.prompt, order: spy.order, warnings: m.warnings, itemsAdded: m.itemsAdded,
         research: router.calls.filter((c) => c.kind === 'research').map((c) => /<query>\n?([\s\S]*?)\n?<\/query>/.exec(c.prompt)?.[1]),
+        extract: router.calls.filter((c) => c.stage === 'library_extract').map((c) => c.prompt),
+        stored: stored.map((i) => ({ kind: i.kind, title: i.title, facts: i.facts })).sort((a, b) => a.title.localeCompare(b.title)),
       };
     };
     for (const kinds of [['problem', 'pricing', 'startup'], ['problem'], ['legacy-kind'], ['pricing', 'retired']]) {
@@ -1219,16 +1222,62 @@ describe('runMission: trends, rule changes and markets', () => {
     expect(src!.sourceType).toBe('federalregister');
   });
 
-  it('keeps a date the model gave; a malformed date is stored as null (no hint to fill it)', async () => {
+  it("Federal Register hints win over the model's dates; the model's effective date is kept only when the hint has none", async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
     const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
-    const fr = async () => [frItem({ hints: { effectiveDate: '2026-12-01', publishedDate: null, status: 'final' } })];
-    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, { effectiveDate: '2027-01-15', publishedDate: '2026-02-30' }) }, newCollectors({ order: [] }, { federalRegister: fr }));
+    const fr = async () => [
+      frItem({ url: `${FR_URL}-a`, hints: { effectiveDate: '2026-12-01', publishedDate: '2026-05-01', status: 'final' } }),
+      frItem({ url: `${FR_URL}-b`, hints: { effectiveDate: null, publishedDate: '2026-06-01', status: 'proposed' } }),
+    ];
+    const facts = (n: number) => (n === 1 ? { effectiveDate: '2027-03-01', publishedDate: '2026-04-01' } : { effectiveDate: '2027-01-15', publishedDate: null });
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, { ...facts(s.n), status: 'final' }) }, newCollectors({ order: [] }, { federalRegister: fr }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const items = (await db.select().from(knowledgeItems)).sort((a, b) => a.title.localeCompare(b.title));
+    expect(items.map((i) => i.facts)).toMatchObject([
+      { effectiveDate: '2026-12-01', publishedDate: '2026-05-01' },
+      { effectiveDate: '2027-01-15', publishedDate: '2026-06-01' },
+    ]);
+  });
+
+  it("fills a missing or invalid status from the Federal Register hint; keeps a valid one the model gave", async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const fr = async () => [1, 2, 3].map((n) => frItem({ url: `${FR_URL}-${n}`, hints: { effectiveDate: null, publishedDate: '2026-05-01', status: 'proposed' } }));
+    const status = (n: number): Record<string, unknown> => (n === 1 ? { status: 'pending' } : n === 2 ? { status: undefined } : { status: 'announced' });
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, status(s.n)) }, newCollectors({ order: [] }, { federalRegister: fr }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const items = (await db.select().from(knowledgeItems)).sort((a, b) => a.title.localeCompare(b.title));
+    expect(items.map((i) => (i.facts as { status: string }).status)).toEqual(['proposed', 'proposed', 'announced']);
+    expect((await mission(db, id)).warnings).toEqual([]);
+  });
+
+  it('a malformed date is stored as null when there is no hint to fill it', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const fr = async () => [frItem({ hints: { effectiveDate: null, publishedDate: null, status: 'final' } })];
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, { effectiveDate: 'next spring', publishedDate: '2026-02-30' }) }, newCollectors({ order: [] }, { federalRegister: fr }));
     expect(await runMission(deps, id)).toBe('succeeded');
     const [it] = await db.select().from(knowledgeItems);
-    expect(it!.facts).toMatchObject({ effectiveDate: '2027-01-15', publishedDate: null });
+    expect(it!.facts).toMatchObject({ effectiveDate: null, publishedDate: null });
     expect((await mission(db, id)).warnings).toEqual([]);
+  });
+
+  it('a 429 from the Federal Register stops it with a warning, and the mission continues', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change', 'trend'], countries: ['US'] });
+    const spy: Spies = { order: [] };
+    const collectors = newCollectors(spy, {
+      federalRegister: async (q) => { spy.order.push(`federalregister:${q}`); throw new SourceError('rate_limited', 'federalregister'); },
+    });
+    const plan = { queries: [{ source: 'federalregister', q: 'a' }, { source: 'wikipedia', q: 'Heat pump' }, { source: 'federalregister', q: 'b' }] };
+    const { deps } = sliceBDeps(db, { plan }, collectors);
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['federalregister:a', 'wikipedia:Heat pump']);
+    expect((await mission(db, id)).warnings).toEqual(['federalregister: rate limited, stopped for this mission']);
+    expect((await db.select().from(knowledgeItems)).map((i) => i.title)).toEqual(['Interest in Heat pump']);
   });
 
   it('drops stale rule changes before storage and counts them in the warnings', async () => {
@@ -1342,6 +1391,106 @@ describe('runMission: trends, rule changes and markets', () => {
     expect(items[0]!.facts).toMatchObject({ basis: 'reported', evidence: [{ value: '34%' }] });
     expect((await mission(db, id)).warnings).toEqual(['extract: 1 invalid draft dropped']);
   });
+
+  it('an extracted trend keeps only evidence whose numbers are in the quote', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['trend'], countries: ['CA'] });
+    const url = 'https://stats.example/sales';
+    const quote = 'Heat pump sales in Canada rose 34% in 2025, according to the national installers association.';
+    const { deps } = sliceBDeps(
+      db,
+      {
+        plan: { queries: [{ source: 'web', q: 'heat pump sales growth' }] },
+        research: [{ text: '', sources: [{ url }] }],
+        extract: (s) => ({
+          source: s.n, kind: 'trend', title: 'Heat pump sales', summary: 'Heat pump sales rose.', quote, audience: 'consumer', countries: ['CA'],
+          industries: ['hvac'], voice: 'neutral',
+          facts: {
+            topic: 'heat pumps', direction: 'rising', window: '2025', basis: 'reported',
+            evidence: [{ metric: 'sales', value: '34%', period: '2025' }, { metric: 'share', value: '80%', period: '2025' }],
+          },
+        }),
+      },
+      {},
+      { [url]: quote },
+    );
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    expect((it!.facts as { evidence: unknown[] }).evidence).toEqual([{ metric: 'sales', value: '34%', period: '2025' }]);
+  });
+
+  it('an extracted market keeps only clues whose numbers are in its verified quote; none left (or unverified) rejects it', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['market'], countries: [] });
+    const url = 'https://stats.example/clinics';
+    const quote = 'There were 1,200 dental clinics in Ontario in 2024, up 12% from five years earlier, the association said.';
+    const market = (s: { n: number }, title: string, q: string, sizeClues: unknown[], growthClues: unknown[]): Entry => ({
+      source: s.n, kind: 'market', title, summary: `${title} summary.`, quote: q, audience: 'business', countries: ['CA'], industries: ['dental clinics'],
+      voice: 'neutral', facts: { segment: 'dental clinics', geography: 'Ontario', sizeClues, growthClues },
+    });
+    const { deps } = sliceBDeps(
+      db,
+      {
+        plan: { queries: [{ source: 'web', q: 'dental clinics ontario count' }] },
+        research: [{ text: '', sources: [{ url }] }],
+        extract: (s) => [
+          market(s, 'Clinics kept', quote,
+            [{ metric: 'clinics', value: '1200', unit: 'clinics', year: '2024' }, { metric: 'revenue', value: '3 million', unit: 'CAD', year: '2024' }],
+            [{ metric: 'clinics', change: '+12%', period: '2019–2024' }, { metric: 'staff', change: '+40%', period: '2019–2024' }, { metric: 'demand', change: 'growing', period: 'recent' }]),
+          market(s, 'Clinics invented', quote, [{ metric: 'revenue', value: '$5 billion', unit: 'CAD', year: '2024' }], []),
+          market(s, 'Clinics unverified', 'There are 1,200 dental clinics across the whole province of Ontario today.', [{ metric: 'clinics', value: '1,200', unit: 'clinics', year: '2024' }], []),
+        ],
+      },
+      {},
+      { [url]: quote },
+    );
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const items = await db.select().from(knowledgeItems);
+    expect(items.map((i) => i.title)).toEqual(['Clinics kept']);
+    expect(items[0]!.facts).toMatchObject({
+      sizeClues: [{ metric: 'clinics', value: '1200' }],
+      growthClues: [{ metric: 'clinics', change: '+12%' }, { metric: 'demand', change: 'growing' }],
+    });
+    expect((await mission(db, id)).warnings).toEqual(['extract: 2 invalid drafts dropped']);
+  });
+});
+
+describe('keepQuotedNumbers', () => {
+  const trend = (...values: string[]) => ({
+    topic: 't', direction: 'rising', window: 'w', basis: 'reported', evidence: values.map((value) => ({ metric: 'm', value, period: 'p' })),
+  });
+  const values = (f: unknown) => (f === null ? null : (f as { evidence: { value: string }[] }).evidence.map((e) => e.value));
+
+  it('every evidence value must be quoted: one matching value does not carry the others', () => {
+    expect(values(keepQuotedNumbers('trend', trend('34%', '80%'), 'Sales rose 34% in 2025.'))).toEqual(['34%']);
+  });
+  it('a year in the value does not stand in for the measured number', () => {
+    expect(keepQuotedNumbers('trend', trend('up 80% since 2019'), 'Sales have changed a lot since 2019 across the country.')).toBeNull();
+    expect(values(keepQuotedNumbers('trend', trend('up 80% since 2019'), 'Sales are up 80% since 2019.'))).toEqual(['up 80% since 2019']);
+    // A value that is only a year is checked as that year.
+    expect(values(keepQuotedNumbers('trend', trend('34%', '2019'), 'Sales rose 34% after 2019.'))).toEqual(['34%', '2019']);
+  });
+  it('a whole number does not match a longer decimal or number', () => {
+    expect(keepQuotedNumbers('trend', trend('34%'), 'Sales rose 34.5% in 2025.')).toBeNull();
+    expect(keepQuotedNumbers('trend', trend('34%'), 'Sales rose 134% in 2025.')).toBeNull();
+    expect(keepQuotedNumbers('trend', trend('34.5%'), 'Sales rose 34% in 2025.')).toBeNull();
+    expect(values(keepQuotedNumbers('trend', trend('34.5%'), 'Sales rose 34.5% in 2025.'))).toEqual(['34.5%']);
+  });
+  it('a small number does not match unrelated text', () => {
+    expect(keepQuotedNumbers('trend', trend('3 million units'), 'Section 3 of the plan covers every clinic in the province.')).toBeNull();
+    expect(keepQuotedNumbers('trend', trend('3 million units'), 'Section 3.2 of the plan covers every clinic.')).toBeNull();
+    expect(values(keepQuotedNumbers('trend', trend('3 million units'), 'Shipments reached 3 million units last year.'))).toEqual(['3 million units']);
+    expect(values(keepQuotedNumbers('trend', trend('34%'), 'Sales rose 34 per cent last year.'))).toEqual(['34%']);
+  });
+  it('thousands separators are equivalent in the value and the quote', () => {
+    expect(values(keepQuotedNumbers('trend', trend('1,200'), 'There were 1200 new clinics.'))).toEqual(['1,200']);
+    expect(values(keepQuotedNumbers('trend', trend('1200'), 'There were 1,200 new clinics.'))).toEqual(['1200']);
+    expect(values(keepQuotedNumbers('trend', trend('1,200,000'), 'About 1,200,000 people moved.'))).toEqual(['1,200,000']);
+    expect(keepQuotedNumbers('trend', trend('1,200'), 'About 1,200,000 people moved.')).toBeNull();
+  });
+  it('without a quote nothing numeric survives', () => {
+    expect(keepQuotedNumbers('trend', trend('34%'), null)).toBeNull();
+  });
 });
 
 describe('filterStaleRules', () => {
@@ -1354,8 +1503,10 @@ describe('filterStaleRules', () => {
   it('drops rules published over 3 years ago or in force over 2 years; keeps current and upcoming ones', () => {
     const cases: [KnowledgeDraft, boolean][] = [
       [rule({ publishedDate: '2023-10-28' }), false],
+      [rule({ publishedDate: '2023-10-29' }), true], // exactly 3 years
       [rule({ publishedDate: '2023-10-30' }), true],
       [rule({ effectiveDate: '2024-10-28', publishedDate: '2024-01-01' }), false],
+      [rule({ effectiveDate: '2024-10-29', publishedDate: '2024-01-01' }), true], // exactly 2 years
       [rule({ effectiveDate: '2024-10-30', publishedDate: '2024-01-01' }), true],
       [rule({ effectiveDate: '2027-07-01' }), true],
       [rule({ publishedDate: '2026-01-10' }), true],

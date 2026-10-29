@@ -145,7 +145,7 @@ const EXTRACT_KIND_RULES: Partial<Record<KnowledgeKind, string>> = {
 - Never estimate or convert a price. If the text gives no number, do not return a \`pricing\` entry.`,
   trend: `Trends:
 - Only a source that states a measured number about growth or decline yields a \`trend\` entry (a count, share, sales figure or survey result, compared over time). An opinion, a prediction or "everyone is talking about it" is not a trend.
-- The quote must be the verbatim sentence that contains the number. Put that number in \`evidence\` exactly as written. Without such a sentence, do not return a \`trend\` entry.
+- The quote must be the verbatim sentence that contains the number. Put that number in \`evidence\` exactly as written. Every number in \`evidence\` must appear in that quote; evidence whose numbers are not in the quote is dropped. Without such a sentence, do not return a \`trend\` entry.
 - \`basis\` is always "reported".`,
   rule_change: `Rule changes:
 - Say what changed, who must act, and by when. Use only what the source states.
@@ -154,7 +154,7 @@ const EXTRACT_KIND_RULES: Partial<Record<KnowledgeKind, string>> = {
 - Quote the sentence that states the change verbatim.`,
   market: `Markets:
 - A \`market\` entry needs numbers stated by the source about a specific customer group and place (how many, how much they spend, how fast it grows). Copy each number as written; never estimate, convert or add up.
-- Quote the sentence with the main number verbatim.`,
+- Quote the sentence with the numbers verbatim. Every number in \`sizeClues\` and \`growthClues\` must appear in that quote; clues whose numbers are not in the quote are dropped.`,
 };
 
 export type CollectorCtx = {
@@ -419,23 +419,27 @@ export function filterStaleRules(drafts: KnowledgeDraft[], now: Date): { kept: K
   return { kept, dropped };
 }
 
+const RULE_STATUSES = ['final', 'proposed', 'announced'] as const;
 const asText = (v: unknown): unknown => (typeof v === 'number' && Number.isFinite(v) ? String(v) : v);
 const mapObjects = (v: unknown, f: (o: Record<string, unknown>) => Record<string, unknown>): unknown =>
   Array.isArray(v) ? v.map((x) => (x && typeof x === 'object' && !Array.isArray(x) ? f(x as Record<string, unknown>) : x)) : v;
 
 /**
- * Light repairs before the facts schema check, never inventions: a malformed or missing rule date becomes null and is
- * then filled from the collector's hint (Federal Register) when it has one; numbers the model sent as numbers become
+ * Light repairs before the facts schema check, never inventions: a rule's dates and status come from the collector's
+ * hint (Federal Register) when it has one, else from the model, and a malformed date becomes null; numbers the model sent as numbers become
  * text where the schema wants text; an extracted trend is always `reported` (only API series in code are `measured`).
  */
 function prepareFacts(kind: KnowledgeKind, facts: Record<string, unknown>, src: Collected): unknown {
   switch (kind) {
     case 'rule_change': {
+      // Collector hints (Federal Register API fields) are authoritative; the model's values are used only where a hint is empty.
       const hints = src.hints ?? {};
+      const statusOk = (v: unknown) => typeof v === 'string' && (RULE_STATUSES as readonly string[]).includes(v);
       return {
         ...facts,
-        effectiveDate: isoDateOrNull(facts.effectiveDate) ?? isoDateOrNull(hints.effectiveDate),
-        publishedDate: isoDateOrNull(facts.publishedDate) ?? isoDateOrNull(hints.publishedDate),
+        effectiveDate: isoDateOrNull(hints.effectiveDate) ?? isoDateOrNull(facts.effectiveDate),
+        publishedDate: isoDateOrNull(hints.publishedDate) ?? isoDateOrNull(facts.publishedDate),
+        status: statusOk(facts.status) ? facts.status : statusOk(hints.status) ? hints.status : facts.status,
       };
     }
     case 'trend':
@@ -451,14 +455,59 @@ function prepareFacts(kind: KnowledgeKind, facts: Record<string, unknown>, src: 
   }
 }
 
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** A reported trend's quote must contain one of its evidence numbers (commas ignored, whole numbers only). */
-function quoteHasEvidenceNumber(quote: string, facts: unknown): boolean {
-  const evidence = (facts as { evidence?: { value?: unknown }[] }).evidence ?? [];
-  const q = quote.replace(/,/g, '');
-  return evidence.some((e) =>
-    (String(e.value ?? '').replace(/,/g, '').match(/\d+(?:\.\d+)?/g) ?? []).some((n) => new RegExp(`(^|[^\\d.])${escapeRe(n)}(?![\\d])`).test(q)),
-  );
+/** A magnitude written right after a number; equivalent spellings share a key (34% = 34 percent, 3 million = 3m). */
+const SCALES: readonly [RegExp, string][] = [
+  [/^\s?(?:%|percent\b|per cent\b)/i, '%'],
+  [/^\s?(?:thousand\b|k\b)/i, 'k'],
+  [/^\s?(?:million\b|mn\b|m\b)/i, 'm'],
+  [/^\s?(?:billion\b|bn\b|b\b)/i, 'b'],
+  [/^\s?(?:trillion\b|tn\b)/i, 't'],
+];
+type NumberToken = { n: string; scale: string | null };
+
+/**
+ * Whole number tokens in a text: thousands separators removed ("1,200" = "1200"), decimals kept whole ("34.5" is never
+ * "34"), each with the magnitude written right after it, if any.
+ */
+function numberTokens(s: string): NumberToken[] {
+  const t = s.replace(/(\d),(?=\d{3}(?!\d))/g, '$1');
+  return [...t.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d])/g)].map((m) => {
+    const rest = t.slice(m.index + m[0].length);
+    return { n: m[0], scale: SCALES.find(([re]) => re.test(rest))?.[1] ?? null };
+  });
+}
+const isYear = (x: NumberToken) => x.scale === null && /^\d{4}$/.test(x.n) && Number(x.n) >= 1900 && Number(x.n) <= 2100;
+
+/**
+ * True when every measured number in `value` appears in the quote as a whole token, with the same magnitude when the value
+ * states one. Years (1900–2100) are context, not the measurement, unless the value holds nothing else.
+ */
+function numbersQuoted(value: string, quoteTokens: NumberToken[]): boolean {
+  const all = numberTokens(value);
+  const measured = all.some((x) => !isYear(x)) ? all.filter((x) => !isYear(x)) : all;
+  return measured.every((v) => quoteTokens.some((q) => q.n === v.n && (v.scale === null || v.scale === q.scale)));
+}
+
+/**
+ * Extracted trend and market numbers must come from the verified quote, never from the model. Trend evidence and market
+ * clues whose value contains a digit are kept only when its numbers are in the quote. A trend needs at least one numeric
+ * evidence item left; a market needs at least one size clue left (each must carry a quoted number). Returns the trimmed
+ * facts, or null when the entry is rejected. `quote` is null when it was not verified. Structured drafts (Wikipedia, HN,
+ * World Bank) never pass through here: their numbers are measured in code.
+ */
+export function keepQuotedNumbers(kind: 'trend' | 'market', facts: unknown, quote: string | null): unknown | null {
+  const quoted = quote === null ? [] : numberTokens(quote);
+  const hasDigit = (v: unknown) => /\d/.test(String(v ?? ''));
+  const ok = (v: unknown) => quote !== null && numbersQuoted(String(v), quoted);
+  if (kind === 'trend') {
+    const f = facts as { evidence: { value: string }[] };
+    const evidence = f.evidence.filter((e) => !hasDigit(e.value) || ok(e.value));
+    return evidence.some((e) => hasDigit(e.value)) ? { ...f, evidence } : null;
+  }
+  const f = facts as { sizeClues: { value: string }[]; growthClues: { change: string }[] };
+  const sizeClues = f.sizeClues.filter((c) => hasDigit(c.value) && ok(c.value));
+  const growthClues = f.growthClues.filter((c) => !hasDigit(c.change) || ok(c.change));
+  return sizeClues.length > 0 ? { ...f, sizeClues, growthClues } : null;
 }
 
 export type PlannedQuery = { source: MissionSource; q: string; purpose?: 'trend' };
@@ -999,8 +1048,11 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Kn
   const quote = rawQuote ? cleanStored(rawQuote) || undefined : undefined;
   const quoteVerified =
     rawQuote !== '' && quote !== undefined && quoteOnSource(rawQuote, sourceText) && longEnough(quote.replace(REDACTION_MARKERS, ' '));
-  // A reported trend is evidence only through its verified quote, and the quote must carry the number.
-  if (e.kind === 'trend' && !(quoteVerified && quoteHasEvidenceNumber(rawQuote, facts))) return null;
+  // Extracted trend and market numbers count only when they are in the verified quote (failing items dropped).
+  if (e.kind === 'trend' || e.kind === 'market') {
+    facts = keepQuotedNumbers(e.kind, facts, quoteVerified ? rawQuote : null);
+    if (facts === null) return null;
+  }
   return {
     kind: e.kind,
     title,
