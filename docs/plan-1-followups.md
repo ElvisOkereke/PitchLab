@@ -192,3 +192,9 @@ Open after tuning-4:
 ## Tuning 5 follow-ups (idea yield, 2026-10-28)
 - Raw model outputs are not stored, so ideate drop reasons are field path plus issue code only; reading what the model actually wrote needs a rerun with logging.
 - `MOAT_KEYWORDS` (the toCopy check) is a sanity check, not a quality judgement: a toCopyWhy that names a moat word passes even if the moat is weak.
+
+## Slice B follow-ups (2026-10-29)
+
+- archive.org rate-limits (429) early in most missions, so the archive fallback is off for the rest of each mission. Consider a longer interval or a per-day budget.
+- federalregister.gov robots.txt disallows the web pages; the API is the only route (fine), but web queries aimed at it waste a fetch.
+- Gate control check: 11 of 15 bench-v2 #5 entrants failed control because any third-party official API counts as a fatal dependency. Owner decision pending.

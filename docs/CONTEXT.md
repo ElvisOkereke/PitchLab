@@ -5,6 +5,8 @@
 
 ## Status
 - **Slice B: what is changing and where the market is (branch `sliceb`, built 2026-10-29, not merged):** the library
+- **Slice B results (2026-10-29):** library fill (3 x $5, - **Slice B: what is changing and where the market is (branch `sliceb`, built 2026-10-29, not merged):** the library
+0.03) gave 72 trends (11 measured), 131 rule changes, 22 markets. bench-v2 #5 ($27.42, 5 runs): 41 ideas, 3 cases, demand evidence 32% (13 of 41, first measurement), repetition 0.63 (unchanged), easy to start and hard to copy 2 of 3, wasted gate entrants 0%, but customer return 0 of 3 (median 1.89x) and margin 1 of 3. The gate killed 11 of 15 entrants on control (5 in #4): its reasoning treats reliance on any third-party official API (Stripe, Shopify, Apple, Open Dental, WordPress.org) as a fatal dependency. Owner decision pending on how strict control should be.
   holds `trend`, `rule_change` and `market` entries. Free collectors (no keys): Federal Register rules, Wikipedia
   pageviews, Hacker News yearly counts, World Bank indicators; web search feeds all three kinds (Canadian rules, segment
   markets). Missions, the CLI and the web form accept all six kinds, and background research rotates the new ones in.
