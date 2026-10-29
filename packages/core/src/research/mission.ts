@@ -339,9 +339,15 @@ export function withStartupQueries(
     return false;
   };
   const soleOfSource = (x: PlannedQuery) => out.filter((y) => y.source === x.source).length <= 1;
+  // Make room with paid web research first (free sources cost no budget), then other sources that keep a query.
   while (out.length > max) {
     const droppable = (x: PlannedQuery) => !isStartup(x) && !isPricing(x);
-    if (dropLast((x) => droppable(x) && !soleOfSource(x)) || dropLast(droppable) || dropLast((x) => added.has(x))) continue;
+    if (
+      dropLast((x) => droppable(x) && x.source === 'web' && !soleOfSource(x)) ||
+      dropLast((x) => droppable(x) && !soleOfSource(x)) ||
+      dropLast(droppable) ||
+      dropLast((x) => added.has(x))
+    ) continue;
     break;
   }
   return out;

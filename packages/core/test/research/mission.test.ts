@@ -930,6 +930,18 @@ describe('withStartupQueries', () => {
     expect(out.some((x) => x.source === 'web')).toBe(true);
   });
 
+  it('makes room by dropping paid web queries before free-source ones (YouTube, HN, app reviews)', () => {
+    // Free sources listed last, as the planner often does: trimming from the end must not cut them first.
+    const plan = [...mk('web', 20), ...mk('youtube', 5), ...mk('hn', 3), ...mk('appreviews', 2)];
+    const out = withStartupQueries(plan, 'property manager Shopify', 30, both);
+    expect(out).toHaveLength(30);
+    expect(startup(out)).toHaveLength(5);
+    expect(out.filter((x) => x.source === 'youtube')).toHaveLength(5);
+    expect(out.filter((x) => x.source === 'hn')).toHaveLength(3);
+    expect(out.filter((x) => x.source === 'appreviews')).toHaveLength(2);
+    expect(out.filter((x) => x.source === 'web')).toHaveLength(15);
+  });
+
   it('never pads with "<word> software" or "<word> platform" (the YC collector OR-matches any word)', () => {
     const out = withStartupQueries(mk('web', 12), 'invoicing chasing', 12, both);
     const qs = startup(out).map((q) => q.q);
