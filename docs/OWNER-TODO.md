@@ -33,7 +33,7 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 - [ ] Do not generate a validation pack for a consumer case yet. Its outreach drafts are cold emails, and CASL does not allow cold emails to individuals without consent. Consumer outreach rules come later.
 
 - [ ] Run a bench-v2 pass after merging and score the cases. It is the first pass with consumer ideas, business models, barriers and the value multiple, and the scorecard rows for them read "no data" until then.
-- [ ] Give each case a **Your gut** score (Score tab). It feeds the owner verdict on the Progress page; press **Recompute** on a pass afterwards.
+- [ ] Give each case a **Your gut** score (Score tab). Waiting from the 2026-10-28/29 passes: bench-v2 #2 (conversion-day evidence kit for accidental landlords, sandbox-verified WordPress fixes, dental CDT-change sweep, dental conversion-leak audit, dental temp booking), #3 (PG&E grid program picker, dental recall coverage audit, dental stack teardown) and #4 (day-one cash plan for dentists buying practices, per-child dental benefit planner, allergen drift checks for regional chains, cross-app exit panel for subscription apps, AI coding plan right-sizer, land/building split workpapers for rental tax preparers). It feeds the owner verdict on the Progress page; press **Recompute** on a pass afterwards.
 - [ ] Walk through the tour ("Take the tour") once on your computer and once on your phone, in light and dark mode. Report anything confusing.
 - [ ] Try **Hide** and **Reset** on the example case (Settings → Example case).
 - [ ] Generate a validation pack on a real case from its Validate tab.
