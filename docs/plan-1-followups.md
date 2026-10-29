@@ -188,3 +188,7 @@ Open after tuning-4:
 - Sector runs collect business-only evidence while the mix forces 30% consumer ideas; add a consumer research call for sector runs or exempt them from the forced share.
 - Open and consumer runs extract every item with the combined audience prompt; consider per-call audience tagging.
 - Thin candidates are still screened by the model before the pre-gate evidence filter rejects them; filter first to save spend.
+
+## Tuning 5 follow-ups (idea yield, 2026-10-28)
+- Raw model outputs are not stored, so ideate drop reasons are field path plus issue code only; reading what the model actually wrote needs a rerun with logging.
+- `MOAT_KEYWORDS` (the toCopy check) is a sanity check, not a quality judgement: a toCopyWhy that names a moat word passes even if the moat is weak.

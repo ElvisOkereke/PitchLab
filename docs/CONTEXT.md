@@ -9,6 +9,7 @@
   easy-start/hard-copy; `bench-v2` (bench-v1 plus a consumer-lens run) is the current benchmark. `demandEvidence` stays
   not measured (Phase 2 Slice B). Owner to-do: run a bench-v2 pass after merging. Design:
   `docs/superpowers/specs/2026-10-27-generation-rebuild-design.md`.
+- **Tuning 5 (branch `tuning5`, built 2026-10-28):** idea yield. Ideate asks for 3 ideas per call with a 16,000-token limit and a cut-off re-ask, records drop reasons and counters in the stage output, uses ideate.v9 (anchored barrier scales, toCopy keyword check); missions reserve startup-source queries; YouTube reads 40 comments per video. Design: `docs/superpowers/specs/2026-10-28-tuning-5-idea-yield-design.md`. Owner to-do: a live run to measure yield.
 - **Research library (Phase 2, Slice A, branch `library`):** a persistent library of problems, pricing and startup entries
   that runs draw verified evidence from. Missions start from the Library page or `gen research`; background research is
   off by default (cap $5 per Toronto day, $1 missions). Sources: HN, GitHub, Stack Exchange, app reviews, Product Hunt,
