@@ -92,6 +92,17 @@ describe('createRouter', () => {
     expect(onTruncated).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores an onTruncated callback that throws: no provider failure, no retry', async () => {
+    const db = await testDb();
+    const a = scriptedAdapter([{ json: { n: 1 }, truncated: true }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    const onTruncated = vi.fn(() => { throw new Error('callback bug'); });
+    expect(await r.structured('screen', { prompt: 'p', schema: z.object({ n: z.number() }), schemaName: 'x' }, { ...ctx, onTruncated }))
+      .toEqual({ n: 1 });
+    expect(a.requests).toHaveLength(1);
+    expect((await db.select().from(llmCalls)).map((c) => c.ok)).toEqual([true]);
+  });
+
   it('sends the zod schema as JSON Schema and default maxTokens', async () => {
     const db = await testDb();
     const a = scriptedAdapter([{ json: { n: 1 } }]);

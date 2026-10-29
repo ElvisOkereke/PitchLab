@@ -5,6 +5,7 @@ import { ideas, lenses, markets, signals } from '../db/schema';
 import { CONSUMER_SEGMENTS } from '../db/seed';
 import { ideationContext, renderIdeationContext } from '../library/context';
 import { loadPrompt } from '../llm/prompts';
+import { StructuredOutputError, type CallCtx } from '../llm/types';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { errorMessage } from '../tools/scrub';
 import { loadAlreadySold } from './already-sold';
@@ -14,6 +15,7 @@ import {
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_SIGNALS = 40;
+const VALUE_KINDS = ValueToUserSchema.shape.kind.options;
 
 /** Open and sector seeds sample at most this many lenses per run (lens seeds use exactly their lenses). */
 export const MAX_LENSES_PER_RUN = 6;
@@ -28,9 +30,21 @@ const SEGMENTS_PER_RUN = 5;
 const MAX_FOCUS_SECTORS = 8;
 /** Library context per lens: startups already selling, dead startups, pricing entries. */
 const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15 } as const;
-/** The one mix re-ask asks for at most this many ideas. */
+/** The one re-ask round (mix gap and count top-up) asks for at most this many ideas. */
 const REASK_MAX_IDEAS = 6;
+/** Each ideate call asks for at most this many ideas: long v8 ideas in bigger calls hit the output cap and were lost. */
+export const IDEAS_PER_CALL = 3;
+/** Output limit for ideate calls (a cap, not a cost). */
+const IDEATE_MAX_TOKENS = 16000;
 const EPS = 1e-9;
+
+/** `total` split into calls of at most `perCall`: splitCounts(7, 3) is [3, 3, 1]. */
+export function splitCounts(total: number, perCall: number): number[] {
+  const step = Math.max(1, Math.floor(perCall));
+  const out: number[] = [];
+  for (let left = Math.max(0, Math.floor(total)); left > 0; left -= step) out.push(Math.min(step, left));
+  return out;
+}
 
 /** How an idea delivers value (stored on the idea; screen caps gate entrants per business model, not per mechanism). */
 export const IDEA_MECHANISMS = [
@@ -76,24 +90,91 @@ const asRecord = (v: unknown): Record<string, unknown> | null =>
 /** A library id as cited: trimmed, surrounding square brackets removed, lower case. */
 const bareId = (s: string) => s.trim().replace(/^\[\s*(.*?)\s*\]$/, '$1').toLowerCase();
 
+const clip = (v: unknown, max: number) => (typeof v === 'string' && v.length > max ? v.slice(0, max) : v);
+
 /**
- * Before validation, an over-long v8 text field is cut to its limit and cited library ids are unwrapped, filtered to
- * well-formed uuids and capped at 10, so an easy overrun or one malformed id never drops a whole idea. Other fields (incumbents, gap, enums, numbers) still validate strictly.
+ * The number a model wrote as text: `"$1,200/yr"` → 1200, `"about 300"` → 300, `"2.5"` → 2.5. Only a leading number
+ * (after an optional "about"-style word and currency) is read. Anything else is returned unchanged so it still fails
+ * validation: no number (`"N/A"`), a minus sign, a malformed group (`"1,2"`) or a magnitude word (`"$15k"`, `"2 million"`)
+ * that would misread the amount by orders of magnitude.
  */
-function normalizeIdea(raw: unknown): unknown {
+function leadingNumber(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const m = /^\s*(?:(?:about|around|approximately|approx\.?|roughly|~)\s*)?(?:USD|CAD|EUR|GBP|AUD)?\s*(?:US|CA|C|A)?[$€£]?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(.*)$/i.exec(v);
+  if (!m) return v;
+  const rest = m[3]!.trimStart();
+  if (/^[\d.,]/.test(m[3]!) || /^(?:k|m|mm|bn|b|thousand|million|billion)\b/i.test(rest)) return v;
+  const n = Number(m[1]!.replace(/,/g, '') + (m[2] ?? ''));
+  return Number.isFinite(n) ? n : v;
+}
+
+/** A 1–5 barrier score: a number (or number text) rounded and clamped; anything else unchanged. */
+function score(v: unknown): unknown {
+  const n = leadingNumber(v);
+  return typeof n === 'number' && Number.isFinite(n) ? Math.min(5, Math.max(1, Math.round(n))) : n;
+}
+
+/** Spellings the model uses for an allowed enum value (spec §2); only applied when the target is allowed for the field. */
+const ENUM_SYNONYMS: Record<string, string> = {
+  one_time: 'one_off', 'one-time': 'one_off', 'one time': 'one_off',
+  'service plus software': 'service_plus_software', 'service+software': 'service_plus_software', 'service + software': 'service_plus_software',
+  consumers: 'consumer', individual: 'consumer',
+  businesses: 'business', b2b: 'business',
+};
+
+/**
+ * An enum value trimmed and lower-cased, matched as is, through the synonym list, or with spaces and hyphens read as
+ * underscores (`"One-off"`, `"Transaction fee"`). An unknown value is returned unchanged, so a strict field still fails.
+ */
+function enumValue(v: unknown, allowed: readonly string[]): unknown {
+  if (typeof v !== 'string') return v;
+  const s = v.trim().toLowerCase();
+  const hit = [s, ENUM_SYNONYMS[s], s.replace(/[\s-]+/g, '_')].find((c) => c !== undefined && allowed.includes(c));
+  return hit ?? v;
+}
+
+/**
+ * Before validation, conservative repairs so an easy slip never drops a whole idea:
+ * - over-long text is cut to its limit (v8 text fields, `functionalGap` 600, each incumbent 120, the first 8 incumbents);
+ * - number text becomes a number for the value, the price and the barrier scores; scores are rounded and clamped to 1–5;
+ * - enum values are trimmed, lower-cased and matched through a short synonym list; an unknown mechanism (only a label)
+ *   becomes `other`;
+ * - cited library ids are unwrapped, filtered to well-formed uuids and capped at 10.
+ * Still strict: an unknown business model, audience or value kind is left as is and drops the idea (no relabelling).
+ */
+export function normalizeIdea(raw: unknown): unknown {
   const idea = asRecord(raw);
   if (!idea) return raw;
-  const cut = (o: Record<string, unknown>, key: string, max: number) => {
-    const v = o[key];
-    if (typeof v === 'string' && v.length > max) o[key] = v.slice(0, max);
-  };
+  const set = (o: Record<string, unknown>, key: string, f: (v: unknown) => unknown) => { if (key in o) o[key] = f(o[key]); };
+  const cut = (o: Record<string, unknown>, key: string, max: number) => set(o, key, (v) => clip(v, max));
   cut(idea, 'revenueMechanics', 400);
+  cut(idea, 'functionalGap', 600);
+  if (Array.isArray(idea.knownIncumbents)) idea.knownIncumbents = idea.knownIncumbents.slice(0, 8).map((s) => clip(s, 120));
+  set(idea, 'audience', (v) => enumValue(v, AUDIENCES));
+  set(idea, 'businessModel', (v) => enumValue(v, BUSINESS_MODELS));
+  set(idea, 'mechanism', (v) => {
+    const m = enumValue(v, IDEA_MECHANISMS);
+    return typeof m === 'string' && !(IDEA_MECHANISMS as readonly string[]).includes(m) ? 'other' : m;
+  });
   const value = asRecord(idea.valueToUser);
-  if (value) { cut(value, 'basis', 400); cut(value, 'source', 300); idea.valueToUser = value; }
+  if (value) {
+    cut(value, 'basis', 400); cut(value, 'source', 300);
+    set(value, 'kind', (v) => enumValue(v, VALUE_KINDS));
+    set(value, 'amountPerYear', leadingNumber);
+    idea.valueToUser = value;
+  }
   const price = asRecord(idea.priceHint);
-  if (price) { cut(price, 'unit', 60); cut(price, 'basis', 300); cut(price, 'source', 300); idea.priceHint = price; }
+  if (price) {
+    cut(price, 'unit', 60); cut(price, 'basis', 300); cut(price, 'source', 300);
+    set(price, 'amount', leadingNumber);
+    idea.priceHint = price;
+  }
   const barriers = asRecord(idea.barriers);
-  if (barriers) { cut(barriers, 'toStartWhy', 300); cut(barriers, 'toCopyWhy', 300); idea.barriers = barriers; }
+  if (barriers) {
+    cut(barriers, 'toStartWhy', 300); cut(barriers, 'toCopyWhy', 300);
+    set(barriers, 'toStart', score); set(barriers, 'toCopy', score);
+    idea.barriers = barriers;
+  }
   if (Array.isArray(idea.libraryItemIds)) {
     // One malformed id (a name, a url, a number) is dropped on its own instead of failing the whole idea.
     idea.libraryItemIds = idea.libraryItemIds
@@ -104,12 +185,22 @@ function normalizeIdea(raw: unknown): unknown {
   return idea;
 }
 
+/** An idea that failed validation, with why: each issue as `path:code` (array indexes read as `*`), never the content. */
+class DroppedIdea {
+  constructor(readonly reasons: string[]) {}
+}
+const reasonKey = (issue: { path: PropertyKey[]; code: string }) =>
+  `${issue.path.map((p) => (typeof p === 'number' ? '*' : String(p))).join('.') || '(idea)'}:${issue.code}`;
+
 /**
- * One invalid idea parses to `undefined` (dropped and counted) instead of failing the whole call. The JSON schema the
- * model sees is the strict idea schema (the preprocess and the catch are transparent there).
+ * One invalid idea parses to a DroppedIdea (dropped, counted, reasons kept) instead of failing the whole call. The
+ * marker travels in the parsed result, so it holds only the reasons of the answer that was used, with no shared state.
+ * The JSON schema the model sees is the strict idea schema (the preprocess and the catch are transparent there; the
+ * catch is called with no context while that schema is built).
  */
 const lensIdeasSchema = z.object({
-  ideas: z.array(z.preprocess(normalizeIdea, lensIdeaSchema).catch(() => undefined as unknown as LensIdea)),
+  ideas: z.array(z.preprocess(normalizeIdea, lensIdeaSchema).catch((ctx) =>
+    (ctx ? new DroppedIdea([...new Set(ctx.error.issues.map(reasonKey))]) : undefined) as unknown as LensIdea)),
 });
 /** Owner ideas never get invented incumbents or gaps (those columns stay null); the money fields are optional. */
 const ownerIdeaSchema = z.object({
@@ -236,9 +327,19 @@ export function checkMix(
 const isShort = (m: Mix) => m.short.consumer > 0 || m.short.models.length > 0;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** The "fill the gap" section of the one mix re-ask. */
-function gapInstruction(count: number, consumer: number, models: number, unused: BusinessModel[]): string {
-  const lines = ['Fill the gap. This is one extra request after every lens ran: the ideas so far fall short of the mix this run needs.'];
+/**
+ * The "fill the gap" section of one call in the re-ask round: the ideas still missing from the count the run asked for
+ * (`have` of `target`), the consumer ideas and the unused business models the mix still needs.
+ */
+function gapInstruction(
+  count: number,
+  g: { consumer: number; models: number; unused: BusinessModel[]; have: number; target: number },
+): string {
+  const { consumer, models, unused, have, target } = g;
+  const lines = ['Fill the gap. This is one extra request after every lens ran: the ideas so far fall short of what this run needs.'];
+  if (have < target) {
+    lines.push(`- The run has ${have} of the ${target} ideas it asked for, so each new idea here counts toward the rest.`);
+  }
   if (consumer > 0) {
     lines.push(`- At least ${consumer} of the ${count} ideas must be consumer ideas (audience \`consumer\` or \`both\`) that follow the named-buyer rule below. Draw on the consumer segments in <focus>.`);
   }
@@ -291,9 +392,28 @@ export type IdeateOutput = {
   ideaIds: string[];
   /** Generated ideas that failed the schema and were not stored. */
   dropped: number;
+  /** Why ideas were dropped: `path:code` (for example `functionalGap:too_big`) to the number of ideas. Never content. */
+  dropReasons: Record<string, number>;
+  /** Ideas asked for across all calls, the re-ask round included. */
+  requested: number;
+  /** Ideas the model gave back, before validation and before extras were cut to the count asked for. */
+  returned: number;
+  /** Model responses cut off at the output limit (the router's re-asks included). */
+  truncatedCalls: number;
+  /** Calls that gave no valid answer even after the router's re-asks; each contributed 0 ideas. */
+  failedCalls: number;
   /** The run's mix after the optional re-ask; null for owner ideas. */
   mix: (Mix & { reask: boolean }) | null;
 };
+
+/** `a ×2, b ×1`: the most frequent drop reasons first (ties by name), at most `max`. */
+function topReasons(reasons: Record<string, number>, max = 3): string {
+  return Object.entries(reasons)
+    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
+    .slice(0, max)
+    .map(([k, n]) => `${k} ×${n}`)
+    .join(', ');
+}
 
 export async function ideate(
   { db, router, log }: StageDeps,
@@ -301,6 +421,10 @@ export async function ideate(
   input: { signalIds: string[] },
 ): Promise<IdeateOutput> {
   const cfg = run.config;
+  let truncatedCalls = 0;
+  const callCtx = (promptVersion: string): CallCtx => ({
+    runId: run.id, promptVersion, onTruncated: () => { truncatedCalls++; },
+  });
 
   if (cfg.seedType === 'idea') {
     const ideaText = cfg.ideaText?.trim();
@@ -308,8 +432,11 @@ export async function ideate(
     const prompt = loadPrompt('owner-idea');
     const out = await router.structured(
       'ideate',
-      { prompt: prompt.render({ idea: wrapUntrusted('idea', ideaText) }), schema: ownerIdeaSchema, schemaName: 'owner_idea' },
-      { runId: run.id, promptVersion: prompt.version },
+      {
+        prompt: prompt.render({ idea: wrapUntrusted('idea', ideaText) }), schema: ownerIdeaSchema, schemaName: 'owner_idea',
+        maxTokens: IDEATE_MAX_TOKENS,
+      },
+      callCtx(prompt.version),
     );
     const { audience, businessModel, revenueMechanics, valueToUser, priceHint, barriers, ...fields } = out;
     // Owner ideas cite nothing we can check: any money claim is kept as a stated assumption.
@@ -323,7 +450,7 @@ export async function ideate(
       signalIds: input.signalIds, status: 'candidate',
     }]);
     log('ideate: 1 owner idea');
-    return { ideaIds, dropped: 0, mix: null };
+    return { ideaIds, dropped: 0, dropReasons: {}, requested: 1, returned: 1, truncatedCalls, failedCalls: 0, mix: null };
   }
 
   const [market] = await db.select().from(markets).where(eq(markets.id, cfg.marketId));
@@ -397,39 +524,68 @@ export async function ideate(
   const prompt = loadPrompt('ideate');
   const pending: IdeaInsert[] = [];
   let dropped = 0;
+  let requested = 0;
+  let returned = 0;
+  let failedCalls = 0;
+  const dropReasons: Record<string, number> = {};
 
+  /**
+   * One ideate call for at most IDEAS_PER_CALL ideas. A call the router gives up on (StructuredOutputError, after its
+   * re-asks; for example every answer cut off) contributes 0 ideas and the run goes on; any other error (network,
+   * budget) propagates as before.
+   */
   const generate = async (lens: LensRow, count: number, o: { withSegments: boolean; gap: string }): Promise<IdeaInsert[]> => {
     const library = await libraryFor(lens);
-    // Titles from earlier lenses in this run, so each lens steers away from buyers/problems already covered.
-    // Each shows its audience and business model, so later lenses can vary the mix before any re-ask.
+    // Titles from earlier calls in this run (earlier lenses and this lens's earlier calls), so each call steers away
+    // from buyers/problems already covered. Each shows its audience and business model, so later calls can vary the mix.
     const priorTitles = pending.map((v) => `- ${capField(v.title, 200)} (${v.audience}, ${v.businessModel})`).join('\n');
-    const out = await router.structured(
-      'ideate',
-      {
-        prompt: prompt.render({
-          market: `${market.name} (${market.countries.join(', ')})`,
-          lensName: lens.name,
-          lensPattern: lens.pattern,
-          lensHint: lens.promptHint,
-          focus: wrapUntrusted('focus', focusFor(o.withSegments)),
-          signals: wrapUntrusted('signals', signalsText),
-          alreadySold: wrapUntrusted('already-sold', library.alreadySold),
-          lessons: wrapUntrusted('lessons', library.lessons),
-          pricing: wrapUntrusted('pricing', library.pricing),
-          priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
-          gateKilled,
-          alreadyCovered,
-          gap: o.gap,
-          count: String(count),
-          minSignals: String(cfg.minSignals),
-        }),
-        schema: lensIdeasSchema,
-        schemaName: 'ideate_ideas',
-      },
-      { runId: run.id, promptVersion: prompt.version },
-    );
-    const valid = (out.ideas as (LensIdea | undefined)[]).filter((i): i is LensIdea => !!i);
-    dropped += out.ideas.length - valid.length;
+    requested += count;
+    let out: z.infer<typeof lensIdeasSchema>;
+    try {
+      out = await router.structured(
+        'ideate',
+        {
+          prompt: prompt.render({
+            market: `${market.name} (${market.countries.join(', ')})`,
+            lensName: lens.name,
+            lensPattern: lens.pattern,
+            lensHint: lens.promptHint,
+            focus: wrapUntrusted('focus', focusFor(o.withSegments)),
+            signals: wrapUntrusted('signals', signalsText),
+            alreadySold: wrapUntrusted('already-sold', library.alreadySold),
+            lessons: wrapUntrusted('lessons', library.lessons),
+            pricing: wrapUntrusted('pricing', library.pricing),
+            priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
+            gateKilled,
+            alreadyCovered,
+            gap: o.gap,
+            count: String(count),
+            minSignals: String(cfg.minSignals),
+          }),
+          schema: lensIdeasSchema,
+          schemaName: 'ideate_ideas',
+          maxTokens: IDEATE_MAX_TOKENS,
+        },
+        callCtx(prompt.version),
+      );
+    } catch (err) {
+      if (!(err instanceof StructuredOutputError)) throw err;
+      failedCalls++;
+      // The message only; the issues can quote the model's answer.
+      log(`ideate: a call for lens ${lens.id} gave no valid answer (${errorMessage(err)}), 0 ideas from it`);
+      return [];
+    }
+    const items = out.ideas as unknown[];
+    returned += items.length;
+    const valid: LensIdea[] = [];
+    for (const item of items) {
+      if (item instanceof DroppedIdea) {
+        dropped++;
+        for (const r of item.reasons) dropReasons[r] = (dropReasons[r] ?? 0) + 1;
+      } else if (item) {
+        valid.push(item as LensIdea);
+      }
+    }
     const known: Known = new Map(library.sources);
     for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
     return valid.slice(0, count).map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, ...f }) => {
@@ -449,36 +605,49 @@ export async function ideate(
     });
   };
 
+  // Each lens asks for its share in calls of at most IDEAS_PER_CALL, in lens order (R20: same run id, same calls).
   const count = Math.ceil(cfg.ideaCount / chosen.length);
   for (const lens of chosen) {
-    pending.push(...await generate(lens, count, { withSegments: cfg.seedType === 'open', gap: '' }));
+    for (const n of splitCounts(count, IDEAS_PER_CALL)) {
+      pending.push(...await generate(lens, n, { withSegments: cfg.seedType === 'open', gap: '' }));
+    }
   }
 
-  // Enforced mix: at most one re-ask per run, never a loop.
+  // At most one re-ask round per run, never a loop: it fills the mix gap and tops up a short count, together asking
+  // for at most REASK_MAX_IDEAS ideas in calls of at most IDEAS_PER_CALL.
   const minModels = Math.min(MIN_MODELS, cfg.ideaCount);
   const before = checkMix(pending, minModels);
-  const reask = isShort(before);
+  const missing = Math.max(0, cfg.ideaCount - pending.length);
+  const reask = isShort(before) || missing > 0;
   if (reask) {
-    const n = pending.length;
-    const consumerNow = pending.filter((i) => i.audience === 'consumer' || i.audience === 'both').length;
-    const needModels = Math.max(0, minModels - before.models);
-    const k = Math.min(REASK_MAX_IDEAS, Math.max(before.short.consumer, needModels, 1));
-    const needConsumer = Math.min(k, Math.max(0, Math.ceil(MIN_CONSUMER_SHARE * (n + k) - consumerNow - EPS)));
+    const mixIdeas = isShort(before) ? Math.max(before.short.consumer, minModels - before.models, 1) : 0;
+    const k = Math.min(REASK_MAX_IDEAS, Math.max(mixIdeas, missing));
     const lens = pickReaskLens(chosen, allLenses, cfg, seededRandom(`${run.id}:reask`));
+    let left = k;
     try {
-      pending.push(...await generate(lens, k, {
-        withSegments: true,
-        gap: gapInstruction(k, needConsumer, needModels, before.short.models),
-      }));
+      for (const n of splitCounts(k, IDEAS_PER_CALL)) {
+        // Each call states what is still missing once the earlier calls' ideas are in: consumer ideas so the share
+        // reaches MIN_CONSUMER_SHARE once the round's remaining ideas are added, then unused business models.
+        const now = checkMix(pending, minModels);
+        const consumerNow = pending.filter((i) => i.audience === 'consumer' || i.audience === 'both').length;
+        const needConsumer = Math.min(n, Math.max(0, Math.ceil(MIN_CONSUMER_SHARE * (pending.length + left) - consumerNow - EPS)));
+        const needModels = Math.min(n, Math.max(0, minModels - now.models));
+        const gap = gapInstruction(n, {
+          consumer: needConsumer, models: needModels, unused: now.short.models, have: pending.length, target: cfg.ideaCount,
+        });
+        left -= n;
+        pending.push(...await generate(lens, n, { withSegments: true, gap }));
+      }
     } catch (err) {
-      log(`ideate: mix re-ask failed (${errorMessage(err)}), keeping the lens ideas`);
+      log(`ideate: re-ask failed (${errorMessage(err)}), keeping the ideas so far`);
     }
   }
   const after = checkMix(pending, minModels);
 
   // Written only after every lens call succeeded, so a failed (and resumed) ideate leaves no partial set.
   const ideaIds = await replaceRunIdeas(db, run.id, pending);
-  if (dropped > 0) log(`ideate: dropped ${dropped} invalid idea${dropped === 1 ? '' : 's'}`);
+  if (dropped > 0) log(`ideate: dropped ${dropped} invalid (top reasons: ${topReasons(dropReasons)})`);
+  log(`ideate: asked for ${requested} ideas, got ${returned} back (cut off: ${truncatedCalls}, failed calls: ${failedCalls})`);
   const stillShort = isShort(after)
     ? [
         after.short.consumer > 0 ? `${after.short.consumer} consumer` : '',
@@ -487,5 +656,5 @@ export async function ideate(
     : 'no';
   log(`ideate: mix consumer ${Math.round(after.consumerShare * 100)}% models ${after.models} (re-ask: ${reask ? 'yes' : 'no'}, still short: ${stillShort})`);
   log(`ideate: ${ideaIds.length} ideas from ${chosen.length} lenses`);
-  return { ideaIds, dropped, mix: { ...after, reask } };
+  return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, mix: { ...after, reask } };
 }

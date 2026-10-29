@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { CONSUMER_LENSES, CONSUMER_SEGMENTS } from '../../src/db/seed';
 import { gateVerdicts, ideas, lenses, signals } from '../../src/db/schema';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 import {
-  checkMix, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, pickConsumerSegments, pickReaskLens, seededRandom, selectLenses,
+  checkMix, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, normalizeIdea, pickConsumerSegments, pickReaskLens,
+  seededRandom, selectLenses, splitCounts,
 } from '../../src/pipeline/ideate';
+import type { ModelRouter } from '../../src/llm/types';
 import { defaultRunConfig, type RunConfig } from '../../src/pipeline/types';
 import { fetchPage } from '../../src/tools/fetch-page';
 import { insertCase, insertIdea, insertRun, testDb, unit } from '../helpers/db';
@@ -233,15 +236,13 @@ describe('ideate', () => {
     ]);
   });
 
-  it('drops (does not store) an idea with more than 8 known incumbents, a functional gap over 600 chars, or a missing gap', async () => {
+  it('drops (does not store) an idea with a missing gap or a non-text incumbent, and records the reason', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
-    const variants: Record<string, unknown>[] = [
-      { knownIncumbents: Array.from({ length: 9 }, (_, i) => `Inc ${i}`) },
-      { functionalGap: 'g'.repeat(601) },
-      { functionalGap: undefined },
-      { knownIncumbents: ['x'.repeat(121)] },
+    const variants: [Record<string, unknown>, string][] = [
+      [{ functionalGap: undefined }, 'functionalGap:invalid_type'],
+      [{ knownIncumbents: ['Acme', 42] }, 'knownIncumbents.*:invalid_type'],
     ];
-    for (const patch of variants) {
+    for (const [patch, reason] of variants) {
       const bad = mk(1, []);
       Object.assign(bad.ideas[0]!, patch);
       const t = await setup(config, { structured: { ideate: [bad, { ideas: [] }] } });
@@ -249,6 +250,7 @@ describe('ideate', () => {
       const out = await ideate(t.deps, t.run, { signalIds: [] });
       expect(out.ideaIds).toHaveLength(0);
       expect(out.dropped).toBe(1);
+      expect(out.dropReasons).toEqual({ [reason]: 1 });
     }
     const ok = mk(1, []);
     Object.assign(ok.ideas[0]!, { knownIncumbents: Array.from({ length: 8 }, (_, i) => `Inc ${i}`), functionalGap: 'g'.repeat(600) });
@@ -277,15 +279,16 @@ describe('ideate', () => {
     expect(p).toContain('`functionalGap`');
   });
 
-  it('drops an idea whose mechanism is outside the fixed list', async () => {
+  it('stores an idea whose mechanism is outside the fixed list as `other` (the mechanism is only a label)', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
-    const bad = mk(1, []);
-    (bad.ideas[0] as Record<string, unknown>).mechanism = 'chatbot';
-    const t = await setup(config, { structured: { ideate: [bad, { ideas: [] }] } });
+    const odd = mk(1, []);
+    (odd.ideas[0] as Record<string, unknown>).mechanism = 'chatbot';
+    const t = await setup(config, { structured: { ideate: [odd] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
-    expect(out.ideaIds).toHaveLength(0);
-    expect(out.dropped).toBe(1);
+    expect(out.ideaIds).toHaveLength(1);
+    expect(out.dropped).toBe(0);
+    expect((await t.db.select().from(ideas))[0]!.mechanism).toBe('other');
   });
 
   it('rejects blank owner idea text', async () => {
@@ -329,7 +332,8 @@ describe('ideate', () => {
 
     expect(structuredPrompts(t.router)).toHaveLength(1);
     expect(out.dropped).toBe(1);
-    expect(t.logs.some((l) => /dropped 1 invalid idea/.test(l))).toBe(true);
+    expect(out.dropReasons).toEqual({ 'businessModel:invalid_value': 1 });
+    expect(t.logs).toContain('ideate: dropped 1 invalid (top reasons: businessModel:invalid_value ×1)');
     const stored = await t.db.select().from(ideas);
     expect(stored.map((i) => i.title).sort()).toEqual(['Renter fee guard', 'Shop payout checker']);
     const c = stored.find((i) => i.title === 'Renter fee guard')!;
@@ -408,19 +412,23 @@ describe('ideate', () => {
 
   it('re-asks once when the mix is short, with the gap stated, and appends only valid ideas', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
-    const biz = mk(4, [], { audience: 'business', businessModel: 'subscription' });
+    // The lens needs 4 ideas: one call of 3, then one of 1.
+    const biz = mk(3, [], { audience: 'business', businessModel: 'subscription' });
+    const biz2 = mk(1, [], { audience: 'business', businessModel: 'subscription', title: 'T3' });
     const c = (title: string, businessModel: string) => ({
       title, oneLiner: 'o', buyer: 'renters', problem: 'p', solution: 's', ...tags, ...claim, signalUrls: [], ...money({ businessModel }),
     });
     const fill = { ideas: [c('C1', 'ads'), c('C2', 'affiliate'), c('C3', 'freemium'), { ...c('Bad', 'ads'), audience: 'pets' }] };
-    const t = await setup(config, { structured: { ideate: [biz, fill, mk(1, [])] } });
+    const t = await setup(config, { structured: { ideate: [biz, biz2, fill, mk(1, [])] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
 
     const prompts = structuredPrompts(t.router);
-    expect(prompts).toHaveLength(2);
-    const [p1, p2] = prompts as [string, string];
+    expect(prompts).toHaveLength(3);
+    const [p1, p1b, p2] = prompts as [string, string, string];
     expect(p1).not.toContain('Fill the gap.');
+    expect(p1b).not.toContain('Fill the gap.');
+    expect(p2).not.toContain('ideas it asked for'); // the count is met: no top-up line
     expect(p2).toContain('Fill the gap.');
     expect(p2).toContain('Generate exactly 3 ideas');
     expect(p2).toContain('At least 3 of the 3 ideas must be consumer ideas');
@@ -436,6 +444,7 @@ describe('ideate', () => {
     expect(stored.filter((i) => i.audience === 'consumer').map((i) => i.title).sort()).toEqual(['C1', 'C2', 'C3']);
     expect(out.ideaIds).toHaveLength(7);
     expect(out.dropped).toBe(1);
+    expect(out.dropReasons).toEqual({ 'audience:invalid_value': 1 });
     expect(out.mix).toMatchObject({ models: 4, reask: true, short: { consumer: 0, models: [] } });
     expect(out.mix!.consumerShare).toBeCloseTo(3 / 7);
     expect(t.logs).toContain('ideate: mix consumer 43% models 4 (re-ask: yes, still short: no)');
@@ -443,12 +452,13 @@ describe('ideate', () => {
 
   it('never re-asks twice: a mix still short after the re-ask is logged and kept in the stage output', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
-    const biz = mk(4, [], { audience: 'business', businessModel: 'subscription' });
+    const biz = mk(3, [], { audience: 'business', businessModel: 'subscription' });
+    const biz2 = mk(1, [], { audience: 'business', businessModel: 'subscription', title: 'T3' });
     const stillBiz = mk(1, [], { audience: 'business', businessModel: 'usage', title: 'More B2B' });
-    const t = await setup(config, { structured: { ideate: [biz, stillBiz, mk(3, [])] } });
+    const t = await setup(config, { structured: { ideate: [biz, biz2, stillBiz, mk(3, [])] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
-    expect(structuredPrompts(t.router)).toHaveLength(2);
+    expect(structuredPrompts(t.router)).toHaveLength(3);
     expect(out.ideaIds).toHaveLength(5);
     expect(out.mix).toMatchObject({ consumerShare: 0, models: 2, reask: true });
     expect(out.mix!.short.consumer).toBe(3);
@@ -458,7 +468,8 @@ describe('ideate', () => {
 
   it('keeps the lens ideas when the re-ask call itself fails', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
-    const t = await setup(config, { structured: { ideate: [mk(4, [], { audience: 'business', businessModel: 'subscription' })] } });
+    const biz = { audience: 'business', businessModel: 'subscription' };
+    const t = await setup(config, { structured: { ideate: [mk(3, [], biz), mk(1, [], { ...biz, title: 'T3' })] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
     expect(out.ideaIds).toHaveLength(4);
@@ -638,6 +649,262 @@ describe('ideate', () => {
     const reask = prompts[6]!;
     expect(reask).toContain('Fill the gap.');
     expect(CONSUMER_LENSES.some((l) => reask.includes(`Pattern: ${l.pattern}`))).toBe(true);
+  });
+});
+
+// ---- tuning 5: calls of 3, normalisation, drop reasons, top-up ----
+
+/**
+ * A fake router that also records each structured call's maxTokens and the JSON schema the real router would send
+ * (z.toJSONSchema calls the per-idea catch with no context), and, for call number i (0-based), reports `cutOff[i]`
+ * cut-off responses through ctx.onTruncated, as the real router does once per truncated response.
+ */
+function spyRouter(script: FakeScript, cutOff: Record<number, number> = {}) {
+  const router = fakeRouter(script);
+  const inner = router.structured.bind(router);
+  const maxTokens: (number | undefined)[] = [];
+  const jsonSchemas: Record<string, any>[] = [];
+  router.structured = (async (stage, req, ctx) => {
+    const i = maxTokens.length;
+    maxTokens.push(req.maxTokens);
+    jsonSchemas.push(z.toJSONSchema(req.schema) as Record<string, any>);
+    for (let k = 0; k < (cutOff[i] ?? 0); k++) ctx.onTruncated?.();
+    return inner(stage, req, ctx);
+  }) as ModelRouter['structured'];
+  return Object.assign(router, { maxTokens, jsonSchemas });
+}
+/** `n` valid ideas titled `${prefix}0`, `${prefix}1`, … */
+const named = (prefix: string, n: number, o: Record<string, unknown> = {}) => {
+  const out = mk(n, [], o);
+  out.ideas.forEach((idea, i) => { (idea as Record<string, unknown>).title = `${prefix}${i}`; });
+  return out;
+};
+const TWO_LENSES = [
+  { id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' },
+  { id: 'tl2', name: 'L2', pattern: 'pat2', promptHint: 'hint2' },
+];
+const askedCounts = (ps: string[]) => ps.map((p) => Number(/Generate exactly (\d+) ideas/.exec(p)![1]));
+const lensNames = (ps: string[]) => ps.map((p) => /Name: (.*)/.exec(p)![1]);
+
+describe('ideate calls of 3', () => {
+  it('splits a count into calls of at most IDEAS_PER_CALL', () => {
+    expect(IDEAS_PER_CALL).toBe(3);
+    expect(splitCounts(6, 3)).toEqual([3, 3]);
+    expect(splitCounts(7, 3)).toEqual([3, 3, 1]);
+    expect(splitCounts(2, 3)).toEqual([2]);
+    expect(splitCounts(0, 3)).toEqual([]);
+  });
+
+  it('a lens seed with 2 lenses and 12 ideas makes 4 calls of 3 in lens order; later calls see earlier titles; 16,000 tokens', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES);
+    const r = spyRouter({ structured: { ideate: [named('A', 3), named('B', 3), named('C', 3), named('D', 3)] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(r);
+    expect(askedCounts(prompts)).toEqual([3, 3, 3, 3]);
+    expect(lensNames(prompts)).toEqual(['L1', 'L1', 'L2', 'L2']);
+    expect(block(prompts[1]!, 'prior-ideas')).toMatch(/^- A0 \(.*\n- A1 \(.*\n- A2 \(/);
+    expect(block(prompts[3]!, 'prior-ideas')).toContain('- C2 (');
+    expect(r.maxTokens).toEqual([16000, 16000, 16000, 16000]);
+    // The model still sees the strict idea schema.
+    const item = r.jsonSchemas[0]!.properties.ideas.items;
+    expect(item.properties.functionalGap.maxLength).toBe(600);
+    expect(item.properties.businessModel.enum).toEqual([...BUSINESS_MODELS]);
+    expect(out.ideaIds).toHaveLength(12);
+    expect(out).toMatchObject({ requested: 12, returned: 12, dropped: 0, dropReasons: {}, truncatedCalls: 0, failedCalls: 0 });
+    expect(out.mix!.reask).toBe(false);
+  });
+
+  it('keeps 3 of 5 ideas from one call; an empty answer counts as returned 0 and later calls still run', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 6 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES);
+    const r = spyRouter({ structured: { ideate: [named('A', 5), { ideas: [] }, named('R', 3)] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    expect(askedCounts(structuredPrompts(r))).toEqual([3, 3, 3]); // the third is the top-up
+    const stored = await t.db.select().from(ideas);
+    expect(stored.map((i) => i.title).sort()).toEqual(['A0', 'A1', 'A2', 'R0', 'R1', 'R2']);
+    expect(out).toMatchObject({ requested: 9, returned: 8, dropped: 0 });
+  });
+
+  it('a re-run for the same run id makes the same calls (lenses, split, prompts) and replaces the ideas (R20)', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 8 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES);
+    const script = (): FakeScript => ({ structured: { ideate: [
+      named('A', 3, { businessModel: 'subscription' }), named('B', 1, { businessModel: 'one_off' }),
+      named('C', 3, { businessModel: 'usage' }), named('D', 1, { businessModel: 'marketplace' }),
+    ] } });
+    const r1 = spyRouter(script());
+    await ideate({ ...t.deps, router: r1 }, t.run, { signalIds: [] });
+    const first = (await t.db.select().from(ideas)).map((i) => i.title).sort();
+    const r2 = spyRouter(script());
+    await ideate({ ...t.deps, router: r2 }, t.run, { signalIds: [] });
+    expect(askedCounts(structuredPrompts(r1))).toEqual([3, 1, 3, 1]);
+    expect(lensNames(structuredPrompts(r1))).toEqual(['L1', 'L1', 'L2', 'L2']);
+    expect(structuredPrompts(r2)).toEqual(structuredPrompts(r1));
+    const second = (await t.db.select().from(ideas)).map((i) => i.title).sort();
+    expect(second).toHaveLength(8);
+    expect(second).toEqual(first);
+  });
+
+  it('a lens whose every call is cut off gives 0 ideas and the run continues, counting cut-off answers and failed calls', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES);
+    // `ideas` that is not an array fails the call's schema: the fake router throws StructuredOutputError, as the real one
+    // does after its re-asks. Each failing call reports 3 cut-off answers (the first try and 2 re-asks).
+    const cut = { ideas: 'cut off' };
+    const r = spyRouter(
+      { structured: { ideate: [cut, cut, named('B', 3), named('C', 3), named('R', 3), named('S', 3)] } },
+      { 0: 3, 1: 3 },
+    );
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(r);
+    expect(lensNames(prompts).slice(0, 4)).toEqual(['L1', 'L1', 'L2', 'L2']);
+    expect(prompts).toHaveLength(6);
+    expect(out).toMatchObject({ requested: 18, returned: 12, failedCalls: 2, truncatedCalls: 6 });
+    const stored = await t.db.select().from(ideas);
+    expect(stored.map((i) => i.title).sort()).toEqual(['B0', 'B1', 'B2', 'C0', 'C1', 'C2', 'R0', 'R1', 'R2', 'S0', 'S1', 'S2']);
+    expect(t.logs.filter((l) => l.startsWith('ideate: a call for lens tl1 gave no valid answer'))).toHaveLength(2);
+  });
+
+  it('puts requested, returned, drop reasons (path and code, never content) and cut-off answers in the stage output', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 3 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const na = (title: string) => named(title, 1, { valueToUser: { kind: 'save', amountPerYear: 'N/A', basis: 'Assumption: x' } }).ideas[0];
+    const first = { ideas: [named('A', 1).ideas[0], na('N1'), named('X', 1, { businessModel: 'crypto' }).ideas[0], na('N2')] };
+    const r = spyRouter({ structured: { ideate: [first, named('R', 2)] } }, { 0: 1 });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    expect(out).toMatchObject({
+      requested: 5, returned: 6, dropped: 3, truncatedCalls: 1, failedCalls: 0,
+      dropReasons: { 'valueToUser.amountPerYear:invalid_type': 2, 'businessModel:invalid_value': 1 },
+    });
+    expect(JSON.stringify(out.dropReasons)).not.toMatch(/N\/A|crypto/);
+    expect(t.logs).toContain(
+      'ideate: dropped 3 invalid (top reasons: valueToUser.amountPerYear:invalid_type ×2, businessModel:invalid_value ×1)',
+    );
+  });
+
+  it('tops up a met mix that is short of the count: one re-ask round of 6 ideas in 2 calls of 3, never a second round', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES);
+    // 5 valid consumer ideas with 5 business models: the mix is met, the count is 7 short.
+    const r = spyRouter({ structured: { ideate: [
+      named('A', 2), named('B', 1), named('C', 1), named('D', 1), named('R', 3), named('S', 1),
+    ] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(r);
+    expect(prompts).toHaveLength(6);
+    expect(askedCounts(prompts)).toEqual([3, 3, 3, 3, 3, 3]);
+    const [p5, p6] = [prompts[4]!, prompts[5]!];
+    for (const p of prompts.slice(0, 4)) expect(p).not.toContain('Fill the gap.');
+    expect(p5).toContain('Fill the gap.');
+    expect(p5).toContain('The run has 5 of the 12 ideas it asked for');
+    expect(p6).toContain('The run has 8 of the 12 ideas it asked for');
+    for (const p of [p5, p6]) {
+      expect(p).not.toContain('must be consumer ideas');
+      expect(p).not.toContain('business models this run has not used yet');
+    }
+    expect(out.ideaIds).toHaveLength(9);
+    expect(out.requested).toBe(18);
+    expect(out.mix!.reask).toBe(true);
+  });
+
+  it('when both the mix and the count are short, the re-ask lists both', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const biz = { audience: 'business', businessModel: 'subscription' };
+    const r = spyRouter({ structured: { ideate: [
+      named('A', 1, biz), named('B', 1, biz), named('C', 1, biz), named('D', 1, biz), { ideas: [] }, { ideas: [] },
+    ] } });
+    await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(r);
+    expect(prompts).toHaveLength(6);
+    const p5 = prompts[4]!;
+    expect(p5).toContain('Generate exactly 3 ideas');
+    expect(p5).toContain('The run has 4 of the 12 ideas it asked for');
+    expect(p5).toContain('At least 3 of the 3 ideas must be consumer ideas');
+    expect(p5).toContain('Use at least 3 business models this run has not used yet');
+  });
+});
+
+describe('normalizeIdea', () => {
+  const idea = (o: Record<string, unknown> = {}) => ({ ...mk(1, []).ideas[0]!, ...o }) as Record<string, unknown>;
+  const norm = (o: Record<string, unknown>) => normalizeIdea(idea(o)) as Record<string, any>;
+
+  it('cuts functionalGap to 600 characters and keeps the first 8 incumbents, each cut to 120', () => {
+    const out = norm({ functionalGap: 'g'.repeat(900), knownIncumbents: Array.from({ length: 10 }, (_, i) => `${i}`.repeat(200)) });
+    expect(out.functionalGap).toHaveLength(600);
+    expect(out.knownIncumbents).toHaveLength(8);
+    expect(out.knownIncumbents.every((s: string) => s.length === 120)).toBe(true);
+    expect(out.knownIncumbents[7]).toBe('7'.repeat(120));
+  });
+
+  it('reads a leading number from number strings, and rounds and clamps barrier scores to 1-5', () => {
+    const out = norm({
+      valueToUser: { kind: 'save', amountPerYear: '$1,200/yr', basis: 'b' },
+      priceHint: { amount: 'about 300', unit: 'year', basis: 'b' },
+      barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'w', soloBuildable: true },
+    });
+    expect(out.valueToUser.amountPerYear).toBe(1200);
+    expect(out.priceHint.amount).toBe(300);
+    expect(out.barriers).toMatchObject({ toStart: 3, toCopy: 5 });
+    expect(norm({ priceHint: { amount: '$15', unit: 'month', basis: 'b' } }).priceHint.amount).toBe(15);
+    expect(norm({ priceHint: { amount: 'USD 2,500.50', unit: 'year', basis: 'b' } }).priceHint.amount).toBe(2500.5);
+    expect(norm({ barriers: { toStart: 0, toStartWhy: 'w', toCopy: '4/5', toCopyWhy: 'w', soloBuildable: true } }).barriers)
+      .toMatchObject({ toStart: 1, toCopy: 4 });
+  });
+
+  it('leaves a string with no usable number unchanged, so it still fails validation', () => {
+    for (const s of ['N/A', 'unknown', '$15k', '2 million', '-5', '1,2']) {
+      expect(norm({ valueToUser: { kind: 'save', amountPerYear: s, basis: 'b' } }).valueToUser.amountPerYear).toBe(s);
+    }
+    expect(norm({ barriers: { toStart: 'easy', toStartWhy: 'w', toCopy: 3, toCopyWhy: 'w', soloBuildable: true } }).barriers.toStart)
+      .toBe('easy');
+  });
+
+  it('trims and lower-cases enum values with a short synonym list; an unknown mechanism becomes `other`', () => {
+    expect(norm({ businessModel: 'One-off' }).businessModel).toBe('one_off');
+    expect(norm({ businessModel: ' one-time ' }).businessModel).toBe('one_off');
+    expect(norm({ businessModel: 'Transaction fee' }).businessModel).toBe('transaction_fee');
+    expect(norm({ businessModel: 'Service+Software' }).businessModel).toBe('service_plus_software');
+    expect(norm({ audience: 'Consumers' }).audience).toBe('consumer');
+    expect(norm({ audience: 'individual' }).audience).toBe('consumer');
+    expect(norm({ audience: 'b2b' }).audience).toBe('business');
+    expect(norm({ audience: 'Businesses' }).audience).toBe('business');
+    expect(norm({ valueToUser: { kind: ' Save', amountPerYear: 1, basis: 'b' } }).valueToUser.kind).toBe('save');
+    expect(norm({ mechanism: 'Data product' }).mechanism).toBe('data_product');
+    expect(norm({ mechanism: 'chatbot' }).mechanism).toBe('other');
+  });
+
+  it('keeps unknown business models, audiences and value kinds as they are, so the idea still drops (no relabelling)', () => {
+    expect(norm({ businessModel: 'crypto' }).businessModel).toBe('crypto');
+    expect(norm({ audience: 'pets' }).audience).toBe('pets');
+    expect(norm({ audience: 'Consumers', businessModel: 'consumer' }).businessModel).toBe('consumer');
+    expect(norm({ valueToUser: { kind: 'gift', amountPerYear: 1, basis: 'b' } }).valueToUser.kind).toBe('gift');
+  });
+
+  it('ideate stores a normalised idea instead of dropping it', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const t = await setup(config, {
+      structured: { ideate: [{ ideas: [idea({
+        functionalGap: 'g'.repeat(900), audience: 'Consumers', businessModel: 'One-off',
+        valueToUser: { kind: 'save', amountPerYear: '$1,200/yr', basis: 'Assumption: b' },
+        barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'w', soloBuildable: true },
+      })] }] },
+    });
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.dropped).toBe(0);
+    const [row] = await t.db.select().from(ideas);
+    expect(row).toMatchObject({ audience: 'consumer', businessModel: 'one_off', barriers: { toStart: 3, toCopy: 5 } });
+    expect(row!.functionalGap).toHaveLength(600);
+    expect(row!.valueToUser!.amountPerYear).toBe(1200);
   });
 });
 

@@ -90,7 +90,8 @@ export function createRouter(opts: {
   function complete(stage: ModelStage, req: Omit<AdapterRequest, 'model'>, ctx: CallCtx): Promise<AdapterResponse> {
     return invoke(stage, ctx, async (adapter, model) => {
       const res = await adapter.complete({ ...req, model });
-      if (res.truncated) ctx.onTruncated?.();
+      // A throwing callback must not count as a provider failure (and be retried).
+      if (res.truncated) { try { ctx.onTruncated?.(); } catch { /* ignore */ } }
       return { result: res, usage: res.usage };
     });
   }
