@@ -21,6 +21,10 @@ const fmt = (n: number): string => (Math.abs(n) >= 1000 ? Math.round(n).toLocale
 
 /** Non-null yearly points, oldest first, plus the country name; null for the error-object shape or anything unexpected. */
 function parseSeries(json: unknown): { points: Point[]; country: string } | null {
+  // No data for this country: the API answers [{ total: 0, … }, null]. That is an empty series, not a broken response.
+  if (Array.isArray(json) && json[1] === null && (json[0] as { total?: unknown } | undefined)?.total === 0) {
+    return { points: [], country: '' };
+  }
   if (!Array.isArray(json) || !Array.isArray(json[1])) return null;
   const points: Point[] = [];
   let country = '';

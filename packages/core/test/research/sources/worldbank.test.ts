@@ -82,6 +82,14 @@ describe('worldBankMarket', () => {
     expect(logs.length).toBeGreaterThan(0);
   });
 
+  it('skips an indicator with no data for the country quietly (the API answers [meta, null])', async () => {
+    const logs: string[] = [];
+    const noData = [{ page: 0, pages: 0, per_page: 0, total: 0, sourceid: null, lastupdated: null }, null];
+    const d = await run(api((c) => (c === 'IC.BUS.NDNS.ZS' ? noData : GOOD(c))), 'US', (m) => logs.push(m));
+    expect((d!.facts as { sizeClues: unknown[] }).sizeClues).toHaveLength(5);
+    expect(logs).toEqual([]);
+  });
+
   it('keeps going when one indicator has the wrong shape', async () => {
     const d = await run(api((c) => (c === 'NY.GDP.PCAP.CD' ? [{ message: [] }] : GOOD(c))));
     expect((d!.facts as { sizeClues: unknown[] }).sizeClues).toHaveLength(5);
