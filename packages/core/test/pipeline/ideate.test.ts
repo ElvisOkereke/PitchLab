@@ -239,8 +239,8 @@ describe('ideate', () => {
   it('drops (does not store) an idea with a missing gap or a non-text incumbent, and records the reason', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
     const variants: [Record<string, unknown>, string][] = [
-      [{ functionalGap: undefined }, 'functionalGap:invalid_type'],
-      [{ knownIncumbents: ['Acme', 42] }, 'knownIncumbents.*:invalid_type'],
+      [{ functionalGap: undefined }, 'functionalGap:invalid_type(undefined)'],
+      [{ knownIncumbents: ['Acme', 42] }, 'knownIncumbents.*:invalid_type(number)'],
     ];
     for (const [patch, reason] of variants) {
       const bad = mk(1, []);
@@ -780,11 +780,11 @@ describe('ideate calls of 3', () => {
     const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
     expect(out).toMatchObject({
       requested: 6, returned: 6, dropped: 3, truncatedCalls: 1, failedCalls: 0,
-      dropReasons: { 'valueToUser.amountPerYear:invalid_type': 2, 'businessModel:invalid_value': 1 },
+      dropReasons: { 'valueToUser.amountPerYear:invalid_type(string)': 2, 'businessModel:invalid_value': 1 },
     });
     expect(JSON.stringify(out.dropReasons)).not.toMatch(/N\/A|crypto/);
     expect(t.logs).toContain(
-      'ideate: dropped 3 invalid (top reasons: valueToUser.amountPerYear:invalid_type ×2, businessModel:invalid_value ×1)',
+      'ideate: dropped 3 invalid (top reasons: valueToUser.amountPerYear:invalid_type(string) ×2, businessModel:invalid_value ×1)',
     );
   });
 
@@ -873,6 +873,25 @@ describe('normalizeIdea', () => {
     expect(out.knownIncumbents[7]).toBe('7'.repeat(120));
   });
 
+  it('reads soloBuildable text as a boolean; missing or unclear reads as false', () => {
+    const solo = (v: unknown) => norm({ barriers: { toStart: 2, toStartWhy: 'w', toCopy: 3, toCopyWhy: 'w', soloBuildable: v } }).barriers.soloBuildable;
+    expect(solo(true)).toBe(true);
+    expect(solo(false)).toBe(false);
+    for (const v of ['true', 'Yes', 'y', ' yes. ']) expect(solo(v)).toBe(true);
+    for (const v of ['false', 'no', 'maybe', undefined, null, 1]) expect(solo(v)).toBe(false);
+  });
+
+  it('ideate keeps an idea whose soloBuildable came back as text (bench-v2 #3 dropped 35 of 48 this way)', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const base = named('S', 1).ideas[0] as Record<string, any>;
+    const textual = { ideas: [{ ...base, barriers: { ...base.barriers, soloBuildable: 'yes' } }] };
+    const t = await setup(config, { structured: { ideate: [textual] } });
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.ideaIds).toHaveLength(1);
+    expect(out.dropReasons).toEqual({});
+  });
+
   it('leaves long or whitespace-padded number strings alone without slow matching', () => {
     const padded = ' '.repeat(50_000) + 'x';
     const started = Date.now();
@@ -932,7 +951,7 @@ describe('normalizeIdea', () => {
     await t.db.insert(lenses).values(TWO_LENSES[0]!);
     const out = await ideate(t.deps, t.run, { signalIds: [] });
     expect(out.ideaIds).toHaveLength(0);
-    expect(out.dropReasons).toEqual({ 'valueToUser.amountPerYear:invalid_type': 1 });
+    expect(out.dropReasons).toEqual({ 'valueToUser.amountPerYear:invalid_type(string)': 1 });
   });
 
   it('a missing, null or non-text mechanism becomes `other` too', () => {

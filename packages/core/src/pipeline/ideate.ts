@@ -189,6 +189,8 @@ export function normalizeIdea(raw: unknown): unknown {
   if (barriers) {
     cut(barriers, 'toStartWhy', 300); cut(barriers, 'toCopyWhy', 300);
     set(barriers, 'toStart', score); set(barriers, 'toCopy', score);
+    // Only a preference: yes/true text reads as true; missing, null or anything else reads as false (the cautious answer).
+    barriers.soloBuildable = soloFlag(barriers.soloBuildable);
     idea.barriers = barriers;
   }
   if (Array.isArray(idea.libraryItemIds)) {
@@ -201,12 +203,27 @@ export function normalizeIdea(raw: unknown): unknown {
   return idea;
 }
 
-/** An idea that failed validation, with why: each issue as `path:code` (array indexes read as `*`), never the content. */
+/** `soloBuildable` as a boolean: true, or text meaning yes; everything else is false. */
+function soloFlag(v: unknown): boolean {
+  if (typeof v === 'boolean') return v;
+  return typeof v === 'string' && /^\s*(?:true|yes|y)\s*\.?\s*$/i.test(v);
+}
+
+/**
+ * An idea that failed validation, with why: each issue as `path:code` (array indexes read as `*`), never the content.
+ * A type mismatch also names the type the model sent (`(string)`, `(undefined)`), which is not content either.
+ */
 class DroppedIdea {
   constructor(readonly reasons: string[]) {}
 }
-const reasonKey = (issue: { path: PropertyKey[]; code: string }) =>
-  `${issue.path.map((p) => (typeof p === 'number' ? '*' : String(p))).join('.') || '(idea)'}:${issue.code}`;
+const typeAt = (input: unknown, path: PropertyKey[]): string => {
+  let v: unknown = input;
+  for (const p of path) v = v && typeof v === 'object' ? (v as Record<PropertyKey, unknown>)[p] : undefined;
+  return v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v;
+};
+const reasonKey = (issue: { path: PropertyKey[]; code: string }, input?: unknown) =>
+  `${issue.path.map((p) => (typeof p === 'number' ? '*' : String(p))).join('.') || '(idea)'}:${issue.code}` +
+  (issue.code === 'invalid_type' && input !== undefined ? `(${typeAt(input, issue.path)})` : '');
 
 /**
  * One invalid idea parses to a DroppedIdea (dropped, counted, reasons kept) instead of failing the whole call. The
@@ -216,7 +233,7 @@ const reasonKey = (issue: { path: PropertyKey[]; code: string }) =>
  */
 const lensIdeasSchema = z.object({
   ideas: z.array(z.preprocess(normalizeIdea, lensIdeaSchema).catch((ctx) =>
-    (ctx ? new DroppedIdea([...new Set(ctx.error.issues.map(reasonKey))]) : undefined) as unknown as LensIdea)),
+    (ctx ? new DroppedIdea([...new Set(ctx.error.issues.map((i) => reasonKey(i, normalizeIdea(ctx.input))))]) : undefined) as unknown as LensIdea)),
 });
 /** Owner ideas never get invented incumbents or gaps (those columns stay null); the money fields are optional. */
 const ownerIdeaSchema = z.object({
