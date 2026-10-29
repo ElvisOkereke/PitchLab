@@ -873,6 +873,17 @@ describe('normalizeIdea', () => {
     expect(out.knownIncumbents[7]).toBe('7'.repeat(120));
   });
 
+  it('leaves long or whitespace-padded number strings alone without slow matching', () => {
+    const padded = ' '.repeat(50_000) + 'x';
+    const started = Date.now();
+    const out = norm({ valueToUser: { kind: 'save', amountPerYear: padded, basis: 'b' } });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(out.valueToUser.amountPerYear).toBe(padded);
+    const long = `$1,200 ${'and more words '.repeat(5)}`;
+    expect(norm({ valueToUser: { kind: 'save', amountPerYear: long, basis: 'b' } }).valueToUser.amountPerYear).toBe(long);
+    expect(norm({ valueToUser: { kind: 'save', amountPerYear: '   $1,200 /yr  ', basis: 'b' } }).valueToUser.amountPerYear).toBe(1200);
+  });
+
   it('reads a leading number from number strings, and rounds and clamps barrier scores to 1-5', () => {
     const out = norm({
       valueToUser: { kind: 'save', amountPerYear: '$1,200/yr', basis: 'b' },

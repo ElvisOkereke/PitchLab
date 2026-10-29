@@ -101,13 +101,19 @@ const clip = (v: unknown, max: number) => (typeof v === 'string' && v.length > m
  */
 function leadingNumber(v: unknown, restOk: RegExp): unknown {
   if (typeof v !== 'string') return v;
-  const m = /^\s*(?:(?:about|around|approximately|approx\.?|roughly|~)\s*)?(?:USD|CAD|EUR|GBP|AUD)?\s*(?:US|CA|C|A)?[$€£]?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(.*)$/i.exec(v);
+  // Model text can be steered by untrusted evidence: trim, refuse long strings and collapse spaces before the regex, whose
+  // adjacent optional whitespace runs would otherwise backtrack polynomially on a long run of spaces.
+  const s = v.trim().replace(/\s+/g, ' ');
+  if (s.length > NUMBER_TEXT_MAX) return v;
+  const m = /^(?:(?:about|around|approximately|approx\.?|roughly|~) ?)?(?:USD|CAD|EUR|GBP|AUD)? ?(?:US|CA|C|A)?[$€£]? ?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(.*)$/i.exec(s);
   if (!m) return v;
   const rest = m[3]!.trim();
   if (/^[\d.,]|^e\d/i.test(rest) || /^(?:k|m|mm|bn|b|thousand|million|billion)\b/i.test(rest) || !restOk.test(rest)) return v;
   const n = Number(m[1]!.replace(/,/g, '') + (m[2] ?? ''));
   return Number.isFinite(n) ? n : v;
 }
+/** Number text longer than this is left as it is (it is a sentence, not an amount). */
+const NUMBER_TEXT_MAX = 64;
 const CURRENCY = String.raw`(?:USD|CAD|EUR|GBP|AUD|[$€£])`;
 /** After a yearly value: nothing, a currency, a year marker (`/yr`, `per year`, `a year`, `annually`, `yearly`). */
 const YEARLY_REST = new RegExp(
