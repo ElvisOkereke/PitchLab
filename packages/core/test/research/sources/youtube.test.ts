@@ -92,6 +92,13 @@ describe('youtubeSearch mapping', () => {
     for (const bad of ['Jane Plumber', 'UC_SECRET_CHANNEL', 'jane.jpg', 'Chan"', 'Ugx_COMMENT_ID', '&lc=']) expect(dump).not.toContain(bad);
   });
 
+  it('asks for 40 comments per video by default', async () => {
+    const a = api(happyRoutes());
+    await youtubeSearch('invoicing pain', opts(a.impl));
+    const c = a.calls.find((x) => x.path === 'commentThreads')!;
+    expect(c.params.get('maxResults')).toBe('40');
+  });
+
   it('calls search, videos (batched) and commentThreads with the documented parameters', async () => {
     const a = api(happyRoutes());
     await youtubeSearch('invoicing pain', opts(a.impl, { regionCode: 'CA', maxVideos: 2, commentsPerVideo: 50 }));

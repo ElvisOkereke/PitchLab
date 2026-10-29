@@ -22,6 +22,8 @@ export const YOUTUBE_QUOTA_WARNING = 'YouTube daily quota reached';
 export const YOUTUBE_RATE_WARNING = 'YouTube rate limit reached';
 const BASE = 'https://www.googleapis.com/youtube/v3/';
 const VIDEO_ID = /^[A-Za-z0-9_-]{6,20}$/;
+/** Lighter than the API maximum (100): in a mixed-source mission YouTube comments crowded the startup sources out of the evidence. */
+export const DEFAULT_COMMENTS_PER_VIDEO = 40;
 const REGION = /^[A-Za-z]{2}$/;
 const DAILY_REASONS = new Set(['quotaExceeded', 'dailyLimitExceeded']);
 const RATE_REASONS = new Set(['rateLimitExceeded']);
@@ -80,7 +82,7 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
   if (state.searches >= MAX_SEARCHES_PER_MISSION) return [];
   const now = () => new Date((opts.now ?? Date.now)());
   const maxVideos = Math.min(Math.max(opts.maxVideos ?? 5, 1), 50);
-  const perVideo = Math.min(Math.max(opts.commentsPerVideo ?? 100, 1), 100);
+  const perVideo = Math.min(Math.max(opts.commentsPerVideo ?? DEFAULT_COMMENTS_PER_VIDEO, 1), 100);
   const key = opts.apiKey;
 
   const stop = (warning: string) => {

@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { dataCalls, knowledgeItems, knowledgeSources, llmCalls, pageFetches, researchMissions } from '../../src/db/schema';
 import type { CallCtx, ModelRouter, Source } from '../../src/llm/types';
-import { buildCollectors, COLLECT_SHARE, maxQueriesFor, runMission, type Collectors, type MissionDeps } from '../../src/research/mission';
+import { buildCollectors, COLLECT_SHARE, maxQueriesFor, runMission, withStartupQueries, type PlannedQuery, type Collectors, type MissionDeps } from '../../src/research/mission';
 import { resetRobotsCache } from '../../src/research/robots';
 import { SourceError, USER_AGENT } from '../../src/research/http';
 import type { YcCompany } from '../../src/research/sources/yc';
@@ -379,7 +379,7 @@ describe('runMission', () => {
       const { deps, router, hn, ycQueries } = setup(db, { researchCost: 0.25, webCount: 6 });
       expect(await runMission(deps, id)).toBe('succeeded');
       expect(hn.queries).toEqual(['late payment']);
-      expect(ycQueries).toEqual(['invoicing']);
+      expect(ycQueries[0]).toBe('invoicing'); // the planned one first; the startup reservation adds a second
       expect(router.calls.some((c) => c.stage === 'library_extract')).toBe(true);
       const m = await mission(db, id);
       expect(m.itemsAdded).toBeGreaterThan(0);
@@ -391,7 +391,7 @@ describe('runMission', () => {
       const id = await insertMission(db, { budgetUsd: '5', kinds: ['problem', 'startup'] });
       const { deps, events } = setup(db, { researchCost: 0.01, webCount: 2 });
       await runMission(deps, id);
-      expect(events).toEqual(['hn', 'yc', 'web', 'web']);
+      expect(events).toEqual(['hn', 'yc', 'yc', 'web', 'web']); // the second yc is the startup reservation
     });
 
     it('stops starting web queries once spend reaches the collection share of the budget', async () => {
@@ -911,5 +911,83 @@ describe('buildCollectors', () => {
       expect(await runMission({ ...deps, router, collectors: { appReviews } }, id)).toBe('succeeded');
       expect(await db.select().from(knowledgeItems)).toEqual([]);
     });
+  });
+});
+
+describe('withStartupQueries', () => {
+  type Q = PlannedQuery;
+  const mk = (source: Q['source'], n: number, tag: string = source): Q[] => Array.from({ length: n }, (_, i) => ({ source, q: `${tag} q${i}` }));
+  const both = { yc: true, producthunt: true };
+  const startup = (qs: Q[]) => qs.filter((x) => x.source === 'yc' || x.source === 'producthunt');
+
+  it('a 20-query plan with no startup queries gets 3 and stays at 20', () => {
+    const plan = [...mk('web', 14), ...mk('hn', 6)];
+    const out = withStartupQueries(plan, 'property manager Shopify', 20, both);
+    expect(out).toHaveLength(20);
+    expect(startup(out)).toHaveLength(3);
+    expect(out.filter((x) => x.source === 'yc').length).toBeGreaterThanOrEqual(2);
+    expect(out.some((x) => x.source === 'hn')).toBe(true);
+    expect(out.some((x) => x.source === 'web')).toBe(true);
+  });
+
+  it('never exceeds a cap of 12, even from a full plan', () => {
+    const out = withStartupQueries([...mk('web', 8), ...mk('hn', 4)], 'invoicing', 12, both);
+    expect(out.length).toBeLessThanOrEqual(12);
+    expect(startup(out).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('leaves a plan of only startup queries unchanged', () => {
+    const plan = [...mk('yc', 3), ...mk('producthunt', 2)];
+    expect(withStartupQueries(plan, 'invoicing', 12, both)).toEqual(plan);
+  });
+
+  it('keeps pricing queries and at least one query of every other source', () => {
+    const plan: Q[] = [
+      { source: 'web', q: 'x software pricing plans per month' }, { source: 'web', q: 'x tool pricing comparison' },
+      ...mk('web', 7), ...mk('hn', 1), ...mk('web', 1, 'tail'),
+    ];
+    const out = withStartupQueries(plan, 'widgets', 11, both);
+    expect(out.length).toBeLessThanOrEqual(11);
+    expect(out.filter((q) => /pricing/.test(q.q))).toHaveLength(2);
+    expect(out.some((q) => q.source === 'hn')).toBe(true);
+    expect(startup(out).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('adds yc queries only when Product Hunt is unavailable', () => {
+    const out = withStartupQueries(mk('web', 12), 'invoicing tools', 12, { yc: true, producthunt: false });
+    expect(startup(out).length).toBeGreaterThanOrEqual(2);
+    expect(startup(out).every((q) => q.source === 'yc')).toBe(true);
+    expect(out).toHaveLength(12);
+  });
+
+  it('returns the plan unchanged when neither startup source is available', () => {
+    const plan = mk('web', 12);
+    expect(withStartupQueries(plan, 'invoicing', 12, { yc: false, producthunt: false })).toEqual(plan);
+  });
+
+  it('the reservation never pushes the total over a cap smaller than it', () => {
+    const out = withStartupQueries(mk('web', 3), 'invoicing', 3, both);
+    expect(out.length).toBeLessThanOrEqual(3);
+    const out1 = withStartupQueries(mk('web', 1), 'invoicing', 1, both);
+    expect(out1.length).toBeLessThanOrEqual(1);
+  });
+
+  it('a plan of only startup queries below the reservation grows within the cap', () => {
+    const out = withStartupQueries(mk('yc', 1), 'invoicing', 12, both);
+    expect(out.length).toBeLessThanOrEqual(12);
+    expect(startup(out).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('runMission startup reservation', () => {
+  it('adds startup-source queries to a web-only plan when yc is available', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['startup'], topic: 'property manager shopify' });
+    const router = mockRouter(db, { plan: { queries: Array.from({ length: 6 }, (_, i) => ({ source: 'web', q: `forum ${i}` })) } });
+    const { deps } = happy(db);
+    let ycCalls = 0;
+    const yc = async () => { ycCalls++; return []; };
+    expect(await runMission({ ...deps, router, collectors: { yc } }, id)).toBe('succeeded');
+    expect(ycCalls).toBeGreaterThanOrEqual(2);
   });
 });

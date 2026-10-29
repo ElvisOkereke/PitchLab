@@ -282,7 +282,68 @@ function cleanStructured(d: KnowledgeDraft): KnowledgeDraft {
   return { ...d, title: cleanStored(d.title), summary: cleanStored(d.summary), facts: cleanFacts(d.facts) };
 }
 
-type PlannedQuery = { source: MissionSource; q: string };
+export type PlannedQuery = { source: MissionSource; q: string };
+
+const STARTUP_STOP = new Set(['a', 'an', 'the', 'and', 'or', 'for', 'of', 'to', 'in', 'on', 'with', 'my', 'our', 'your', 'tools', 'tool', 'software', 'app', 'apps', 'ai', 'best', 'new']);
+
+/**
+ * Startup sources (YC, Product Hunt) are easy to crowd out of a mixed plan. Guarantees at least max(2, ceil(15% of the plan))
+ * startup-source queries built from the first one or two significant topic words (YC first, then alternating with Product Hunt when
+ * it is available). The total stays within `max`: trailing queries of other sources go first, never pricing-page queries and never
+ * the last query of a source while another can go; as a last resort the added startup queries are trimmed. Unchanged when no
+ * startup source is available.
+ */
+export function withStartupQueries(
+  queries: PlannedQuery[],
+  topic: string,
+  max: number,
+  available: { yc: boolean; producthunt: boolean },
+): PlannedQuery[] {
+  if (!available.yc && !available.producthunt) return queries;
+  const isStartup = (x: PlannedQuery) => x.source === 'yc' || x.source === 'producthunt';
+  const need = Math.max(2, Math.ceil(0.15 * queries.length));
+  const have = queries.filter(isStartup).length;
+  if (have >= need) return queries;
+  const words = stripInvisible(topic).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 1 && !STARTUP_STOP.has(w));
+  const first = words[0];
+  if (!first) return queries;
+  const second = words[1];
+  const keywords = [first, ...(second ? [second, `${first} ${second}`] : []), `${first} software`, `${first} platform`].map((w) => capField(w, 120));
+  const sources: Array<'yc' | 'producthunt'> = available.yc ? (available.producthunt ? ['yc', 'producthunt'] : ['yc']) : ['producthunt'];
+  const out = [...queries];
+  const added = new Set<PlannedQuery>();
+  // YC first, then alternate; each source walks its own keyword list.
+  const next = { yc: 0, producthunt: 0 };
+  let turn = 0;
+  for (let guard = 0; guard < 12 && out.filter(isStartup).length < need; guard++) {
+    const s = sources[turn++ % sources.length]!;
+    while (next[s] < keywords.length) {
+      const q = keywords[next[s]++]!;
+      if (out.some((x) => x.source === s && x.q === q)) continue;
+      const item: PlannedQuery = { source: s, q };
+      out.push(item);
+      added.add(item);
+      break;
+    }
+  }
+  const isPricing = (x: PlannedQuery) => x.source === 'web' && PRICING_QUERY.test(x.q);
+  const dropLast = (pred: (x: PlannedQuery, i: number) => boolean): boolean => {
+    for (let i = out.length - 1; i >= 0; i--) {
+      if (pred(out[i]!, i)) {
+        out.splice(i, 1);
+        return true;
+      }
+    }
+    return false;
+  };
+  const soleOfSource = (x: PlannedQuery) => out.filter((y) => y.source === x.source).length <= 1;
+  while (out.length > max) {
+    const droppable = (x: PlannedQuery) => !isStartup(x) && !isPricing(x);
+    if (dropLast((x) => droppable(x) && !soleOfSource(x)) || dropLast(droppable) || dropLast((x) => added.has(x))) continue;
+    break;
+  }
+  return out;
+}
 
 /**
  * Pricing needs real price points, which only pricing pages carry. Guarantees at least max(2, ceil(25% of web queries))
@@ -420,7 +481,8 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       .map((q) => ({ source: q.source, q: capField(stripInvisible(q.q), 200) }))
       .filter((q) => q.q !== '' && !seenQ.has(`${q.source}\n${q.q}`) && seenQ.add(`${q.source}\n${q.q}`))
       .slice(0, maxQueries);
-    const queries = kinds.includes('pricing') ? withPricingQueries(planned, m.topic, maxQueries) : planned;
+    const priced = kinds.includes('pricing') ? withPricingQueries(planned, m.topic, maxQueries) : planned;
+    const queries = kinds.includes('startup') ? withStartupQueries(priced, m.topic, maxQueries, { yc: has.yc, producthunt: has.producthunt }) : priced;
     log(`mission ${missionId}: ${queries.length} queries`);
 
     // 2. Collect
