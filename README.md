@@ -59,10 +59,12 @@ missions** card.
 - **Entry kinds collected:** `problem` (a pain someone describes, with persona and cost or workaround), `pricing`
   (product, price points, buyer, complaints) and `startup` (name, what it does, business model, outcome such as active
   or dead, and why). Each entry has a voice: `operator` (someone living the problem), `neutral` (regulators,
-  journalists, statistics) or `vendor` (someone selling a fix). Other kinds (trend, rule change, market) are defined
-  for later and not collected yet.
-- **Start a mission:** **Start research mission** on the Library page, or `gen research "<topic>"` (`--kinds`, up to 3
-  of problem, pricing, startup, default all three; `--countries CA,US` or `global`, up to 10; `--audience
+  journalists, statistics) or `vendor` (someone selling a fix). Three more kinds say what is changing and how big the
+  market is: `trend` (a topic that is rising, falling or steady, with the numbers), `rule_change` (a new or proposed
+  rule: what changed, who must act, effective and published dates) and `market` (a segment and country with size and
+  growth clues). Ideation reads them as demand evidence (see below).
+- **Start a mission:** **Start research mission** on the Library page, or `gen research "<topic>"` (`--kinds`, up to 6
+  of problem, pricing, startup, trend, rule_change, market, default the first three; `--countries CA,US` or `global`, up to 10; `--audience
   business|consumer|both`; `--budget`). `gen research status` lists recent missions.
 - **Budget:** default $2, minimum $0.50, maximum $25. It is a soft limit, checked between steps: a mission stops
   starting new steps once spent, and the step in flight may run a little over. More budget buys more queries: about
@@ -88,6 +90,22 @@ missions** card.
   7. **Embed and store:** one embedding call, then each entry is added, or merged into an existing entry when it is an
      exact copy or at least 0.9 similar (same kind). A merge adds the new source and can upgrade the voice or adopt a
      verified quote.
+- **Sources for what is changing (free, no keys):**
+
+  | Source | Feeds | What it gives |
+  |---|---|---|
+  | Federal Register (`federalregister.gov` API) | `rule_change` | US final and proposed rules from the last 24 months, with effective and published dates |
+  | Wikipedia pageviews (Wikimedia API) | `trend` | Monthly views by people (not bots) over 36 months, measured in code: rising, falling or steady |
+  | Hacker News yearly counts (Algolia) | `trend` | Stories per year over 4 years, measured in code |
+  | World Bank indicators | `market` | Per country: population, GDP per capita, internet users, mobile subscriptions, new business density, urban share |
+
+  Web search also feeds all three kinds, so Canadian and provincial rule changes (Canada Gazette, provincial registries)
+  and segment market sizes come from web pages with verified quotes. Wikipedia, Hacker News and World Bank figures are
+  numbers fetched by code and need no model call; a **reported** trend or market number is kept only when it appears in
+  the verified quote. Per mission, at most 6 Wikipedia queries, 6 Hacker News trend queries and 8 Federal Register
+  queries run, and World Bank runs once for each named country (not `global`) when `market` is chosen. A 429 stops that
+  source for the mission with a warning. Rule changes published over 3 years ago, or in force over 2 years ago, are
+  dropped with a count in the mission warnings. Background research adds one of these three kinds to each topic in turn.
 - **Sources not used:** Reddit is deliberately off (its terms need a contract for commercial use and its public API is
   closing; the collector code stays unused). Product Hunt is used only when `PRODUCTHUNT_TOKEN` is set (non-commercial
   use under its free API terms).
@@ -138,10 +156,12 @@ follow its progress.
     consumer segments for open seeds, plus the free tech forums (Hacker News, Stack Exchange, GitHub, WordPress.org)
     when a software-adjacent sector or a lens seed is used. The model extracts pain quotes and tags each one's voice;
     a quote is kept only if it appears in the fetched text.
-  - **ideate** (prompt v9): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** lenses;
+  - **ideate** (prompt v10): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** lenses;
     lens seeds use exactly the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
-    startups (up to 8) and **pricing** entries (up to 15), plus past gate kills and ideas that already have cases.
+    startups (up to 8) and **pricing** entries (up to 15), what is **changing** (up to 10 trends and rule changes, rule
+    changes with an effective date within 18 months first) and **market size** entries (up to 6), plus past gate kills
+    and ideas that already have cases. An idea cites a change or market in `libraryItemIds` only when it depends on it.
     Each idea names its audience, one of 11 business models, revenue mechanics, value to the user per year, a price
     hint, barriers to start and to copy (1 to 5) and the incumbents it claims to beat. The run must reach at least
     **30% consumer** ideas and **4 business models**; if it falls short on the mix, or on the idea count, ideate asks once more
@@ -219,7 +239,7 @@ follow its progress.
   `gen bench baseline` over your finished real runs) beside the 5 newest benchmark passes.
 - **Scorecard metrics** (target in brackets): repetition (below 0.55), near-duplicates (below 10%), buyer variety (8 or
   more per run), consumer share (30% or more), business-model variety (4 or more per run), real-need evidence (50% or
-  more), demand evidence (not measured yet), customer return (100%, median 3× or more), our margin (100%), wasted gate
+  more), demand evidence (80% or more of ideas cite a trend, rule change or market entry), customer return (100%, median 3× or more), our margin (100%), wasted gate
   entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), cost per
   case (tracked). Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current

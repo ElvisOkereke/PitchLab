@@ -76,12 +76,28 @@ It already has one.
 ### Build the research library
 
 - **What:** Open **Library** (next to Board). It holds the research PitchLab keeps between runs: problems people
-  describe in their own words, what products charge, and how startups fared. Search it, filter it by kind, country,
+  describe in their own words, what products charge, how startups fared, what is growing or changing, and how big
+  markets are. Search it, filter it by kind, country,
   voice, source and age, and open an entry to read its quote and sources. To add to it, fill in **Research missions**
   with a topic, tick what to collect, and press **Start research mission**.
 - **Why:** Runs draw on the library, so a fuller and more varied library gives your ideas more real evidence to start from.
   Only problem and pricing entries whose quote was checked against the source text count as evidence. Those show a
   "verified quote" badge; anything else shows "unverified".
+- **Choose what to collect:** Tick the kinds in the mission form. Problems, Startups and Pricing are ticked by default.
+  The other three need no key, and their numbers cost nothing to fetch:
+  - **What is growing or shrinking** (trend) reads Wikipedia pageviews and Hacker News story counts for your topic, and
+    says whether interest is rising, falling or steady (at least 20% up or down, comparing the last year with the one
+    before). Web pages can add trends that quote their numbers.
+  - **A rule or platform change** (rule change) finds recent US rules and proposed rules (Federal Register) and, through
+    web search, Canadian and provincial notices and platform policy changes. Rules published over 3 years ago, or in
+    force over 2 years ago, are dropped.
+  - **Market size clues** (market) adds World Bank figures for each country you name (not `global`) and, through web
+    search, size and growth figures for a segment, such as dental clinics in Ontario.
+
+  In the Library, a trend entry lists its numbers with the period each covers. A rule change shows what changed, who
+  must act, and its effective and published dates ("not stated" when unknown). A market entry lists size and growth
+  clues. A trend or market number from a web page is kept only when it appears in the quote the entry shows. From the
+  terminal, add `--kinds problem,trend,rule_change,market`. Background research adds one of the three to each topic in turn.
 - **Cost:** The form shows the most a mission can cost ("up to $X"), and a typical cost once a mission has finished.
   The budget (0.50 to 25 dollars, default 2) buys more research: a mission plans
   about 6 queries per dollar (12 to 60). With Pricing ticked, a quarter or more of its web searches go to vendor pricing
@@ -425,7 +441,7 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
      column with today's scores; the old one stays as it was. Retrying a failed run after its pass froze doesn't change
      the pass either: press Recompute to include the retried run.
 - **What good looks like:** Repetition and near-duplicates fall, buyer variety rises, and your own verdict stays above
-  3.5. The newer rows should also rise: consumer share (at least 30% of ideas for individuals), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
+  3.5. The newer rows should also rise: demand evidence (at least 80% of ideas rest on a trend, a rule change or a market entry from the library; ideas from before this existed are left out), consumer share (at least 30% of ideas for individuals), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
 - **From the terminal:** `npm run gen -- bench report` prints the scorecard and writes it to `output/bench/`.
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline

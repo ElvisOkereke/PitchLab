@@ -121,3 +121,15 @@ The share of sources in the library that come from community sites, such as Hack
 
 ### Pages read
 How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, or in the local browser). The sites that fail most are listed with their main reason.
+
+### Trend
+A topic that people are searching for or posting about more, less or about the same as before, shown with the numbers behind it. Pageview and Hacker News counts are measured by PitchLab, and a figure from an article is kept only when its quote contains the number.
+
+### Rule change
+A new or proposed rule, or a platform policy change, that forces people to act, with what changed, who is affected and the dates it was published and takes effect. Rules published over three years ago, or in force for over two, are left out.
+
+### Market
+How big a group of customers is and whether it is growing, for example the people in a country or the clinics in a province, shown as size and growth clues with their year and source.
+
+### Demand evidence
+The share of generated ideas that rest on a trend, a rule change or a market entry from the library. Ideas cite one only when they depend on it, and the benchmark aims for 80 percent.

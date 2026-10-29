@@ -4,6 +4,14 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
+- **Slice B: what is changing and where the market is (branch `sliceb`, built 2026-10-29, not merged):** the library
+  holds `trend`, `rule_change` and `market` entries. Free collectors (no keys): Federal Register rules, Wikipedia
+  pageviews, Hacker News yearly counts, World Bank indicators; web search feeds all three kinds (Canadian rules, segment
+  markets). Missions, the CLI and the web form accept all six kinds, and background research rotates the new ones in.
+  Stale rule changes are dropped. ideate.v10 sees "what is changing" (up to 10) and "market size" (up to 6) blocks, and
+  scorecard metric 7, demand evidence (target 80%), is measured. Owner to-do: after merging, fill the library with
+  missions of the new kinds, run bench-v2 #5 and score its cases. Design:
+  `docs/superpowers/specs/2026-10-29-slice-b-changes-and-markets-design.md`.
 - **Generation rebuild (branch `generation`, built 2026-10-27):** ideas carry audience, business model and barrier
   scores; cases carry a value multiple; six consumer lenses; the scorecard measures consumer share, model variety and
   easy-start/hard-copy; `bench-v2` (bench-v1 plus a consumer-lens run) is the current benchmark. `demandEvidence` stays

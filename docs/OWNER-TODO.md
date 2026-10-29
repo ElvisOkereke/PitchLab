@@ -28,6 +28,11 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 - [ ] Restart `npm run worker` so it picks up the YouTube key (it last ran before the key was added).
 - [ ] Keep in mind: YouTube-only entries are deleted 30 days after collection (about 190 from these two missions, around 27 Nov). Background research or new missions on the same topics bring fresh ones back.
 
+## Slice B (what is changing, market size)
+
+- [ ] Nothing new to sign up for: every Slice B source is free and needs no key.
+- [ ] Score the bench-v2 #5 cases when they appear (Score tab, **Your gut**), then press **Recompute** on the pass.
+
 ## Use the app
 
 - [ ] Do not generate a validation pack for a consumer case yet. Its outreach drafts are cold emails, and CASL does not allow cold emails to individuals without consent. Consumer outreach rules come later.
