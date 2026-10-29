@@ -135,12 +135,17 @@ export async function upsertKnowledgeItem(
     };
 
     if (MEASURED_SOURCE_TYPES.includes(d.source.sourceType)) {
-      // Same kind and url: refresh the figures in place (title, summary, facts, embedding) and the source's fetch time.
+      // Same kind, url and measured source: refresh the figures in place (title, summary, facts, embedding) and the
+      // source's fetch time. An entry that only cites the url from another source (a quoted article) is never overwritten.
       const [same] = await tx
         .select({ id: knowledgeItems.id })
         .from(knowledgeItems)
         .innerJoin(knowledgeSources, eq(knowledgeSources.itemId, knowledgeItems.id))
-        .where(and(eq(knowledgeItems.kind, d.kind), eq(knowledgeSources.url, d.source.url)))
+        .where(and(
+          eq(knowledgeItems.kind, d.kind),
+          eq(knowledgeSources.url, d.source.url),
+          eq(knowledgeSources.sourceType, d.source.sourceType),
+        ))
         .orderBy(asc(knowledgeItems.createdAt), asc(knowledgeItems.id))
         .limit(1);
       if (same) {

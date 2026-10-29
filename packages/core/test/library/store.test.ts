@@ -126,6 +126,23 @@ describe('upsertKnowledgeItem', () => {
       expect(srcs[0]!.fetchedAt.toISOString()).toBe('2026-10-01T00:00:00.000Z');
     });
 
+    it('never refreshes a text entry that cites the same url (only an entry from the same measured source)', async () => {
+      const db = await testDb();
+      const url = 'https://en.wikipedia.org/wiki/Heat_pump';
+      const reported: KnowledgeDraft = {
+        ...trend('Heat pump', 'web', url, '34%'),
+        facts: { topic: 'Heat pump', direction: 'rising', evidence: [{ metric: 'sales', value: '34%', period: '2025' }], window: '2025', basis: 'reported' },
+        quote: 'Heat pump sales rose 34% in 2025 across the region',
+        source: { url, domain: 'en.wikipedia.org', sourceType: 'web', quote: 'Heat pump sales rose 34% in 2025 across the region', quoteVerified: true },
+      };
+      const text = await upsertKnowledgeItem(db, reported, unit(0), {});
+      const measured = await upsertKnowledgeItem(db, trend('Heat pump', 'wikipedia', url), unit(5), {});
+      expect(measured.itemId).not.toBe(text.itemId);
+      const kept = await getLibraryItem(db, text.itemId);
+      expect(kept?.facts).toMatchObject({ basis: 'reported', evidence: [{ value: '34%' }] });
+      expect(kept?.quoteVerified).toBe(true);
+    });
+
     it('a text entry still near-merges as before', async () => {
       const db = await testDb();
       const a = await upsertKnowledgeItem(db, draft(), unit(0), {});
