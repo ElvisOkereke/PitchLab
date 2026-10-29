@@ -10,7 +10,7 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { errorMessage } from '../tools/scrub';
 import { loadAlreadySold } from './already-sold';
 import {
-  AUDIENCES, BarriersSchema, BUSINESS_MODELS, PriceHintSchema, ValueToUserSchema, type BusinessModel, type IdeaAudience,
+  AUDIENCES, BarriersSchema, BUSINESS_MODELS, PriceHintSchema, ValueToUserSchema, type Barriers, type BusinessModel, type IdeaAudience,
 } from './business-models';
 import type { RunConfig, StageDeps } from './types';
 
@@ -398,6 +398,31 @@ type LibraryBlocks = {
 };
 const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [] });
 
+/**
+ * Words that name a way to be hard to copy (ideate.v9). A sanity check, not a judgement of quality: forgiving about word
+ * forms, and deliberately not matching generic praise such as "great UX", "first mover", "better product" or "brand".
+ */
+export const MOAT_KEYWORDS: readonly RegExp[] = [
+  /\b(?:proprietary|usage|first[- ]party)\s+(?:\w+\s+)?(?:data|datasets?)\b/i,
+  /\bdata\s+(?:that\s+)?(?:only\s+)?(?:usage|use)\s+produces\b/i,
+  /\bnetwork[- ]effects?\b/i,
+  /\bliquidity\b/i,
+  /\btwo[- ]sided\b/i,
+  /\bintegrat(?:e|es|ed|ing|ion|ions)\b/i,
+  /\bswitching[- ]costs?\b/i,
+  /\block(?:s|ed)?[- ]?in\b/i,
+  /\blicen[cs]\w*/i,
+  /\bcertif\w*/i,
+  /\bdistribution\b/i,
+  /\bcommunit(?:y|ies)\b/i,
+];
+
+/** A toCopy of 4 or 5 whose reason names no moat mechanism is stored as 3. */
+export function checkToCopy(b: Barriers): { barriers: Barriers; lowered: boolean } {
+  if (b.toCopy < 4 || MOAT_KEYWORDS.some((re) => re.test(b.toCopyWhy))) return { barriers: b, lowered: false };
+  return { barriers: { ...b, toCopy: 3 }, lowered: true };
+}
+
 export type IdeateOutput = {
   ideaIds: string[];
   /** Generated ideas that failed the schema and were not stored. */
@@ -412,6 +437,8 @@ export type IdeateOutput = {
   truncatedCalls: number;
   /** Calls that gave no valid answer even after the router's re-asks; each contributed 0 ideas. */
   failedCalls: number;
+  /** Ideas whose toCopy of 4 or 5 named no mechanism and was stored as 3. */
+  toCopyLowered: number;
   /** The run's mix after the optional re-ask; null for owner ideas. */
   mix: (Mix & { reask: boolean }) | null;
 };
@@ -449,6 +476,13 @@ export async function ideate(
       callCtx(prompt.version),
     );
     const { audience, businessModel, revenueMechanics, valueToUser, priceHint, barriers, ...fields } = out;
+    let toCopyLowered = 0;
+    let ownerBarriers: Barriers | null = barriers ?? null;
+    if (ownerBarriers) {
+      const checked = checkToCopy(ownerBarriers);
+      ownerBarriers = checked.barriers;
+      if (checked.lowered) toCopyLowered++;
+    }
     // Owner ideas cite nothing we can check: any money claim is kept as a stated assumption.
     const none: Known = new Map();
     const ideaIds = await replaceRunIdeas(db, run.id, [{
@@ -456,11 +490,11 @@ export async function ideate(
       audience: audience ?? null, businessModel: businessModel ?? null, revenueMechanics: revenueMechanics ?? null,
       valueToUser: valueToUser ? ground(valueToUser, 400, none) : null,
       priceHint: priceHint ? ground(priceHint, 300, none) : null,
-      barriers: barriers ?? null, libraryItemIds: null,
+      barriers: ownerBarriers, libraryItemIds: null,
       signalIds: input.signalIds, status: 'candidate',
     }]);
     log('ideate: 1 owner idea');
-    return { ideaIds, dropped: 0, dropReasons: {}, requested: 1, returned: 1, truncatedCalls, failedCalls: 0, mix: null };
+    return { ideaIds, dropped: 0, dropReasons: {}, requested: 1, returned: 1, truncatedCalls, failedCalls: 0, toCopyLowered, mix: null };
   }
 
   const [market] = await db.select().from(markets).where(eq(markets.id, cfg.marketId));
@@ -537,6 +571,7 @@ export async function ideate(
   let requested = 0;
   let returned = 0;
   let failedCalls = 0;
+  let toCopyLowered = 0;
   const dropReasons: Record<string, number> = {};
 
   /**
@@ -598,13 +633,16 @@ export async function ideate(
     }
     const known: Known = new Map(library.sources);
     for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
-    return valid.slice(0, count).map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, ...f }) => {
+    return valid.slice(0, count).map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, ...f }) => {
       const cited = new Set(urls);
+      const checked = checkToCopy(barriers);
+      if (checked.lowered) toCopyLowered++;
       return {
         runId: run.id,
         lensId: lens.id,
         origin: 'generated' as const,
         ...f,
+        barriers: checked.barriers,
         valueToUser: ground(valueToUser, 400, known, library.prefixes),
         priceHint: ground(priceHint, 300, known, library.prefixes),
         // Only library entries this lens was shown; invented ids are not stored.
@@ -658,6 +696,7 @@ export async function ideate(
   const ideaIds = await replaceRunIdeas(db, run.id, pending);
   if (dropped > 0) log(`ideate: dropped ${dropped} invalid (top reasons: ${topReasons(dropReasons)})`);
   log(`ideate: asked for ${requested} ideas, got ${returned} back (cut off: ${truncatedCalls}, failed calls: ${failedCalls})`);
+  if (toCopyLowered > 0) log(`ideate: ${toCopyLowered} toCopy score(s) lowered to 3 (no moat mechanism named)`);
   const stillShort = isShort(after)
     ? [
         after.short.consumer > 0 ? `${after.short.consumer} consumer` : '',
@@ -666,5 +705,5 @@ export async function ideate(
     : 'no';
   log(`ideate: mix consumer ${Math.round(after.consumerShare * 100)}% models ${after.models} (re-ask: ${reask ? 'yes' : 'no'}, still short: ${stillShort})`);
   log(`ideate: ${ideaIds.length} ideas from ${chosen.length} lenses`);
-  return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, mix: { ...after, reask } };
+  return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, toCopyLowered, mix: { ...after, reask } };
 }

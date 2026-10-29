@@ -5,7 +5,7 @@ import { gateVerdicts, ideas, lenses, signals } from '../../src/db/schema';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 import {
-  checkMix, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, normalizeIdea, pickConsumerSegments, pickReaskLens,
+  checkMix, checkToCopy, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, MOAT_KEYWORDS, normalizeIdea, pickConsumerSegments, pickReaskLens,
   seededRandom, selectLenses, splitCounts,
 } from '../../src/pipeline/ideate';
 import type { ModelRouter } from '../../src/llm/types';
@@ -22,7 +22,7 @@ const money = (o: Record<string, unknown> = {}) => ({
   revenueMechanics: 'Renters pay a monthly fee',
   valueToUser: { kind: 'save', amountPerYear: 600, basis: 'Assumption: $50 a month in avoided fees' },
   priceHint: { amount: 5, unit: 'month', basis: 'Assumption: priced at a tenth of the saving' },
-  barriers: { toStart: 2, toStartWhy: 'public data', toCopy: 4, toCopyWhy: 'accumulated history', soloBuildable: true },
+  barriers: { toStart: 2, toStartWhy: 'public data', toCopy: 4, toCopyWhy: 'usage data builds up', soloBuildable: true },
   libraryItemIds: [],
   ...o,
 });
@@ -341,7 +341,7 @@ describe('ideate', () => {
       audience: 'consumer', businessModel: 'freemium', revenueMechanics: 'Free scan; renters pay $4 a month for automatic disputes',
       valueToUser: { kind: 'save', amountPerYear: 300, basis: 'Two disputed fees a year', source: 'https://x.test/a' },
       priceHint: { amount: 4, unit: 'month', basis: 'Typical renter app price', source: 'https://x.test/b' },
-      barriers: { toStart: 2, toStartWhy: 'public data', toCopy: 4, toCopyWhy: 'accumulated history', soloBuildable: true },
+      barriers: { toStart: 2, toStartWhy: 'public data', toCopy: 4, toCopyWhy: 'usage data builds up', soloBuildable: true },
       libraryItemIds: [],
     });
     const b = stored.find((i) => i.title === 'Shop payout checker')!;
@@ -849,7 +849,7 @@ describe('normalizeIdea', () => {
     const out = norm({
       valueToUser: { kind: 'save', amountPerYear: '$1,200/yr', basis: 'b' },
       priceHint: { amount: 'about 300', unit: 'year', basis: 'b' },
-      barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'w', soloBuildable: true },
+      barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'network effects', soloBuildable: true },
     });
     expect(out.valueToUser.amountPerYear).toBe(1200);
     expect(out.priceHint.amount).toBe(300);
@@ -930,7 +930,7 @@ describe('normalizeIdea', () => {
       structured: { ideate: [{ ideas: [idea({
         functionalGap: 'g'.repeat(900), audience: 'Consumers', businessModel: 'One-off',
         valueToUser: { kind: 'save', amountPerYear: '$1,200/yr', basis: 'Assumption: b' },
-        barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'w', soloBuildable: true },
+        barriers: { toStart: '2.5', toStartWhy: 'w', toCopy: 7, toCopyWhy: 'network effects', soloBuildable: true },
       })] }] },
     });
     await t.db.insert(lenses).values(TWO_LENSES[0]!);
@@ -1038,5 +1038,49 @@ describe('checkMix', () => {
     expect(exact.consumerShare).toBeCloseTo(0.3);
     expect(exact.short).toEqual({ consumer: 0, models: [] });
     expect(checkMix([]).consumerShare).toBe(0);
+  });
+
+  // ---- ideate.v9: toCopy sanity check ----
+
+  describe('checkToCopy', () => {
+    const b = (toCopy: number, toCopyWhy: string) => ({ toStart: 2, toStartWhy: 'x', toCopy, toCopyWhy, soloBuildable: true });
+    it('keeps a 4 whose reason names a mechanism', () => {
+      const r = checkToCopy(b(4, "customers' usage data builds a benchmark no newcomer has"));
+      expect(r.lowered).toBe(false);
+      expect(r.barriers.toCopy).toBe(4);
+    });
+    it('lowers a 5 with generic praise to 3', () => {
+      const r = checkToCopy(b(5, 'great UX'));
+      expect(r).toMatchObject({ lowered: true, barriers: { toCopy: 3, toCopyWhy: 'great UX', toStart: 2 } });
+    });
+    it('leaves a 3 or lower alone whatever the reason', () => {
+      expect(checkToCopy(b(3, 'great UX'))).toMatchObject({ lowered: false, barriers: { toCopy: 3 } });
+      expect(checkToCopy(b(1, ''))).toMatchObject({ lowered: false, barriers: { toCopy: 1 } });
+    });
+    it.each([
+      'network effects between buyers and sellers', 'integrates deeply into payroll, so switching costs are high', 'two-sided marketplace',
+      'liquidity on both sides', 'a licensed broker status', 'certified by the standards body', 'proprietary dataset of payouts',
+      'customer lock-in', 'locked in by history', 'a distribution channel we earn', 'an active community', 'deep integration with the ERP',
+    ])('names a mechanism: %s', (why) => {
+      expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(true);
+    });
+    it.each(['great UX', 'first mover advantage', 'a better product', 'strong brand', 'accumulated history', 'hard work', 'it is data-driven'])(
+      'does not name a mechanism: %s',
+      (why) => { expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(false); },
+    );
+  });
+
+  it('stores a lowered toCopy and counts it in toCopyLowered', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 2 });
+    const weak = money({ barriers: { toStart: 1, toStartWhy: 'a', toCopy: 5, toCopyWhy: 'great UX', soloBuildable: true } });
+    const strong = money({ barriers: { toStart: 1, toStartWhy: 'a', toCopy: 4, toCopyWhy: 'network effects', soloBuildable: true } });
+    const base = { oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', ...tags, ...claim, signalUrls: [] };
+    const t = await setup(config, { structured: { ideate: [{ ideas: [{ ...base, title: 'Weak', ...weak }, { ...base, title: 'Strong', ...strong }] }] } });
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const out = await ideate(t.deps, t.run, { signalIds: t.rows.map((r) => r.id) });
+    expect(out.toCopyLowered).toBe(1);
+    const stored = await t.db.select().from(ideas);
+    expect(stored.find((i) => i.title === 'Weak')!.barriers).toMatchObject({ toCopy: 3, toCopyWhy: 'great UX' });
+    expect(stored.find((i) => i.title === 'Strong')!.barriers).toMatchObject({ toCopy: 4 });
   });
 });

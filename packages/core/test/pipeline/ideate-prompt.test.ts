@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadPrompt } from '../../src/llm/prompts';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
@@ -13,8 +15,8 @@ const render = (gap = '') =>
   });
 
 describe('ideate prompt', () => {
-  it('is v8 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v8');
+  it('is v9 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v9');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -128,5 +130,23 @@ describe('ideate prompt', () => {
   });
   it('places the fill-the-gap instruction when given', () => {
     expect(render('Fill the gap. X')).toContain('Fill the gap. X');
+  });
+  // ideate.v9
+  it('anchors the barrier scales and asks each call for an easy-to-start, hard-to-copy idea', () => {
+    const text = render();
+    expect(text).toContain('1: one person can launch in weeks with public data and no approvals.');
+    expect(text).toContain('3: months of work, or one partnership or approval.');
+    expect(text).toContain('5: heavy capital, licences or many partners.');
+    expect(text).toContain('1: a weekend clone.');
+    expect(text).toContain('2: a few weeks for anyone.');
+    expect(text).toContain('3: a competent team in 3-6 months with no special access.');
+    expect(text).toContain('4: needs something that builds up over time');
+    expect(text).toContain('5: several of those, reinforcing each other.');
+    expect(text).toContain('include at least one idea aiming for toStart ≤ 2 and toCopy ≥ 4');
+    expect(text).toContain('A `toCopy` of 4 or 5 needs the mechanism named in `toCopyWhy`');
+    expect(text).toContain("A moat that depends on access we don't control is not a moat");
+  });
+  it('v8 is kept', () => {
+    expect(existsSync(join(__dirname, '../../prompts/ideate.v8.md'))).toBe(true);
   });
 });
