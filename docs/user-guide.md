@@ -85,7 +85,7 @@ It already has one.
   "verified quote" badge; anything else shows "unverified".
 - **Choose what to collect:** Tick the kinds in the mission form. Problems, Startups and Pricing are ticked by default.
   The other three need no key, and their numbers cost nothing to fetch:
-  - **What is growing or shrinking** (trend) reads Wikipedia pageviews and Hacker News story counts for your topic, and
+  - **What's growing or shrinking** (trend) reads Wikipedia pageviews and Hacker News story counts for your topic, and
     says whether interest is rising, falling or steady (at least 20% up or down, comparing the last year with the one
     before). Web pages can add trends that quote their numbers.
   - **A rule or platform change** (rule change) finds recent US rules and proposed rules (Federal Register) and, through

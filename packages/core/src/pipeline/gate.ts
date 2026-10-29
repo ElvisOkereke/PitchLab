@@ -151,8 +151,9 @@ export async function gate(
 
     const sourceUrls = research.sources.map((s) => s.url);
     // Library startups already sold near this idea (needs the idea's embedding): extra evidence for the generic check.
+    // Only that section is used, so every other section is 0 (no query).
     const alreadySold = idea.embedding
-      ? renderIdeationContext(await ideationContext(db, idea.embedding, { countries, alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0 })).alreadySold
+      ? renderIdeationContext(await ideationContext(db, idea.embedding, { countries, alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0, changingMax: 0, marketsMax: 0 })).alreadySold
       : 'none found';
     const judged = await router.structured(
       'gate',

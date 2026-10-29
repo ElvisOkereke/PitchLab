@@ -34,11 +34,14 @@ describe('hnTrend', () => {
       expect(u.searchParams.get('numericFilters')).toBe(`created_at_i>=${sec(y)},created_at_i<${sec(y + 1)}`);
     });
     expect(d!.kind).toBe('trend');
-    expect(d!.source).toMatchObject({ domain: 'hn.algolia.com', sourceType: 'hn', quoteVerified: false });
+    expect(d!.source).toMatchObject({ domain: 'hn.algolia.com', sourceType: 'hn-trend', quoteVerified: false });
     expect(d!.source.url).toContain('hn.algolia.com');
     expect(d!.summary).toBe("Hacker News stories about 'heat pump' rose 50% (2025 vs 2024)");
     expect(d!.facts).toMatchObject({ direction: 'rising', basis: 'measured', topic: 'heat pump' });
-    expect((d!.facts as { evidence: { value: string }[] }).evidence.map((e) => e.value)).toEqual(['10', '12', '20', '30']);
+    // Newest year first: the ideation key fact reads evidence[0].
+    const ev = (d!.facts as { evidence: { value: string; period: string }[] }).evidence;
+    expect(ev.map((e) => e.value)).toEqual(['30', '20', '12', '10']);
+    expect(ev.map((e) => e.period)).toEqual(['2025', '2024', '2023', '2022']);
     expect(() => parseFacts('trend', d!.facts)).not.toThrow();
   });
 
@@ -58,6 +61,21 @@ describe('hnTrend', () => {
     expect(await run(api([10, {}, 10, 10]), 'x', (m) => logs.push(m))).toBeNull();
     expect(logs).toHaveLength(1);
     expect(await run(api([10, 10, 10, { nbHits: '12' }]))).toBeNull();
+  });
+
+  it('caps the title, summary and topic of a long query', async () => {
+    const q = `heat ${'x'.repeat(400)}`;
+    const d = await run(api([10, 12, 20, 30]), q);
+    expect(d!.title.length).toBeLessThanOrEqual(200);
+    expect(d!.summary.length).toBeLessThanOrEqual(300);
+    expect((d!.facts as { topic: string }).topic.length).toBeLessThanOrEqual(200);
+    expect(() => parseFacts('trend', d!.facts)).not.toThrow();
+  });
+
+  it('logs under its own prefix, apart from the hn search', async () => {
+    const logs: string[] = [];
+    await run(api([10, {}]), 'x', (m) => logs.push(m));
+    expect(logs[0]).toMatch(/^hn-trend: /);
   });
 
   it('maps 429 to rate_limited', async () => {

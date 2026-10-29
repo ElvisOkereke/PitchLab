@@ -31,7 +31,7 @@ const clamp = (v: number | undefined, dflt: number): number =>
 const urlExpr = (now: Date) => sql<string>`coalesce((select s.url from knowledge_sources s where s.item_id = knowledge_items.id and ${liveSource(now)} order by s.fetched_at, s.id limit 1), '')`;
 
 async function fetchKind(db: Db, kind: KnowledgeKind | KnowledgeKind[], queryVector: number[], countries: string[] | undefined, extra: SQL | undefined, limit: number, now: Date, extraRows = 0) {
-  if (limit === 0) return [];
+  if (limit === 0) return []; // a section set to 0 issues no query
   const conds: (SQL | undefined)[] = [
     eq(knowledgeItems.status, 'active'),
     itemLive(now),
@@ -158,13 +158,13 @@ const pricingLine = (p: CtxPricing): string => {
   return capField(`[${p.id}] ${capField(p.product, 80)}: ${pts} | buyer: ${capField(p.buyer, 60)} | ${capField(p.url, 80)}`, LINE_MAX);
 };
 
-/** Plain text, one capped line per entry. The caller wraps each block with wrapUntrusted. */
 const changeLine = (c: CtxChange): string =>
   capField(`[${c.id}] ${c.kind === 'trend' ? 'trend' : 'rule change'}: ${capField(c.gist, 140)} | ${capField(c.keyFact, 100)} | ${capField(c.url, 80)}`, LINE_MAX);
 
 const marketLine = (m: CtxMarket): string =>
   capField(`[${m.id}] ${capField(m.segment, 80)} (${capField(m.geography, 40)}): ${capField(m.keyFact, 140)} | ${capField(m.url, 80)}`, LINE_MAX);
 
+/** Plain text, one capped line per entry. The caller wraps each block with wrapUntrusted. */
 export function renderIdeationContext(ctx: IdeationContext): { alreadySold: string; lessons: string; pricing: string; changing: string; markets: string } {
   return {
     alreadySold: section(ctx.alreadySold.map(startupLine)),

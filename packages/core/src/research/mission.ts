@@ -82,11 +82,11 @@ const SOURCES_FOR_KIND: Record<KnowledgeKind, readonly MissionSource[]> = {
 /** At most this many entries are kept per source per extract batch. */
 export const MAX_ENTRIES_PER_SOURCE = 3;
 /** Planner queries kept per free structured source (HN trend counts cost 4 requests each, Wikipedia 2, Federal Register 1). */
-export const SOURCE_QUERY_CAPS: Readonly<Record<string, number>> = { wikipedia: 6, 'hn trend': 6, federalregister: 8 };
+export const SOURCE_QUERY_CAPS: Readonly<Record<string, number>> = { wikipedia: 6, 'hn-trend': 6, federalregister: 8 };
 /** Distinct collector messages forwarded to the mission warnings per source. */
 export const MAX_COLLECTOR_WARNINGS = 3;
 /** A 429 from one of these stops it for the rest of the mission (keyed like SOURCE_QUERY_CAPS). */
-const STOP_ON_RATE_LIMIT = new Set(['wikipedia', 'hn trend', 'federalregister', 'worldbank']);
+const STOP_ON_RATE_LIMIT = new Set(['wikipedia', 'hn-trend', 'federalregister', 'worldbank']);
 
 const SOURCE_HINTS: Record<MissionSource, string> = {
   web: 'a model web search. Phrase it as a research question. Prefer owner and operator communities (trade forums, associations, local business news) and neutral bodies (regulators, statistics offices, journalists); vendor pages only to learn what is already sold.',
@@ -388,7 +388,7 @@ const isoOf = (d: Date | undefined | null): string | null => (d && !Number.isNaN
 export const STALE_PUBLISHED_YEARS = 3;
 export const STALE_EFFECTIVE_YEARS = 2;
 export const staleRulesWarning = (n: number): string =>
-  `rule_change: ${n} stale entr${n === 1 ? 'y' : 'ies'} dropped (published over ${STALE_PUBLISHED_YEARS} years ago or in force over ${STALE_EFFECTIVE_YEARS} years)`;
+  `rule_change: ${n} stale or undated entr${n === 1 ? 'y' : 'ies'} dropped (published over ${STALE_PUBLISHED_YEARS} years ago, in force over ${STALE_EFFECTIVE_YEARS} years, or with no date)`;
 
 /**
  * Rule changes are "what's changing" only while fresh. A `rule_change` draft is dropped when it was published more than 3
@@ -432,14 +432,16 @@ const mapObjects = (v: unknown, f: (o: Record<string, unknown>) => Record<string
 function prepareFacts(kind: KnowledgeKind, facts: Record<string, unknown>, src: Collected): unknown {
   switch (kind) {
     case 'rule_change': {
-      // Collector hints (Federal Register API fields) are authoritative; the model's values are used only where a hint is empty.
+      // Collector hints (Federal Register API fields) are authoritative; the model's values are used only where a hint is
+      // empty. That includes status: the API's document type (RULE or PRORULE) beats the model, which saw only the title and
+      // abstract and can call a proposed rule final.
       const hints = src.hints ?? {};
       const statusOk = (v: unknown) => typeof v === 'string' && (RULE_STATUSES as readonly string[]).includes(v);
       return {
         ...facts,
         effectiveDate: isoDateOrNull(hints.effectiveDate) ?? isoDateOrNull(facts.effectiveDate),
         publishedDate: isoDateOrNull(hints.publishedDate) ?? isoDateOrNull(facts.publishedDate),
-        status: statusOk(facts.status) ? facts.status : statusOk(hints.status) ? hints.status : facts.status,
+        status: statusOk(hints.status) ? hints.status : facts.status,
       };
     }
     case 'trend':
@@ -490,8 +492,9 @@ function numbersQuoted(value: string, quoteTokens: NumberToken[]): boolean {
 
 /**
  * Extracted trend and market numbers must come from the verified quote, never from the model. Trend evidence and market
- * clues whose value contains a digit are kept only when its numbers are in the quote. A trend needs at least one numeric
- * evidence item left; a market needs at least one size clue left (each must carry a quoted number). Returns the trimmed
+ * clues whose value contains a digit are kept only when its numbers are in the quote. Trend evidence whose only number is a
+ * year (1900–2100) is not a measurement and is dropped. A trend needs at least one numeric (non-year) evidence item left; a
+ * market needs at least one size clue left (each must carry a quoted number). Returns the trimmed
  * facts, or null when the entry is rejected. `quote` is null when it was not verified. Structured drafts (Wikipedia, HN,
  * World Bank) never pass through here: their numbers are measured in code.
  */
@@ -501,7 +504,8 @@ export function keepQuotedNumbers(kind: 'trend' | 'market', facts: unknown, quot
   const ok = (v: unknown) => quote !== null && numbersQuoted(String(v), quoted);
   if (kind === 'trend') {
     const f = facts as { evidence: { value: string }[] };
-    const evidence = f.evidence.filter((e) => !hasDigit(e.value) || ok(e.value));
+    const yearOnly = (v: unknown) => { const t = numberTokens(String(v ?? '')); return t.length > 0 && t.every(isYear); };
+    const evidence = f.evidence.filter((e) => !hasDigit(e.value) || (!yearOnly(e.value) && ok(e.value)));
     return evidence.some((e) => hasDigit(e.value)) ? { ...f, evidence } : null;
   }
   const f = facts as { sizeClues: { value: string }[]; growthClues: { change: string }[] };
@@ -729,7 +733,8 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     /** An hn query counts stories when the planner marked it a trend, or when hn has no search role in this mission. */
     const purposeOf = (q: { source: string; purpose?: string | null }): 'trend' | undefined =>
       q.source === 'hn' && hnTrendOn && (q.purpose === 'trend' || !hnSearch) ? 'trend' : undefined;
-    const capKey = (q: PlannedQuery): string => (q.purpose ? `${q.source} ${q.purpose}` : q.source);
+    /** "hn-trend" for HN story counts (also their stored source type), else the source name. */
+    const capKey = (q: PlannedQuery): string => (q.purpose ? `${q.source}-${q.purpose}` : q.source);
     const perSource = new Map<string, number>();
     let overCap = 0;
     const planned = usable
@@ -771,7 +776,7 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const collectorLog = (message: string) => {
       collectorLogs++;
       const msg = capField(stripInvisible(message), 160);
-      const src = /^([a-z ]{1,30}):/.exec(msg)?.[1] ?? 'source';
+      const src = /^([a-z -]{1,30}):/.exec(msg)?.[1] ?? 'source';
       const seen = forwarded.get(src) ?? new Set<string>();
       if (!msg || seen.has(msg) || seen.size >= MAX_COLLECTOR_WARNINGS) return;
       seen.add(msg);
@@ -947,8 +952,8 @@ ${text}` : it.url;
     const topics = (n: number) => `${n} topic${n === 1 ? '' : 's'}`;
     const wikiThin = thin.get('wikipedia') ?? 0;
     if (wikiThin > 0) warn(`wikipedia: ${topics(wikiThin)} had no usable article or too few views`);
-    const hnThin = thin.get('hn trend') ?? 0;
-    if (hnThin > 0) warn(`hn trend: ${topics(hnThin)} had too few stories`);
+    const hnThin = thin.get('hn-trend') ?? 0;
+    if (hnThin > 0) warn(`hn-trend: ${topics(hnThin)} had too few stories`);
     log(`mission ${missionId}: ${texts.length} texts, ${structured.length} structured records`);
 
     // 3. Extract + 4. Verify
@@ -1004,7 +1009,7 @@ ${text}` : it.url;
       if (!anyOk && anyFailed) return finish('failed', 'Every source failed; nothing was collected.');
       if (texts.length > 0 && batchesOk === 0 && batchesFailed > 0) return finish('failed', 'Extraction failed for every batch.');
     }
-    // Stale rule changes (extracted, with hint dates merged) are dropped before anything is embedded or stored.
+    // Stale or undated rule changes (extracted, with hint dates merged) are dropped before anything is embedded or stored.
     const { kept: drafts, dropped: stale } = filterStaleRules(collected, now());
     if (stale > 0) warn(staleRulesWarning(stale));
 

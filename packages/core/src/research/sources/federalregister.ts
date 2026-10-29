@@ -1,9 +1,12 @@
+import { capField } from '../../llm/untrusted';
 import { cleanText, toDate, type RawItem } from '../../tools/sources/types';
 import { request, throttle, type HttpOpts } from '../http';
 
 export const sourceType = 'federalregister';
 export const MIN_INTERVAL_MS = 500;
 export const MAX_RESULTS = 10;
+/** Each item's text (title and abstract) is capped before extraction. */
+export const MAX_TEXT = 4000;
 const HOST = 'www.federalregister.gov';
 const URL_DOCS = `https://${HOST}/api/v1/documents.json`;
 
@@ -56,7 +59,7 @@ export async function federalRegisterSearch(q: string, opts: CollectorOpts = {})
       source: sourceType,
       url,
       title,
-      text: abstract ? `${title}. ${abstract}` : title,
+      text: capField(abstract ? `${title}. ${abstract}` : title, MAX_TEXT),
       publishedAt: toDate(publishedDate),
       hints: {
         effectiveDate: isoDateOrNull(r.effective_on),

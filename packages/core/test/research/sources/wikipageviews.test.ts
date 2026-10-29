@@ -107,6 +107,22 @@ describe('wikiTrend', () => {
     expect(a.urls).toHaveLength(1);
   });
 
+  it('rejects an article title made only of dots, with no pageview request', async () => {
+    for (const t of ['..', '.', '...']) {
+      const a = api(OPEN(t), series(100, 100, 100));
+      expect(await run(a, 'dots')).toBeNull();
+      expect(a.urls).toHaveLength(1);
+    }
+  });
+
+  it('caps the title, summary and topic of a long article name', async () => {
+    const d = await run(api(OPEN(`Heat ${'x'.repeat(400)}`), series(100, 100, 134)));
+    expect(d!.title.length).toBeLessThanOrEqual(200);
+    expect(d!.summary.length).toBeLessThanOrEqual(300);
+    expect((d!.facts as { topic: string }).topic.length).toBeLessThanOrEqual(200);
+    expect(() => parseFacts('trend', d!.facts)).not.toThrow();
+  });
+
   it('skips a thin series (under 1,000 views in the window)', async () => {
     expect(await run(api(OPEN('Tiny'), series(1, 1, 1)))).toBeNull(); // 36 views
     expect(await run(api(OPEN('Edge'), series(0, 0, 83)))).toBeNull(); // 996

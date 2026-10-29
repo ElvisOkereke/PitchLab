@@ -51,6 +51,12 @@ describe('federalRegisterSearch', () => {
     expect(u.searchParams.get('order')).toBe('newest');
   });
 
+  it('caps each item text before extraction', async () => {
+    const [it] = await run(api({ results: [doc(1, { abstract: 'word '.repeat(3000) })] }));
+    expect(it!.text.length).toBeLessThanOrEqual(4000);
+    expect(it!.text.startsWith('Rule 1. word word')).toBe(true);
+  });
+
   it('returns at most 10 items', async () => {
     expect(await run(api({ results: Array.from({ length: 14 }, (_, i) => doc(i + 1)) }))).toHaveLength(10);
   });

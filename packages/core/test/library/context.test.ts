@@ -130,6 +130,22 @@ describe('ideationContext: changing and markets (Slice B)', () => {
     expect([o.changing.length, o.markets.length]).toEqual([3, 2]);
   });
 
+  it('a section set to 0 issues no query', async () => {
+    const db = await testDb();
+    await addB(db, 'trend', tr('T'), near(0.9, 1));
+    await addB(db, 'market', mk('M'), near(0.9, 2));
+    let selects = 0;
+    const counted = new Proxy(db, {
+      get(t, p, r) {
+        if (p === 'select') selects++;
+        return Reflect.get(t, p, r);
+      },
+    });
+    const c = await ideationContext(counted, unit(0), { now: NOW, alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0, changingMax: 0, marketsMax: 0 });
+    expect(selects).toBe(1);
+    expect([c.changing, c.markets, c.lessons, c.pricing]).toEqual([[], [], [], []]);
+  });
+
   it('applies the country rule, and leaves out rejected, expired and invalid entries', async () => {
     const db = await testDb();
     await addB(db, 'trend', tr('DE only'), near(0.97, 1), { countries: ['DE'] });

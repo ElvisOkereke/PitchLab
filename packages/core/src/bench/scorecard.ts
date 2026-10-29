@@ -194,6 +194,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
         yes: sql<number>`(count(*) filter (where ${inArray(signals.voice, ['operator', 'neutral'])}))::int`,
       }).from(cited).leftJoin(signals, sql`${signals.id} = ${cited.sid}`);
     })(),
+    // Metric 7: a cited entry counts even if it was rejected later (it was evidence when the idea was written: cited at the time).
     db.select({
       total: sql<number>`count(*)::int`,
       yes: sql<number>`(count(*) filter (where exists (select 1 from ${knowledgeItems} where ${knowledgeItems.id} = any(${ideas.libraryItemIds}) and ${inArray(knowledgeItems.kind, ['trend', 'rule_change', 'market'])})))::int`,

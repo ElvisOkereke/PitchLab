@@ -66,6 +66,14 @@ const moreIndependent = (a: KnowledgeVoice | null | undefined, b: KnowledgeVoice
 
 const similarity = (vec: number[]): SQL<number> => sql<number>`1 - (${cosineDistance(knowledgeItems.embedding, vec)})`;
 
+/**
+ * Source types whose drafts are measured in code from an API series (World Bank, Wikipedia pageviews, HN story counts).
+ * Their titles and summaries are near-templates ("Market size clues for Canada"), so two different countries or topics
+ * embed almost identically: they never go through the near-duplicate merge, and are matched only by source url (the
+ * same url again refreshes that entry's figures).
+ */
+export const MEASURED_SOURCE_TYPES: readonly string[] = ['worldbank', 'wikipedia', 'hn-trend'];
+
 /** How long YouTube-sourced data may be kept (YouTube developer policy: 30 days, then refresh or delete). */
 export const YOUTUBE_TTL_MS = 30 * 86_400_000;
 
@@ -126,6 +134,28 @@ export async function upsertKnowledgeItem(
       await tx.update(knowledgeItems).set(patch).where(eq(knowledgeItems.id, existing.id));
     };
 
+    if (MEASURED_SOURCE_TYPES.includes(d.source.sourceType)) {
+      // Same kind and url: refresh the figures in place (title, summary, facts, embedding) and the source's fetch time.
+      const [same] = await tx
+        .select({ id: knowledgeItems.id })
+        .from(knowledgeItems)
+        .innerJoin(knowledgeSources, eq(knowledgeSources.itemId, knowledgeItems.id))
+        .where(and(eq(knowledgeItems.kind, d.kind), eq(knowledgeSources.url, d.source.url)))
+        .orderBy(asc(knowledgeItems.createdAt), asc(knowledgeItems.id))
+        .limit(1);
+      if (same) {
+        // The content hash is unique: keep the stored one if another entry already has the new text.
+        const [clash] = await tx.select({ id: knowledgeItems.id }).from(knowledgeItems)
+          .where(and(eq(knowledgeItems.contentHash, hash), not(eq(knowledgeItems.id, same.id))));
+        await tx.update(knowledgeItems).set({
+          title: d.title, summary: d.summary, facts: d.facts, embedding, updatedAt: new Date(), ...(clash ? {} : { contentHash: hash }),
+        }).where(eq(knowledgeItems.id, same.id));
+        await tx.update(knowledgeSources).set({ fetchedAt, publishedAt: d.source.publishedAt ?? null })
+          .where(and(eq(knowledgeSources.itemId, same.id), eq(knowledgeSources.url, d.source.url)));
+        return { outcome: 'duplicate' as const, itemId: same.id };
+      }
+    }
+
     const [exact] = await tx
       .select({ id: knowledgeItems.id, voice: knowledgeItems.voice, quoteVerified: knowledgeItems.quoteVerified })
       .from(knowledgeItems).where(eq(knowledgeItems.contentHash, hash));
@@ -134,7 +164,8 @@ export async function upsertKnowledgeItem(
       return { outcome: 'duplicate' as const, itemId: exact.id };
     }
 
-    const [nearest] = await tx
+    // Measured drafts skip the near-duplicate merge (see MEASURED_SOURCE_TYPES).
+    const [nearest] = MEASURED_SOURCE_TYPES.includes(d.source.sourceType) ? [] : await tx
       .select({ id: knowledgeItems.id, voice: knowledgeItems.voice, quoteVerified: knowledgeItems.quoteVerified, sim: similarity(embedding) })
       .from(knowledgeItems)
       .where(and(eq(knowledgeItems.kind, d.kind), sql`${knowledgeItems.embedding} is not null`))
@@ -246,7 +277,7 @@ export async function getLibraryItem(db: Db, id: string, now: Date = new Date())
 }
 
 /** Source types that count as social/community platforms in the coverage view. */
-export const SOCIAL_SOURCE_TYPES = ['youtube', 'hn', 'stackexchange', 'github', 'appstore', 'producthunt'] as const;
+export const SOCIAL_SOURCE_TYPES = ['youtube', 'hn', 'stackexchange', 'github', 'appstore', 'producthunt'] as const; // not 'hn-trend' (story counts)
 
 export type LibraryCoverage = {
   byKind: Record<string, number>;

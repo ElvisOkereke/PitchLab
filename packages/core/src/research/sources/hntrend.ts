@@ -1,9 +1,11 @@
 import type { KnowledgeDraft } from '../../library/kinds';
+import { capField } from '../../llm/untrusted';
 import { request, throttle } from '../http';
 import { httpOf, type CollectorOpts } from './federalregister';
 import { trendDirection, trendPhrase } from './wikipageviews';
 
-export const sourceType = 'hn';
+/** Not 'hn': story counts are a measurement, kept apart from HN posts (social share, merge rules, rate-limit key). */
+export const sourceType = 'hn-trend';
 export const MIN_INTERVAL_MS = 300;
 export const MIN_TOTAL_STORIES = 20;
 export const METRIC = 'Hacker News stories per year';
@@ -28,7 +30,7 @@ export async function hnTrend(q: string, opts: CollectorOpts = {}): Promise<Know
     const json = (await request('hn', `https://${HOST}/api/v1/search_by_date?${p}`, {}, httpOf(opts))) as { nbHits?: unknown } | null;
     const n = json?.nbHits;
     if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
-      opts.log?.('hn: response had no story count');
+      opts.log?.('hn-trend: response had no story count');
       return null;
     }
     counts.push(n);
@@ -39,16 +41,17 @@ export async function hnTrend(q: string, opts: CollectorOpts = {}): Promise<Know
   const direction = trendDirection(prev, last);
   return {
     kind: 'trend',
-    title: `Hacker News attention to ${q}`,
-    summary: `Hacker News stories about '${q}' ${trendPhrase(direction, prev, last, `${years[3]} vs ${years[2]}`)}`,
+    title: capField(`Hacker News attention to ${q}`, 200),
+    summary: capField(`Hacker News stories about '${q}' ${trendPhrase(direction, prev, last, `${years[3]} vs ${years[2]}`)}`, 300),
     audience: 'both',
     countries: [],
     industries: [],
     voice: 'neutral',
     facts: {
-      topic: q,
+      topic: capField(q, 200),
       direction,
-      evidence: years.map((y, i) => ({ metric: METRIC, value: String(counts[i]), period: String(y) })),
+      // Newest year first: the ideation key fact reads evidence[0].
+      evidence: years.map((y, i) => ({ metric: METRIC, value: String(counts[i]), period: String(y) })).reverse(),
       window: `${years[0]}–${years[3]}`,
       basis: 'measured',
     },

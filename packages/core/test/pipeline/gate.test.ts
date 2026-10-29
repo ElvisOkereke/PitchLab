@@ -1,12 +1,19 @@
 import { eq } from 'drizzle-orm';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { gateVerdicts, ideas, signals } from '../../src/db/schema';
 import { StructuredOutputError } from '../../src/llm/router';
 import { countEvidence, countEvidenceForSignals, gate } from '../../src/pipeline/gate';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { upsertKnowledgeItem } from '../../src/library/store';
+import { ideationContext } from '../../src/library/context';
 import { getIdea, insertIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
+
+// Pass-through spy: the gate's library lookup runs for real, and its options can be checked.
+vi.mock('../../src/library/context', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../src/library/context')>();
+  return { ...mod, ideationContext: vi.fn(mod.ideationContext) };
+});
 
 const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
 
@@ -73,6 +80,17 @@ describe('gate.v3', () => {
     expect(block).toContain('Rivalco');
     expect(block).not.toContain('</already-sold>');
     expect(prompt).toMatch(/generic:[^\n]*already-sold/);
+  });
+
+  it('asks the library only for already-sold startups (every other section is 0, so never queried)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id, { embedding: unit(0) });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    vi.mocked(ideationContext).mockClear();
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(vi.mocked(ideationContext)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(ideationContext).mock.calls[0]![2]).toMatchObject({ alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0, changingMax: 0, marketsMax: 0 });
   });
 
   it('scopes the already-sold startups to the run market countries', async () => {

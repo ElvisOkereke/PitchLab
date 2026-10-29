@@ -9,10 +9,10 @@ const HOST = 'api.worldbank.org';
 export const INDICATORS = [
   { code: 'SP.POP.TOTL', metric: 'Population', unit: 'people' },
   { code: 'NY.GDP.PCAP.CD', metric: 'GDP per person', unit: 'US dollars' },
-  { code: 'IT.NET.USER.ZS', metric: 'Internet users', unit: '% of people' },
+  { code: 'IT.NET.USER.ZS', metric: 'Internet users', unit: '% of people', points: true },
   { code: 'IT.CEL.SETS.P2', metric: 'Mobile subscriptions', unit: 'per 100 people' },
   { code: 'IC.BUS.NDNS.ZS', metric: 'New businesses', unit: 'per 1,000 working-age people' },
-  { code: 'SP.URB.TOTL.IN.ZS', metric: 'Urban population', unit: '% of people' },
+  { code: 'SP.URB.TOTL.IN.ZS', metric: 'Urban population', unit: '% of people', points: true },
 ] as const;
 
 type Point = { year: number; value: number };
@@ -56,13 +56,14 @@ export async function worldBankMarket(countryIso2: string, opts: CollectorOpts =
     const newest = s.points[s.points.length - 1]!;
     const oldest = s.points[0]!;
     sizeClues.push({ metric: ind.metric, value: fmt(newest.value), unit: ind.unit, year: String(newest.year) });
-    if (s.points.length >= 2 && oldest.value !== 0) {
+    // A share of people (%) changes in percentage points; a count or rate changes by a relative %.
+    const period = `${oldest.year}–${newest.year}`;
+    if (s.points.length >= 2 && 'points' in ind) {
+      const diff = newest.value - oldest.value;
+      growthClues.push({ metric: ind.metric, change: `${diff >= 0 ? '+' : '-'}${Math.abs(diff).toFixed(1)} points`, period });
+    } else if (s.points.length >= 2 && oldest.value !== 0) {
       const pct = ((newest.value - oldest.value) / Math.abs(oldest.value)) * 100;
-      growthClues.push({
-        metric: ind.metric,
-        change: `${pct >= 0 ? '+' : '-'}${Math.abs(pct).toFixed(1)}%`,
-        period: `${oldest.year}–${newest.year}`,
-      });
+      growthClues.push({ metric: ind.metric, change: `${pct >= 0 ? '+' : '-'}${Math.abs(pct).toFixed(1)}%`, period });
     }
   }
   if (!sizeClues.length) return null;

@@ -1,4 +1,5 @@
 import type { KnowledgeDraft } from '../../library/kinds';
+import { capField } from '../../llm/untrusted';
 import { request, SourceError, throttle } from '../http';
 import { httpOf, type CollectorOpts } from './federalregister';
 
@@ -53,7 +54,8 @@ export async function wikiTrend(topic: string, opts: CollectorOpts = {}): Promis
     httpOf(opts),
   )) as unknown;
   const title = Array.isArray(found) && Array.isArray(found[1]) && typeof found[1][0] === 'string' ? (found[1][0] as string) : '';
-  if (!title) return null;
+  // A title of only dots would become a "." or ".." path segment in the pageviews url.
+  if (!title || /^\.+$/.test(title)) return null;
   if (/\(disambiguation\)\s*$/i.test(title)) {
     opts.log?.(`wikipedia: "${topic}" resolved to a disambiguation page, skipped`);
     return null;
@@ -94,14 +96,14 @@ export async function wikiTrend(topic: string, opts: CollectorOpts = {}): Promis
   const direction = trendDirection(prev, last);
   return {
     kind: 'trend',
-    title: `Interest in ${title} (Wikipedia views)`,
-    summary: `Wikipedia views of '${title}' ${trendPhrase(direction, prev, last, 'last 12 months vs the 12 before')}`,
+    title: capField(`Interest in ${title} (Wikipedia views)`, 200),
+    summary: capField(`Wikipedia views of '${title}' ${trendPhrase(direction, prev, last, 'last 12 months vs the 12 before')}`, 300),
     audience: 'both',
     countries: [],
     industries: [],
     voice: 'neutral',
     facts: {
-      topic: title,
+      topic: capField(title, 200),
       direction,
       evidence: [
         { metric: METRIC, value: String(last), period: 'last 12 months' },

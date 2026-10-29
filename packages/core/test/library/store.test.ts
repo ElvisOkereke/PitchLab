@@ -78,6 +78,61 @@ describe('upsertKnowledgeItem', () => {
     expect(c.outcome).toBe('added');
     expect(new Set([a.itemId, b.itemId, c.itemId]).size).toBe(3);
   });
+  describe('measured entries (World Bank, Wikipedia, HN trend)', () => {
+    const market = (iso: string, name: string, pop: string, fetched?: string): KnowledgeDraft => ({
+      kind: 'market', title: `Market size clues for ${name}`, summary: `World Bank figures for ${name}: population ${pop} (2024)`, audience: 'both',
+      countries: [iso], industries: [], voice: 'neutral',
+      facts: { segment: `everyone in ${name}`, geography: name, sizeClues: [{ metric: 'Population', value: pop, unit: 'people', year: fetched ?? '2024' }], growthClues: [] },
+      source: { url: `https://data.worldbank.org/country/${iso}`, domain: 'data.worldbank.org', sourceType: 'worldbank', quoteVerified: false },
+    });
+    const trend = (topic: string, sourceType: string, url: string, value = '1300'): KnowledgeDraft => ({
+      kind: 'trend', title: `Interest in ${topic}`, summary: `Views of ${topic} rose 30% to ${value}`, audience: 'both', countries: [], industries: [], voice: 'neutral',
+      facts: { topic, direction: 'rising', evidence: [{ metric: 'views', value, period: 'last 12 months' }], window: 'w', basis: 'measured' },
+      source: { url, domain: new URL(url).hostname, sourceType, quoteVerified: false },
+    });
+
+    it('never near-merges two countries, even with near-identical embeddings', async () => {
+      const db = await testDb();
+      const ca = await upsertKnowledgeItem(db, market('CA', 'Canada', '40,000,000'), unit(0), {});
+      const us = await upsertKnowledgeItem(db, market('US', 'United States', '335,000,000'), near(0.97), {});
+      expect(ca.outcome).toBe('added');
+      expect(us.outcome).toBe('added');
+      expect(us.itemId).not.toBe(ca.itemId);
+      const rows = await db.select().from(knowledgeItems);
+      expect(rows.map((r) => r.countries).sort()).toEqual([['CA'], ['US']]);
+    });
+
+    it('never near-merges two Wikipedia or HN trend topics', async () => {
+      const db = await testDb();
+      const a = await upsertKnowledgeItem(db, trend('Heat pump', 'wikipedia', 'https://en.wikipedia.org/wiki/Heat_pump'), unit(0), {});
+      const b = await upsertKnowledgeItem(db, trend('Air source heat pump', 'wikipedia', 'https://en.wikipedia.org/wiki/Air_source_heat_pump'), near(0.98), {});
+      const c = await upsertKnowledgeItem(db, trend('heat pumps', 'hn-trend', 'https://hn.algolia.com/?type=story&query=heat%20pumps'), near(0.96, 2), {});
+      expect([a.outcome, b.outcome, c.outcome]).toEqual(['added', 'added', 'added']);
+      expect(new Set([a.itemId, b.itemId, c.itemId]).size).toBe(3);
+    });
+
+    it('the same url again refreshes the one entry (facts, summary, fetchedAt) instead of adding another', async () => {
+      const db = await testDb();
+      const first = await upsertKnowledgeItem(db, market('CA', 'Canada', '40,000,000'), unit(0), { now: new Date('2026-01-01T00:00:00Z') });
+      const again = await upsertKnowledgeItem(db, market('CA', 'Canada', '41,000,000', '2025'), unit(3), { now: new Date('2026-10-01T00:00:00Z') });
+      expect(again.itemId).toBe(first.itemId);
+      expect(again.outcome).not.toBe('added');
+      const rows = await db.select().from(knowledgeItems);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.summary).toBe('World Bank figures for Canada: population 41,000,000 (2024)');
+      expect(rows[0]!.facts).toMatchObject({ sizeClues: [{ value: '41,000,000', year: '2025' }] });
+      const srcs = await db.select().from(knowledgeSources).where(eq(knowledgeSources.itemId, first.itemId));
+      expect(srcs).toHaveLength(1);
+      expect(srcs[0]!.fetchedAt.toISOString()).toBe('2026-10-01T00:00:00.000Z');
+    });
+
+    it('a text entry still near-merges as before', async () => {
+      const db = await testDb();
+      const a = await upsertKnowledgeItem(db, draft(), unit(0), {});
+      expect(await upsertKnowledgeItem(db, draft(), near(0.97), {})).toEqual({ outcome: 'merged', itemId: a.itemId });
+    });
+  });
+
   it('voice moves only toward more independent', async () => {
     const db = await testDb();
     const a = await upsertKnowledgeItem(db, draft({ voice: 'vendor' }), unit(0), {});
@@ -242,6 +297,15 @@ describe('libraryCoverage', () => {
     await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/4', 'y.example', 'reddit') }), unit(3), {});
     const gone = await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/5', 'y.example', 'hn') }), unit(4), {});
     await rejectItem(db, gone.itemId);
+    expect((await libraryCoverage(db)).socialShare).toBe(0.5);
+  });
+  it('socialShare leaves out HN trend counts (a measurement, not a community post)', async () => {
+    const db = await testDb();
+    await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/1', 'y.example', 'hn') }), unit(0), {});
+    await upsertKnowledgeItem(db, draft({
+      kind: 'trend', facts: { topic: 't', direction: 'rising', evidence: [{ metric: 'm', value: '30', period: '2025' }], window: 'w', basis: 'measured' },
+      source: unverifiedSource('https://hn.algolia.com/?type=story&query=t', 'hn.algolia.com', 'hn-trend'),
+    }), unit(1), {});
     expect((await libraryCoverage(db)).socialShare).toBe(0.5);
   });
   it('is null-safe when empty', async () => {

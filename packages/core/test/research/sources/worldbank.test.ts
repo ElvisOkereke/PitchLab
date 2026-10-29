@@ -57,6 +57,15 @@ describe('worldBankMarket', () => {
     expect(f.growthClues[1]).toEqual({ metric: 'GDP per person', change: '+9.1%', period: '2022–2023' });
   });
 
+  it('gives the two percentage indicators their growth in percentage points', async () => {
+    const d = await run(api((c) => (c === 'IT.NET.USER.ZS' ? ok([row(2023, 92.5), row(2018, 88.4)]) : c === 'SP.URB.TOTL.IN.ZS' ? ok([row(2023, 81.2), row(2022, 82)]) : GOOD(c))));
+    const g = (d!.facts as { growthClues: { metric: string; change: string; period: string }[] }).growthClues;
+    expect(g.find((x) => x.metric === 'Internet users')).toEqual({ metric: 'Internet users', change: '+4.1 points', period: '2018–2023' });
+    expect(g.find((x) => x.metric === 'Urban population')).toEqual({ metric: 'Urban population', change: '-0.8 points', period: '2022–2023' });
+    // Rates per 100 or per 1,000 people keep the relative change.
+    expect(g.find((x) => x.metric === 'Mobile subscriptions')).toEqual({ metric: 'Mobile subscriptions', change: '+9.1%', period: '2022–2023' });
+  });
+
   it('skips null values in a series', async () => {
     const d = await run(
       api((c) => (c === 'SP.POP.TOTL' ? ok([row(2023, null), row(2022, 110), row(2021, null), row(2020, 100)]) : ok([row(2023, null)]))),

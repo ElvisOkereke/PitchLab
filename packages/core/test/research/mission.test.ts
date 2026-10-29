@@ -1073,7 +1073,7 @@ function oldCollectors(spy: Spies): Collectors {
 function newCollectors(spy: Spies, over: Partial<Collectors> = {}): Collectors {
   return {
     wikiTrend: async (q) => { spy.order.push(`wikipedia:${q}`); return trendDraft(q, `https://en.wikipedia.org/wiki/${encodeURIComponent(q)}`); },
-    hnTrend: async (q) => { spy.order.push(`hnTrend:${q}`); return trendDraft(`hn ${q}`, `https://hn.algolia.com/?type=story&query=${encodeURIComponent(q)}`, 'hn'); },
+    hnTrend: async (q) => { spy.order.push(`hnTrend:${q}`); return trendDraft(`hn ${q}`, `https://hn.algolia.com/?type=story&query=${encodeURIComponent(q)}`, 'hn-trend'); },
     federalRegister: async (q) => { spy.order.push(`federalregister:${q}`); return []; },
     worldBank: async (c) => { spy.order.push(`worldbank:${c}`); return marketDraft(c); },
     ...over,
@@ -1240,7 +1240,7 @@ describe('runMission: trends, rule changes and markets', () => {
     ]);
   });
 
-  it("fills a missing or invalid status from the Federal Register hint; keeps a valid one the model gave", async () => {
+  it("the Federal Register hint's status wins over the model's (which only saw the title and abstract)", async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
     const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
@@ -1249,7 +1249,7 @@ describe('runMission: trends, rule changes and markets', () => {
     const { deps } = sliceBDeps(db, { plan, extract: (s) => ruleEntry(s, status(s.n)) }, newCollectors({ order: [] }, { federalRegister: fr }));
     expect(await runMission(deps, id)).toBe('succeeded');
     const items = (await db.select().from(knowledgeItems)).sort((a, b) => a.title.localeCompare(b.title));
-    expect(items.map((i) => (i.facts as { status: string }).status)).toEqual(['proposed', 'proposed', 'announced']);
+    expect(items.map((i) => (i.facts as { status: string }).status)).toEqual(['proposed', 'proposed', 'proposed']);
     expect((await mission(db, id)).warnings).toEqual([]);
   });
 
@@ -1292,7 +1292,7 @@ describe('runMission: trends, rule changes and markets', () => {
     expect(items).toHaveLength(1);
     expect(items[0]!.facts).toMatchObject({ publishedDate: '2026-05-01' });
     const m = await mission(db, id);
-    expect(m.warnings).toEqual(['rule_change: 1 stale entry dropped (published over 3 years ago or in force over 2 years)']);
+    expect(m.warnings).toEqual(['rule_change: 1 stale or undated entry dropped (published over 3 years ago, in force over 2 years, or with no date)']);
     expect(m.status).toBe('succeeded');
   });
 
@@ -1337,6 +1337,36 @@ describe('runMission: trends, rule changes and markets', () => {
     expect((await db.select().from(knowledgeItems)).map((i) => i.title).sort()).toEqual(['Interest in hn c', 'Market size clues for CA']);
   });
 
+  it('a 429 from the HN trend counts stops only the trend counts (key hn-trend); the HN search continues', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['problem', 'trend'], countries: ['CA'] });
+    const spy: Spies = { order: [] };
+    const collectors = {
+      ...oldCollectors(spy),
+      ...newCollectors(spy, { hnTrend: async (q) => { spy.order.push(`hnTrend:${q}`); throw new SourceError('rate_limited', 'hn'); } }),
+    };
+    const plan = { queries: [{ source: 'hn', q: 'a', purpose: 'trend' }, { source: 'hn', q: 'b', purpose: 'trend' }, { source: 'hn', q: 'invoices' }] };
+    const { deps } = sliceBDeps(db, { plan, extract: () => null }, collectors);
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(spy.order).toEqual(['hnTrend:a', 'hn:invoices']);
+    expect((await mission(db, id)).warnings).toEqual(['hn-trend: rate limited, stopped for this mission']);
+  });
+
+  it('an undated web rule change is dropped and counted as stale or undated', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['CA'] });
+    const url = 'https://gazette.example/notice';
+    const { deps } = sliceBDeps(
+      db,
+      { plan: { queries: [{ source: 'web', q: 'gazette notice' }] }, research: [{ text: '', sources: [{ url }] }], extract: (s) => ruleEntry(s) },
+      {},
+      { [url]: `Notice. ${FR_QUOTE}` },
+    );
+    expect(await runMission(deps, id)).toBe('succeeded');
+    expect(await db.select().from(knowledgeItems)).toHaveLength(0);
+    expect((await mission(db, id)).warnings).toEqual(['rule_change: 1 stale or undated entry dropped (published over 3 years ago, in force over 2 years, or with no date)']);
+  });
+
   it('collector messages become warnings (bounded per source); empty trend results are counted, never echoed one by one', async () => {
     const db = await testDb();
     const id = await insertMission(db, { kinds: ['trend', 'market'], countries: ['CA'] });
@@ -1359,7 +1389,7 @@ describe('runMission: trends, rule changes and markets', () => {
       'wikipedia: odd response 1', 'wikipedia: odd response 2', 'wikipedia: odd response 3',
       'worldbank: unexpected response for SP.POP.TOTL',
       'wikipedia: 2 topics had no usable article or too few views',
-      'hn trend: 1 topic had too few stories',
+      'hn-trend: 1 topic had too few stories',
     ]);
   });
 
@@ -1467,8 +1497,11 @@ describe('keepQuotedNumbers', () => {
   it('a year in the value does not stand in for the measured number', () => {
     expect(keepQuotedNumbers('trend', trend('up 80% since 2019'), 'Sales have changed a lot since 2019 across the country.')).toBeNull();
     expect(values(keepQuotedNumbers('trend', trend('up 80% since 2019'), 'Sales are up 80% since 2019.'))).toEqual(['up 80% since 2019']);
-    // A value that is only a year is checked as that year.
-    expect(values(keepQuotedNumbers('trend', trend('34%', '2019'), 'Sales rose 34% after 2019.'))).toEqual(['34%', '2019']);
+    // A value whose only number is a year is not a measurement: it is dropped, and alone it cannot carry a trend.
+    expect(values(keepQuotedNumbers('trend', trend('34%', '2019'), 'Sales rose 34% after 2019.'))).toEqual(['34%']);
+    expect(keepQuotedNumbers('trend', trend('2019'), 'Sales have risen steadily since 2019 across the country.')).toBeNull();
+    expect(keepQuotedNumbers('trend', trend('since 2019', 'up'), 'Sales have been up since 2019 across the country.')).toBeNull();
+    expect(values(keepQuotedNumbers('trend', trend('up', '34%'), 'Sales rose 34% after 2019.'))).toEqual(['up', '34%']);
   });
   it('a whole number does not match a longer decimal or number', () => {
     expect(keepQuotedNumbers('trend', trend('34%'), 'Sales rose 34.5% in 2025.')).toBeNull();
