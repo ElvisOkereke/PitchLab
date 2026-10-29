@@ -930,8 +930,21 @@ describe('withStartupQueries', () => {
     expect(out.some((x) => x.source === 'web')).toBe(true);
   });
 
+  it('never pads with "<word> software" or "<word> platform" (the YC collector OR-matches any word)', () => {
+    const out = withStartupQueries(mk('web', 12), 'invoicing chasing', 12, both);
+    const qs = startup(out).map((q) => q.q);
+    expect(qs.length).toBeGreaterThanOrEqual(2);
+    expect(qs.some((q) => /(software|platform)/.test(q))).toBe(false);
+    expect(qs.every((q) => q.split(' ').every((w) => ['invoicing', 'chasing'].includes(w)))).toBe(true);
+  });
+
+  it('a one-word topic may add fewer queries than the reservation', () => {
+    const out = withStartupQueries(mk('web', 12), 'invoicing', 12, { yc: true, producthunt: false });
+    expect(startup(out).map((q) => q.q)).toEqual(['invoicing']);
+  });
+
   it('never exceeds a cap of 12, even from a full plan', () => {
-    const out = withStartupQueries([...mk('web', 8), ...mk('hn', 4)], 'invoicing', 12, both);
+    const out = withStartupQueries([...mk('web', 8), ...mk('hn', 4)], 'invoicing tools chasing', 12, both);
     expect(out.length).toBeLessThanOrEqual(12);
     expect(startup(out).length).toBeGreaterThanOrEqual(2);
   });
@@ -946,7 +959,7 @@ describe('withStartupQueries', () => {
       { source: 'web', q: 'x software pricing plans per month' }, { source: 'web', q: 'x tool pricing comparison' },
       ...mk('web', 7), ...mk('hn', 1), ...mk('web', 1, 'tail'),
     ];
-    const out = withStartupQueries(plan, 'widgets', 11, both);
+    const out = withStartupQueries(plan, 'widgets gadgets', 11, both);
     expect(out.length).toBeLessThanOrEqual(11);
     expect(out.filter((q) => /pricing/.test(q.q))).toHaveLength(2);
     expect(out.some((q) => q.source === 'hn')).toBe(true);
@@ -954,7 +967,7 @@ describe('withStartupQueries', () => {
   });
 
   it('adds yc queries only when Product Hunt is unavailable', () => {
-    const out = withStartupQueries(mk('web', 12), 'invoicing tools', 12, { yc: true, producthunt: false });
+    const out = withStartupQueries(mk('web', 12), 'invoicing chasing', 12, { yc: true, producthunt: false });
     expect(startup(out).length).toBeGreaterThanOrEqual(2);
     expect(startup(out).every((q) => q.source === 'yc')).toBe(true);
     expect(out).toHaveLength(12);
@@ -973,7 +986,7 @@ describe('withStartupQueries', () => {
   });
 
   it('a plan of only startup queries below the reservation grows within the cap', () => {
-    const out = withStartupQueries(mk('yc', 1), 'invoicing', 12, both);
+    const out = withStartupQueries(mk('yc', 1), 'invoicing chasing', 12, both);
     expect(out.length).toBeLessThanOrEqual(12);
     expect(startup(out).length).toBeGreaterThanOrEqual(2);
   });

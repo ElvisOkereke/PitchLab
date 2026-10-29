@@ -306,7 +306,7 @@ describe('ideate', () => {
   // ---- ideate.v8: money and barrier fields, library context, lens sampling, consumer segments, enforced mix ----
 
   it('stores the v8 money and barrier fields; drops and counts an idea with an unknown business model', async () => {
-    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 2 });
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 3 });
     const base = { oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', ...tags, ...claim, signalUrls: [] };
     const consumer = {
       ...base, title: 'Renter fee guard',
@@ -326,16 +326,16 @@ describe('ideate', () => {
       }),
     };
     const bad = { ...base, title: 'Bad model', ...money({ businessModel: 'crypto' }) };
-    const t = await setup(config, { structured: { ideate: [{ ideas: [bad, consumer, business] }] } });
+    const t = await setup(config, { structured: { ideate: [{ ideas: [bad, consumer, business] }, mk(1, [], { title: 'Top', businessModel: 'ads' })] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: t.rows.map((r) => r.id) });
 
-    expect(structuredPrompts(t.router)).toHaveLength(1);
+    expect(structuredPrompts(t.router)).toHaveLength(2); // the second call tops the count up
     expect(out.dropped).toBe(1);
     expect(out.dropReasons).toEqual({ 'businessModel:invalid_value': 1 });
     expect(t.logs).toContain('ideate: dropped 1 invalid (top reasons: businessModel:invalid_value ×1)');
     const stored = await t.db.select().from(ideas);
-    expect(stored.map((i) => i.title).sort()).toEqual(['Renter fee guard', 'Shop payout checker']);
+    expect(stored.map((i) => i.title).sort()).toEqual(['Renter fee guard', 'Shop payout checker', 'Top']);
     const c = stored.find((i) => i.title === 'Renter fee guard')!;
     expect(c).toMatchObject({
       audience: 'consumer', businessModel: 'freemium', revenueMechanics: 'Free scan; renters pay $4 a month for automatic disputes',
@@ -348,8 +348,8 @@ describe('ideate', () => {
     expect(b).toMatchObject({ audience: 'business', businessModel: 'usage', barriers: { toStart: 1, toCopy: 3, soloBuildable: false } });
     // A source that is neither a library entry shown nor a signal url is not kept: the value becomes a stated assumption.
     expect(b.valueToUser).toEqual({ kind: 'time', amountPerYear: 960, basis: 'Assumption: Saves 2 hours a month at $40/hour' });
-    expect(out.mix).toMatchObject({ consumerShare: 0.5, models: 2, reask: false, short: { consumer: 0, models: [] } });
-    expect(t.logs).toContain('ideate: mix consumer 50% models 2 (re-ask: no, still short: no)');
+    expect(out.mix).toMatchObject({ consumerShare: 2 / 3, models: 3, reask: true, short: { consumer: 0, models: [] } });
+    expect(t.logs).toContain('ideate: mix consumer 67% models 3 (re-ask: yes, still short: no)');
   });
 
   it('gives each lens its own library context in untrusted blocks, from one embedding per lens, filtered to the market', async () => {
@@ -410,7 +410,7 @@ describe('ideate', () => {
     expect(logs.some((l) => /library context unavailable/.test(l))).toBe(true);
   });
 
-  it('re-asks once when the mix is short, with the gap stated, and appends only valid ideas', async () => {
+  it('re-asks once when the mix is short, with the gap stated, and appends only the first 3 ideas', async () => {
     const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
     // The lens needs 4 ideas: one call of 3, then one of 1.
     const biz = mk(3, [], { audience: 'business', businessModel: 'subscription' });
@@ -418,7 +418,7 @@ describe('ideate', () => {
     const c = (title: string, businessModel: string) => ({
       title, oneLiner: 'o', buyer: 'renters', problem: 'p', solution: 's', ...tags, ...claim, signalUrls: [], ...money({ businessModel }),
     });
-    const fill = { ideas: [c('C1', 'ads'), c('C2', 'affiliate'), c('C3', 'freemium'), { ...c('Bad', 'ads'), audience: 'pets' }] };
+    const fill = { ideas: [c('C1', 'ads'), c('C2', 'affiliate'), c('C3', 'freemium'), { ...c('Bad', 'ads'), audience: 'pets' }] }; // the 4th item is past the count of 3: ignored
     const t = await setup(config, { structured: { ideate: [biz, biz2, fill, mk(1, [])] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
@@ -443,8 +443,8 @@ describe('ideate', () => {
     expect(stored).toHaveLength(7);
     expect(stored.filter((i) => i.audience === 'consumer').map((i) => i.title).sort()).toEqual(['C1', 'C2', 'C3']);
     expect(out.ideaIds).toHaveLength(7);
-    expect(out.dropped).toBe(1);
-    expect(out.dropReasons).toEqual({ 'audience:invalid_value': 1 });
+    expect(out.dropped).toBe(0);
+    expect(out.dropReasons).toEqual({});
     expect(out.mix).toMatchObject({ models: 4, reask: true, short: { consumer: 0, models: [] } });
     expect(out.mix!.consumerShare).toBeCloseTo(3 / 7);
     expect(t.logs).toContain('ideate: mix consumer 43% models 4 (re-ask: yes, still short: no)');
@@ -775,11 +775,11 @@ describe('ideate calls of 3', () => {
     const t = await setup(config, {});
     await t.db.insert(lenses).values(TWO_LENSES[0]!);
     const na = (title: string) => named(title, 1, { valueToUser: { kind: 'save', amountPerYear: 'N/A', basis: 'Assumption: x' } }).ideas[0];
-    const first = { ideas: [named('A', 1).ideas[0], na('N1'), named('X', 1, { businessModel: 'crypto' }).ideas[0], na('N2')] };
+    const first = { ideas: [na('N1'), na('N2'), named('X', 1, { businessModel: 'crypto' }).ideas[0], named('A', 1).ideas[0]] }; // the 4th is past the count: ignored
     const r = spyRouter({ structured: { ideate: [first, named('R', 2)] } }, { 0: 1 });
     const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
     expect(out).toMatchObject({
-      requested: 5, returned: 6, dropped: 3, truncatedCalls: 1, failedCalls: 0,
+      requested: 6, returned: 6, dropped: 3, truncatedCalls: 1, failedCalls: 0,
       dropReasons: { 'valueToUser.amountPerYear:invalid_type': 2, 'businessModel:invalid_value': 1 },
     });
     expect(JSON.stringify(out.dropReasons)).not.toMatch(/N\/A|crypto/);
@@ -830,6 +830,34 @@ describe('ideate calls of 3', () => {
     expect(p5).toContain('The run has 4 of the 12 ideas it asked for');
     expect(p5).toContain('At least 3 of the 3 ideas must be consumer ideas');
     expect(p5).toContain('Use at least 3 business models this run has not used yet');
+  });
+});
+
+describe('ideate polish', () => {
+  it('a count top-up with the mix met rotates the own lenses of the run and states no consumer segments', async () => {
+    const config = defaultRunConfig({ seedType: 'sector', sectors: ['plumbing'], ideaCount: 12 });
+    const t = await setup(config, {});
+    const r = spyRouter({ structured: { ideate: Array.from({ length: 40 }, () => mk(1, [])) } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    const prompts = structuredPrompts(r);
+    const topUp = prompts.filter((p) => p.includes('Fill the gap.'));
+    expect(topUp).toHaveLength(2);
+    expect(out.mix!.reask).toBe(true);
+    const own = [...new Set(lensNames(prompts.filter((p) => !p.includes('Fill the gap.'))))];
+    expect(own.length).toBeGreaterThan(1);
+    expect(lensNames(topUp)).toEqual([own[0], own[1]]);
+    for (const p of prompts) expect(block(p, 'focus')).not.toContain('Consumer segments');
+  });
+
+  it('a call of 3 that returns 5 ideas ignores items 4 and 5 when counting drops', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 3 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values(TWO_LENSES[0]!);
+    const bad = (title: string) => named(title, 1, { businessModel: 'crypto' }).ideas[0];
+    const r = spyRouter({ structured: { ideate: [{ ideas: [...named('A', 3).ideas, bad('X'), bad('Y')] }] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    expect(out).toMatchObject({ dropped: 0, dropReasons: {}, returned: 5 });
+    expect(out.ideaIds).toHaveLength(3);
   });
 });
 

@@ -138,14 +138,15 @@ follow its progress.
     consumer segments for open seeds, plus the free tech forums (Hacker News, Stack Exchange, GitHub, WordPress.org)
     when a software-adjacent sector or a lens seed is used. The model extracts pain quotes and tags each one's voice;
     a quote is kept only if it appears in the fetched text.
-  - **ideate** (prompt v8): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** lenses;
+  - **ideate** (prompt v9): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** lenses;
     lens seeds use exactly the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
     startups (up to 8) and **pricing** entries (up to 15), plus past gate kills and ideas that already have cases.
     Each idea names its audience, one of 11 business models, revenue mechanics, value to the user per year, a price
     hint, barriers to start and to copy (1 to 5) and the incumbents it claims to beat. The run must reach at least
-    **30% consumer** ideas and **4 business models**; if it falls short, ideate asks once more (up to 6 extra ideas),
-    never in a loop. A value or price whose source is not a library entry or signal shown to the model loses the source
+    **30% consumer** ideas and **4 business models**; if it falls short on the mix, or on the idea count, ideate asks once more
+    (mix gaps plus a count top-up, up to 6 extra ideas), never in a loop. Calls ask for 3 ideas at a time, and drops are
+    logged with a reason (field path and zod code, never model content). A value or price whose source is not a library entry or signal shown to the model loses the source
     and its basis is labelled **"Assumption:"**.
   - **dedupe:** embeds each idea and marks copies (similarity 0.88 or more) of an idea from any earlier run or one
     already kept in this run. Owner ideas are always kept.

@@ -621,9 +621,11 @@ export async function ideate(
       return [];
     }
     const items = out.ideas as unknown[];
+    // `returned` counts every item the model sent; drops are counted only among the first `count`, since items past
+    // the requested count are ignored (neither kept nor counted as drops).
     returned += items.length;
     const valid: LensIdea[] = [];
-    for (const item of items) {
+    for (const item of items.slice(0, count)) {
       if (item instanceof DroppedIdea) {
         dropped++;
         for (const r of item.reasons) dropReasons[r] = (dropReasons[r] ?? 0) + 1;
@@ -670,10 +672,16 @@ export async function ideate(
   if (reask) {
     const mixIdeas = isShort(before) ? Math.max(before.short.consumer, minModels - before.models, 1) : 0;
     const k = Math.min(REASK_MAX_IDEAS, Math.max(mixIdeas, missing));
-    const lens = pickReaskLens(chosen, allLenses, cfg, seededRandom(`${run.id}:reask`));
+    // A mix gap uses the consumer re-ask lens with consumer segments; a count-only top-up rotates the run's own lenses
+    // (call i uses chosen[i % chosen.length]), with segments only for open seeds, like the lens calls.
+    const mixShort = isShort(before);
+    const reaskLens = mixShort ? pickReaskLens(chosen, allLenses, cfg, seededRandom(`${run.id}:reask`)) : null;
     let left = k;
+    let callNo = 0;
     try {
       for (const n of splitCounts(k, IDEAS_PER_CALL)) {
+        const lens = reaskLens ?? chosen[callNo % chosen.length]!;
+        callNo++;
         // Each call states what is still missing once the earlier calls' ideas are in: consumer ideas so the share
         // reaches MIN_CONSUMER_SHARE once the round's remaining ideas are added, then unused business models.
         const now = checkMix(pending, minModels);
@@ -684,7 +692,7 @@ export async function ideate(
           consumer: needConsumer, models: needModels, unused: now.short.models, have: pending.length, target: cfg.ideaCount,
         });
         left -= n;
-        pending.push(...await generate(lens, n, { withSegments: true, gap }));
+        pending.push(...await generate(lens, n, { withSegments: mixShort || cfg.seedType === 'open', gap }));
       }
     } catch (err) {
       log(`ideate: re-ask failed (${errorMessage(err)}), keeping the ideas so far`);

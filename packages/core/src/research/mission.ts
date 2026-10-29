@@ -291,7 +291,9 @@ const STARTUP_STOP = new Set(['a', 'an', 'the', 'and', 'or', 'for', 'of', 'to', 
  * startup-source queries built from the first one or two significant topic words (YC first, then alternating with Product Hunt when
  * it is available). The total stays within `max`: trailing queries of other sources go first, never pricing-page queries and never
  * the last query of a source while another can go; as a last resort the added startup queries are trimmed. Unchanged when no
- * startup source is available.
+ * startup source is available. Queries are only the topic's significant words (and "w1 w2"): the YC collector OR-matches
+ * any word, so padding like "<word> software" would pull in unrelated companies. A one-word topic can therefore add
+ * fewer queries than the reservation asks for.
  */
 export function withStartupQueries(
   queries: PlannedQuery[],
@@ -308,7 +310,7 @@ export function withStartupQueries(
   const first = words[0];
   if (!first) return queries;
   const second = words[1];
-  const keywords = [first, ...(second ? [second, `${first} ${second}`] : []), `${first} software`, `${first} platform`].map((w) => capField(w, 120));
+  const keywords = [first, ...(second ? [second, `${first} ${second}`] : [])].map((w) => capField(w, 120));
   const sources: Array<'yc' | 'producthunt'> = available.yc ? (available.producthunt ? ['yc', 'producthunt'] : ['yc']) : ['producthunt'];
   const out = [...queries];
   const added = new Set<PlannedQuery>();
