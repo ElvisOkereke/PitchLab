@@ -31,7 +31,23 @@ async function twoHostIdea(db: Awaited<ReturnType<typeof testDb>>, runId: string
   return insertIdea(db, runId, { origin, signalIds: sigs.map((s) => s.id) });
 }
 
-describe('gate.v3', () => {
+describe('gate.v4', () => {
+  it('control kills only what a company could switch off: official APIs pass with a fallback or alternatives', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id);
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls.find((c) => c.kind === 'structured')!.prompt;
+    const control = prompt.split('\n').find((l) => l.startsWith('- control:'))!;
+    for (const kill of [/scraping/, /unofficial or reverse-engineered APIs/, /partnership or special permission/, /single platform with no fallback/]) expect(control).toMatch(kill);
+    expect(control).toMatch(/official, documented public APIs/);
+    expect(control).toMatch(/reduced form/);
+    expect(control).toMatch(/several interchangeable platforms/);
+    expect(control).toMatch(/An official API alone is not a fatal dependency/);
+    expect(control).not.toMatch(/one platform's terms of service or goodwill\./);
+  });
+
   it('judges autonomy as a kill only for mostly human labour, and records the labour on a pass', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
@@ -46,7 +62,7 @@ describe('gate.v3', () => {
     expect(autonomy).toMatch(/note the labour/i);
     expect(autonomy).not.toContain('really consulting labour');
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v3');
+    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v4');
   });
 
   it('judges reachability for individuals by channels, keeping the business wording', async () => {
@@ -262,7 +278,7 @@ describe('gate', () => {
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v3')).toBe(true);
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v4')).toBe(true);
     const judge = router.calls.find((c) => c.stage === 'gate')!.prompt;
     expect(judge).toContain(
       'The idea claims the functional gap and incumbents shown in its description. Mark `generic` as failed when the competitor research ' +
@@ -289,7 +305,7 @@ describe('gate', () => {
     const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
     expect(out).toEqual({ passed: [idea.id], advisory: [] });
     for (const { prompt } of router.calls) {
-      // gate.v3's own instructions name both lines, so check the wrapped idea block itself.
+      // gate.v4's own instructions name both lines, so check the wrapped idea block itself.
       const block = /<idea>\n([\s\S]*?)\n<\/idea>/.exec(prompt)![1]!;
       expect(block).toContain('Title: t');
       expect(block).not.toContain('Known incumbents');

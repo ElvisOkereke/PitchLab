@@ -197,4 +197,4 @@ Open after tuning-4:
 
 - archive.org rate-limits (429) early in most missions, so the archive fallback is off for the rest of each mission. Consider a longer interval or a per-day budget.
 - federalregister.gov robots.txt disallows the web pages; the API is the only route (fine), but web queries aimed at it waste a fetch.
-- Gate control check: 11 of 15 bench-v2 #5 entrants failed control because any third-party official API counts as a fatal dependency. Owner decision pending.
+- Gate control check: 11 of 15 bench-v2 #5 entrants failed control because any third-party official API counts as a fatal dependency. Decided 2026-11-04 (option B): see docs/CONTEXT.md; gate.v4 and ideate.v11.
