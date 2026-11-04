@@ -45,6 +45,7 @@ describe('gate.v4', () => {
     expect(control).toMatch(/reduced form/);
     expect(control).toMatch(/several interchangeable platforms/);
     expect(control).toMatch(/An official API alone is not a fatal dependency/);
+    expect(control).toMatch(/A fallback or alternative stated in the idea's solution counts; do not demand proof that it is built/);
     expect(control).not.toMatch(/one platform's terms of service or goodwill\./);
   });
 

@@ -4,9 +4,7 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
-- **Slice B: what is changing and where the market is (branch `sliceb`, built 2026-10-29, not merged):** the library
-- **Slice B results (2026-10-29):** library fill (3 x $5, - **Slice B: what is changing and where the market is (branch `sliceb`, built 2026-10-29, not merged):** the library
-0.03) gave 72 trends (11 measured), 131 rule changes, 22 markets. bench-v2 #5 ($27.42, 5 runs): 41 ideas, 3 cases, demand evidence 32% (13 of 41, first measurement), repetition 0.63 (unchanged), easy to start and hard to copy 2 of 3, wasted gate entrants 0%, but customer return 0 of 3 (median 1.89x) and margin 1 of 3. The gate killed 11 of 15 entrants on control (5 in #4): its reasoning treats reliance on any third-party official API (Stripe, Shopify, Apple, Open Dental, WordPress.org) as a fatal dependency. Owner ruling (2026-11-04, option B): an official, documented public API is acceptable when the product still delivers its core value in a reduced form without that platform (an export or CSV upload, manual entry) or works across several interchangeable platforms; scraping, unofficial APIs, partnerships or permissions, and a single platform with no fallback still fail. gate.v4 and ideate.v11 carry it.
+- **Slice B: what is changing and where the market is (merged 2026-10-29):** the library
   holds `trend`, `rule_change` and `market` entries. Free collectors (no keys): Federal Register rules, Wikipedia
   pageviews, Hacker News yearly counts, World Bank indicators; web search feeds all three kinds (Canadian rules, segment
   markets). Missions, the CLI and the web form accept all six kinds, and background research rotates the new ones in.
@@ -14,6 +12,7 @@
   scorecard metric 7, demand evidence (target 80%), is measured. Owner to-do: after merging, fill the library with
   missions of the new kinds, run bench-v2 #5 and score its cases. Design:
   `docs/superpowers/specs/2026-10-29-slice-b-changes-and-markets-design.md`.
+- **Slice B results (2026-10-29):** library fill (3 x $5, $10.03) gave 72 trends (11 measured), 131 rule changes, 22 markets. bench-v2 #5 ($27.42, 5 runs): 41 ideas, 3 cases, demand evidence 32% (13 of 41, first measurement), repetition 0.63 (unchanged), easy to start and hard to copy 2 of 3, wasted gate entrants 0%, but customer return 0 of 3 (median 1.89x) and margin 1 of 3. The gate killed 11 of 15 entrants on control (5 in #4): its reasoning treats reliance on any third-party official API (Stripe, Shopify, Apple, Open Dental, WordPress.org) as a fatal dependency. Owner ruling (2026-11-04, option B): an official, documented public API is acceptable when the product still delivers its core value in a reduced form without that platform (an export or CSV upload, manual entry) or works across several interchangeable platforms; scraping, unofficial APIs, partnerships or permissions, and a single platform with no fallback still fail. gate.v4 and ideate.v11 carry it.
 - **Generation rebuild (branch `generation`, built 2026-10-27):** ideas carry audience, business model and barrier
   scores; cases carry a value multiple; six consumer lenses; the scorecard measures consumer share, model variety and
   easy-start/hard-copy; `bench-v2` (bench-v1 plus a consumer-lens run) is the current benchmark. `demandEvidence` stays
