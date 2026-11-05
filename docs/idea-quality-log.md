@@ -53,3 +53,43 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
 - **Why:** the first version split the existing calls, which took pain evidence away from 40% of the sectors. The
   evidence rule still needs complaints, so pain coverage stays whole and opportunity is extra.
 - **Cost:** about 2 or 3 more research calls per open or sector run.
+
+## 2026-11-05: bench-v3 #1 (the ambition round)
+
+- **Change:**
+  - ideate v12 (edge, scale, demand route), gate v5, screen v5;
+  - opportunity harvest (extra calls);
+  - six ambition lenses with weighted sampling;
+  - tech forums off;
+  - bench-v3 seeds: 2 open, logistics and construction, healthcare and education, two ambition lenses, AI chore plus new capability.
+
+  $66.04 for 6 runs; review $0.49.
+- **Scorecard against the baseline (bench-v2 #4–#6):**
+  - median edge 4.0 (was 3.5–4.0);
+  - median scale 3.0 (was 3.0);
+  - niche share 53% (was 46–59%);
+  - demand evidence 47% (was 21–32%);
+  - customer return 10 of 12 at 3x or more, median 4.58x (was median 1.89–2.93x);
+  - margin 5 of 12 (was 5 of 6 and 9 of 12);
+  - repetition 0.65 (was 0.62–0.63);
+  - 12 cases ($5.50 a case);
+  - easy to start and hard to copy 6 of 12.
+- **Audit:**
+  - **Cleared:** WordPress. The top domain is now freightwaves.com at 3.2% (wordpress.org was 13–15%). GitHub is down to 2 signals.
+  - **Still raised:** vendor voice 58.9% (was 50–60%). Opportunity research finds vendor pages too.
+  - **New:** `generic` caused 4 of 6 gate kills (67%).
+  - **Still raised:** niche share 53%.
+  - **Lens yield:** cases from ai-replaces-labour 2, new-capability 2, ten-x-incumbent 2, public-data-decision 2, and one each from silent-failure, consumer-ai-chore, consumer-leapfrog and consumer-save-auto.
+- **Reading it:**
+  - **Improved:**
+    - the evidence sources (no more WordPress);
+    - the money case (customer return);
+    - how often ideas rest on a trend, rule or market.
+  - **Not moved, by the reviewer:** scale and niche. Many ideas still target one vertical's admin, for example "for independent practices" and "for small fleets". The healthcare seed pulled 20+ medical-billing ideas.
+  - **Unreliable:** the reviewer's edge score (see the baseline note).
+  - The owner's ratings are needed before the next lever is chosen, so the loop optimises for the owner, not the reviewer.
+- **Owner notes:** none yet.
+- **Next (candidates, pending owner ratings):**
+  - aim opportunity research at neutral sources (statistics offices, news, job boards) to cut vendor share;
+  - ask ideation for the widest buyer the edge serves (scale), not the narrowest one with evidence;
+  - calibrate the reviewer's edge rubric against owner ratings (`idea-review.v2`).
