@@ -1237,10 +1237,20 @@ describe('checkMix', () => {
       'network effects between buyers and sellers', 'integrates deeply into payroll, so switching costs are high', 'two-sided marketplace',
       'liquidity on both sides', 'a licensed broker status', 'certified by the standards body', 'proprietary dataset of payouts',
       'customer lock-in', 'locked in by history', 'a distribution channel we earn', 'an active community', 'deep integration with the ERP',
+      // spec B5 additions
+      'a proprietary model of freight rates', 'a proprietary pricing-risk model', 'models trained on our data from every claim',
+      'trained on our own labelled invoices data', 'accumulated usage data no newcomer has', 'accumulated customer data over years',
+      'a benchmark of 40,000 real payouts', 'benchmarks of claim outcomes across customers', 'workflow data from every job it runs',
     ])('names a mechanism: %s', (why) => {
       expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(true);
     });
-    it.each(['great UX', 'first mover advantage', 'a better product', 'strong brand', 'accumulated history', 'hard work', 'it is data-driven'])(
+    it.each([
+      'great UX', 'first mover advantage', 'a better product', 'strong brand', 'accumulated history', 'hard work', 'it is data-driven',
+      // generic praise near the spec B5 words
+      'accumulated experience', 'accumulated goodwill and know-how', 'a proprietary business model', 'a proprietary revenue model',
+      'sets the benchmark of quality', 'the benchmark of excellence in the industry', 'trained on public data', 'a smooth workflow',
+      'a workflow database anyone can build', 'a model customer experience',
+    ])(
       'does not name a mechanism: %s',
       (why) => { expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(false); },
     );
@@ -1386,12 +1396,17 @@ describe('ideate v12 evidence rule in storage', () => {
         idea('Three signals', ['https://alpha.test/1', 'https://beta.test/1', 'https://gamma.test/1']),
         idea('Other-domain opportunity', ['https://alpha.test/1', 'https://delta.test/1']),
       ] },
+      // The re-ask round (3 of 5 kept): its top-up ideas go through the same evidence check.
+      { ideas: [
+        idea('Top-up one signal', ['https://beta.test/1']),
+        idea('Top-up trend', ['https://beta.test/1'], [shownTrend]),
+      ] },
     );
     const out = await ideate(t.deps, t.run, { signalIds: rows.map((r) => r.id) });
-    expect(out.dropReasons).toEqual({ 'evidence:insufficient': 2 });
-    expect(out.dropped).toBe(2);
+    expect(out.dropReasons).toEqual({ 'evidence:insufficient': 3 });
+    expect(out.dropped).toBe(3);
     const stored = await t.db.select().from(ideas);
-    expect(stored.map((i) => i.title).sort()).toEqual(['Other-domain opportunity', 'Three signals', 'Trend route']);
+    expect(stored.map((i) => i.title).sort()).toEqual(['Other-domain opportunity', 'Three signals', 'Top-up trend', 'Trend route']);
     expect(stored.find((i) => i.title === 'Trend route')!.libraryItemIds).toEqual([shownTrend]);
   });
 });

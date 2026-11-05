@@ -1,22 +1,27 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CRITERIA } from '../../src/case/schema';
 import { loadPrompt } from '../../src/llm/prompts';
+import { StructuredOutputError } from '../../src/llm/router';
+import { gate } from '../../src/pipeline/gate';
 import * as screenModule from '../../src/pipeline/screen';
 import { barrierScore, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand, screen, weightedScreenTotal } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
-import { signals, type SignalVoice } from '../../src/db/schema';
+import { knowledgeItems, signals, type SignalVoice } from '../../src/db/schema';
 import { getIdea, insertCase, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
 type TestDb = Awaited<ReturnType<typeof testDb>>;
 let sigSeq = 0;
 /** Inserts one signal per entry (voice, domain) and returns the ids. */
-async function sigs(db: TestDb, list: { voice: SignalVoice | null; domain?: string }[]): Promise<string[]> {
+async function sigs(db: TestDb, list: { voice: SignalVoice | null; domain?: string; kind?: 'pain' | 'opportunity' }[]): Promise<string[]> {
   if (list.length === 0) return [];
-  const rows = await db.insert(signals).values(list.map(({ voice, domain }) => {
+  const rows = await db.insert(signals).values(list.map(({ voice, domain, kind }) => {
     const n = ++sigSeq;
     return {
       marketId: 'ca-us', source: 'web', url: `https://${domain ?? `d${n}.test`}/post/${n}`, title: 'T', quote: `q${n}`, quoteHash: `h${n}`, voice,
+      ...(kind ? { kind } : {}),
     };
   })).returning({ id: signals.id });
   return rows.map((r) => r.id);
@@ -29,8 +34,29 @@ const insertIdea: typeof insertBareIdea = async (db, runId, overrides = {}) =>
 
 const scores = (v: number, opts: { novelty?: number } = {}) =>
   Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'novelty' && opts.novelty !== undefined ? opts.novelty : v, note: 'n' }]));
-/** What screen stores for an idea with no money or barrier data: the model's scores plus moneyCase 2 and barrier 3. */
-const stored = (s: unknown) => ({ ...(s as object), moneyCase: expect.objectContaining({ value: 2 }), barrier: expect.objectContaining({ value: 3 }) });
+/**
+ * What screen stores for an idea with no money, barrier, edge or scale data: the model's scores plus moneyCase 2,
+ * barrier 3, and edge and scale 2 (computed, screen.v5).
+ */
+const stored = (s: unknown) => ({
+  ...(s as object), moneyCase: expect.objectContaining({ value: 2 }), barrier: expect.objectContaining({ value: 3 }),
+  edge: expect.objectContaining({ value: 2 }), scale: expect.objectContaining({ value: 2 }),
+});
+type Vals = Record<string, { value: number }>;
+/**
+ * The screen.v5 rank, pinned independently of the code: a weighted mean where every value weighs 1 except speed (0.5)
+ * and novelty (2, kept from tuning-4): (pain + roi + evidence + 0.5 speed + autonomy + 2 novelty + reach + moneyCase
+ * + barrier + edge + scale) / 11.5. `extra` fills what the model does not give (defaults: an idea with no data).
+ */
+const total5 = (m: unknown, extra: Partial<Record<'moneyCase' | 'barrier' | 'edge' | 'scale', number>> = {}) => {
+  const v = m as Vals;
+  const x = { moneyCase: 2, barrier: 3, edge: v.edge?.value ?? 2, scale: v.scale?.value ?? 2, ...extra };
+  return (v.pain!.value + v.roi!.value + v.evidence!.value + 0.5 * v.speed!.value + v.autonomy!.value + 2 * v.novelty!.value + v.reach!.value
+    + x.moneyCase + x.barrier + x.edge + x.scale) / 11.5;
+};
+/** The ideate.v12 edge and scale, valid for ideaBlock. */
+const EDGE = { kind: 'cost', claim: 'Half the price of Cass per invoice line', versus: 'Cass audit service', whyNow: 'PDF extraction got cheap' };
+const SCALE = { buyers: '60,000 US freight brokers', basis: 'FMCSA broker registrations' };
 const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
 /** A unit vector whose cosine with unit(axis) is exactly `sim` (the rest goes on an otherwise unused axis). */
 const atSimilarity = (sim: number, axis = 0, spare = 5) => {
@@ -51,7 +77,7 @@ describe('screen', () => {
     expect((await getIdea(db, a.id)).status).toBe('advanced');
     expect((await getIdea(db, b.id)).status).toBe('advanced');
     expect((await getIdea(db, c.id)).status).toBe('screened_out');
-    expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo((7 * 5 + 5 + 2 + 3) / 10);
+    expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo(total5(scores(5)));
     expect((await getIdea(db, b.id)).screenScores).toEqual(stored(scores(5)));
   });
 
@@ -164,11 +190,11 @@ describe('screen', () => {
       expect(weightedScreenTotal(full as never)).toBeCloseTo((6 * 3 + 5 + 5 + 5 + 1) / 10);
     });
 
-    it('no longer exports a crowd penalty, and screen.v4 asks for no competitor list', () => {
+    it('no longer exports a crowd penalty, and the screen prompt asks for no competitor list', () => {
       expect('crowdPenalty' in screenModule).toBe(false);
       const p = loadPrompt('screen');
-      expect(p.version).toBe('screen.v4');
-      const text = p.render({ idea: '<idea>x</idea>', computed: 'Money case: 2 of 5' });
+      expect(p.version).toBe('screen.v5');
+      const text = p.render({ idea: '<idea>x</idea>', computed: 'Money case: 2 of 5', edgeScale: '', criteriaList: 'x' });
       expect(text).not.toContain('knownCompetitors');
       expect(text).not.toMatch(/competitor/i);
       for (const c of CRITERIA) expect(text).toContain(`- ${c}:`);
@@ -185,10 +211,10 @@ describe('screen', () => {
       expect(out.ideaIds).toEqual([ideasIn[1]!.id, ideasIn[2]!.id]);
       for (const [i, idea] of ideasIn.entries()) {
         const row = await getIdea(db, idea.id);
-        expect(row.screenTotal).toBeCloseTo(weightedScreenTotal({ ...given[i], moneyCase: { value: 2, note: '' }, barrier: { value: 3, note: '' } } as never));
+        expect(row.screenTotal).toBeCloseTo(total5(given[i]));
         expect(row.screenScores).toEqual(stored(given[i]));
       }
-      expect(logs.some((l) => l.includes('"High"') && l.includes('total 3.50'))).toBe(true);
+      expect(logs.some((l) => l.includes('"High"') && l.includes('total 3.22'))).toBe(true); // 37 / 11.5
       expect(logs.some((l) => l.includes('penalty'))).toBe(false);
     });
 
@@ -209,7 +235,7 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [{ ...scores(4), knownCompetitors: ['A', 'B', 'C', 'D'] }] } });
       await screen(deps(db, router), run, { ideaIds: [idea.id] });
       const row = await getIdea(db, idea.id);
-      expect(row.screenTotal).toBeCloseTo((7 * 4 + 4 + 2 + 3) / 10);
+      expect(row.screenTotal).toBeCloseTo(total5(scores(4)));
       expect(row.screenScores).toEqual(stored(scores(4)));
     });
 
@@ -221,8 +247,8 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [scores(3, { novelty: 1 }), scores(3, { novelty: 5 })] } });
       const out = await screen(deps(db, router), run, { ideaIds: [plain.id, novel.id] });
       expect(out.ideaIds).toEqual([novel.id]);
-      expect((await getIdea(db, plain.id)).screenTotal).toBeCloseTo((6 * 3 + 1 + 1 + 2 + 3) / 10); // 2.5
-      expect((await getIdea(db, novel.id)).screenTotal).toBeCloseTo((6 * 3 + 5 + 5 + 2 + 3) / 10); // 3.3
+      expect((await getIdea(db, plain.id)).screenTotal).toBeCloseTo(27.5 / 11.5);
+      expect((await getIdea(db, novel.id)).screenTotal).toBeCloseTo(35.5 / 11.5);
     });
   });
 
@@ -300,7 +326,7 @@ describe('screen', () => {
       for (const i of [vendor, oneSite, untagged, none]) expect((await getIdea(db, i.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('"Vendor-backed"') && l.includes('2 independent sources') && l.includes('gate needs 3'))).toBe(true);
       expect(logs.some((l) => l.includes('"None"') && l.includes('0 independent sources'))).toBe(true);
-      expect(logs).toContain('screen: 4 of 6 candidates have too little evidence for the gate (fewer than 3 independent sources) and cannot advance');
+      expect(logs).toContain('screen: 4 of 6 candidates have too little evidence for the gate (fewer than 3 independent sources and no demand source) and cannot advance');
     });
 
     it('applies to the consumer swap too: a consumer candidate without enough evidence is passed over', async () => {
@@ -373,8 +399,8 @@ describe('screen', () => {
       const p = (await getIdea(db, poor.id)).screenScores as Record<string, { value: number }>;
       const r = (await getIdea(db, rich.id)).screenScores as Record<string, { value: number }>;
       expect([p.moneyCase!.value, p.barrier!.value, r.moneyCase!.value, r.barrier!.value]).toEqual([1, 1, 5, 5]);
-      expect((await getIdea(db, poor.id)).screenTotal).toBeCloseTo((7 * 4 + 4 + 1 + 1) / 10);
-      expect((await getIdea(db, rich.id)).screenTotal).toBeCloseTo((7 * 4 + 4 + 5 + 5) / 10);
+      expect((await getIdea(db, poor.id)).screenTotal).toBeCloseTo(total5(scores(4), { moneyCase: 1, barrier: 1 }));
+      expect((await getIdea(db, rich.id)).screenTotal).toBeCloseTo(total5(scores(4), { moneyCase: 5, barrier: 5 }));
       expect(router.calls[0]!.prompt).toMatch(/Money case \(computed[^\n]*\): 1 of 5/);
       expect(router.calls[1]!.prompt).toMatch(/Money case \(computed[^\n]*\): 5 of 5/);
       expect(router.calls[1]!.prompt).toMatch(/Barrier \(computed[^\n]*\): 5 of 5/);
@@ -480,6 +506,139 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [scores(5), scores(4), scores(3)] } });
       const out = await screen(deps(db, router), run, { ideaIds: [b1.id, b2.id, killedCopy.id] });
       expect(out.ideaIds).toEqual([b1.id, b2.id]);
+    });
+  });
+
+  // ---- screen.v5: edge and scale criteria, speed weight 0.5, missing edge or scale scored 2 (spec B5) ----
+
+  describe('screen.v5: edge and scale', () => {
+    const withEdgeScale = (v: number, edge: number, scale: number) => ({ ...scores(v), edge: { value: edge, note: 'e' }, scale: { value: scale, note: 's' } });
+
+    it('is v5 and keeps v4; the identity drops "small", "pilot quickly" and the gendered pronoun', () => {
+      expect(loadPrompt('screen').version).toBe('screen.v5');
+      expect(existsSync(join(__dirname, '../../prompts/screen.v4.md'))).toBe(true);
+      const text = loadPrompt('screen').render({ idea: 'x', computed: 'c', edgeScale: '', criteriaList: 'l' });
+      expect(text).toContain('an owner who wants a software business with a real edge that can grow; software does most of the work');
+      for (const w of ['small', 'he', 'his', 'him']) expect(text).not.toMatch(new RegExp(`\\b${w}\\b`, 'i'));
+      expect(text).not.toMatch(/pilot quickly/);
+    });
+
+    it('weightedScreenTotal: a weighted mean, all weights 1 except speed 0.5 (novelty keeps 2)', () => {
+      const s = { ...withEdgeScale(3, 4, 5), moneyCase: { value: 2, note: '' }, barrier: { value: 3, note: '' } };
+      expect(weightedScreenTotal(s as never)).toBeCloseTo((3 * 5 + 1.5 + 6 + 2 + 3 + 4 + 5) / 11.5);
+      // A point of speed moves the rank half as much as a point of pain.
+      const bump = (c: string) =>
+        weightedScreenTotal({ ...s, [c]: { value: (s as Vals)[c]!.value + 1, note: '' } } as never) - weightedScreenTotal(s as never);
+      expect(bump('speed')).toBeCloseTo(0.5 / 11.5);
+      expect(bump('pain')).toBeCloseTo(1 / 11.5);
+      expect(bump('edge')).toBeCloseTo(1 / 11.5);
+      expect(bump('scale')).toBeCloseTo(1 / 11.5);
+    });
+
+    it('asks the model for edge and scale when the idea states them, with rubrics, and stores and ranks on its scores', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+      const weak = await insertIdea(db, run.id, { title: 'Weak', edge: EDGE, scale: SCALE });
+      const strong = await insertIdea(db, run.id, { title: 'Strong', edge: EDGE, scale: SCALE });
+      const router = fakeRouter({ structured: { screen: [withEdgeScale(3, 1, 1), withEdgeScale(3, 5, 5)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: [weak.id, strong.id] });
+      expect(out.ideaIds).toEqual([strong.id]);
+      const row = await getIdea(db, strong.id);
+      expect(row.screenScores).toMatchObject({ edge: { value: 5, note: 'e' }, scale: { value: 5, note: 's' } });
+      expect(row.screenTotal).toBeCloseTo(total5(withEdgeScale(3, 5, 5)));
+      const prompt = router.calls[0]!.prompt;
+      expect(prompt).toContain("Edge (the idea's own unverified claim): cost: Half the price of Cass per invoice line");
+      expect(prompt).toContain("Scale (the idea's own unverified claim): 60,000 US freight brokers");
+      const edge = prompt.split('\n').find((l) => l.startsWith('- edge:'))!;
+      expect(edge).toMatch(/1: no edge, or the only edge is "uses AI"/);
+      expect(edge).toMatch(/"better UX"/);
+      expect(edge).toMatch(/3: a modest, credible improvement/);
+      expect(edge).toMatch(/5: a large advantage over a named option that a buyer could check/);
+      const scale = prompt.split('\n').find((l) => l.startsWith('- scale:'))!;
+      expect(scale).toMatch(/1: a few hundred buyers, or one niche/);
+      expect(scale).toMatch(/3: tens of thousands of buyers, or a mid-size market/);
+      expect(scale).toMatch(/5: millions of buyers, or a very large market/);
+      expect(prompt).not.toMatch(/Edge \(computed/);
+      expect(prompt).toMatch(/Return only these criteria: pain, roi, evidence, speed, autonomy, novelty, reach, edge, scale\./);
+    });
+
+    it('a model answer missing a requested edge score fails validation', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+      const idea = await insertIdea(db, run.id, { edge: EDGE });
+      const router = fakeRouter({ structured: { screen: [scores(4)] } });
+      await expect(screen(deps(db, router), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
+    });
+
+    it('Review Focus 5: an old idea without edge or scale scores 2 for each (computed, the model is not asked) and still screens', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+      const old = await insertIdea(db, run.id, { title: 'Old', edge: null, scale: null });
+      // A stray edge or scale in the answer cannot override the computed 2.
+      const router = fakeRouter({ structured: { screen: [withEdgeScale(4, 5, 5)] } });
+      const out = await screen(deps(db, router), run, { ideaIds: [old.id] });
+      expect(out.ideaIds).toEqual([old.id]);
+      const row = await getIdea(db, old.id);
+      expect(row.screenScores).toMatchObject({ edge: { value: 2 }, scale: { value: 2 } });
+      expect(row.screenTotal).toBeCloseTo(total5(scores(4)));
+      const prompt = router.calls[0]!.prompt;
+      expect(prompt).not.toMatch(/^- edge:/m);
+      expect(prompt).not.toMatch(/^- scale:/m);
+      expect(prompt).toMatch(/Edge \(computed[^\n]*no edge[^\n]*\): 2 of 5/);
+      expect(prompt).toMatch(/Scale \(computed[^\n]*no scale[^\n]*\): 2 of 5/);
+      expect(prompt).toMatch(/Return only these criteria: pain, roi, evidence, speed, autonomy, novelty, reach\./);
+    });
+
+    it('an invalid edge (unknown kind) counts as missing; an idea with edge but no scale is asked for edge only', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const bad = await insertIdea(db, run.id, { edge: { ...EDGE, kind: 'magic' }, scale: SCALE });
+      const half = await insertIdea(db, run.id, { edge: EDGE, scale: null });
+      const router = fakeRouter({ structured: { screen: [{ ...scores(3), scale: { value: 4, note: 's' } }, { ...scores(3), edge: { value: 5, note: 'e' } }] } });
+      await screen(deps(db, router), run, { ideaIds: [bad.id, half.id] });
+      expect((await getIdea(db, bad.id)).screenScores).toMatchObject({ edge: { value: 2 }, scale: { value: 4 } });
+      expect((await getIdea(db, half.id)).screenScores).toMatchObject({ edge: { value: 5 }, scale: { value: 2 } });
+      expect(router.calls[0]!.prompt).toMatch(/Edge \(computed[^\n]*\): 2 of 5/);
+      expect(router.calls[1]!.prompt).toMatch(/^- edge:/m);
+      expect(router.calls[1]!.prompt).toMatch(/Scale \(computed[^\n]*\): 2 of 5/);
+    });
+  });
+
+  describe('pre-gate evidence filter follows the gate rule: 3 complaint units, or 1 signal plus a demand source', () => {
+    async function trendItem(db: TestDb) {
+      const [row] = await db.insert(knowledgeItems).values({
+        kind: 'trend', title: 'Trend', summary: 'S', audience: 'business', countries: ['US'], industries: [], facts: {}, contentHash: `trend${++sigSeq}`,
+      }).returning({ id: knowledgeItems.id });
+      return row!.id;
+    }
+
+    it('an idea with 1 operator pain signal and a cited trend passes the pre-check and reaches the gate; 1 signal alone is skipped', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const demand = await insertIdea(db, run.id, { title: 'Demand', signalIds: await sigs(db, [{ voice: 'operator' }]), libraryItemIds: [await trendItem(db)] });
+      const alone = await insertIdea(db, run.id, { title: 'Alone', signalIds: await sigs(db, [{ voice: 'operator' }]) });
+      const logs: string[] = [];
+      const out = await screen({ db, router: fakeRouter({ structured: { screen: [scores(3), scores(5)] } }), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [demand.id, alone.id] });
+      expect(out.ideaIds).toEqual([demand.id]);
+      expect((await getIdea(db, alone.id)).status).toBe('screened_out');
+      expect(logs.some((l) => l.includes('"Alone"') && l.includes('1 independent sources') && l.includes('no demand source'))).toBe(true);
+      expect(logs).toContain('screen: 1 of 2 candidates have too little evidence for the gate (fewer than 3 independent sources and no demand source) and cannot advance');
+      // The gate's evidence rule agrees.
+      const research = { text: 'r', sources: [] };
+      const verdicts = { verdicts: ['generic', 'regulation', 'control', 'autonomy', 'reachability'].map((check) => ({ check, pass: true, reasoning: 'ok', sourceUrls: [] })) };
+      const gated = await gate(deps(db, fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts] } })), run, { ideaIds: out.ideaIds });
+      expect(gated.passed).toEqual([demand.id]);
+    });
+
+    it('an opportunity signal alone never meets the complaint route (minSignals 1), nor does one on the same domain as the only pain signal', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 3, minSignals: 1 }));
+      const opp = await insertIdea(db, run.id, { title: 'Opp', signalIds: await sigs(db, [{ voice: 'operator', kind: 'opportunity' }]) });
+      const run3 = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 3 }));
+      const same = await insertIdea(db, run3.id, { title: 'Same', signalIds: await sigs(db, [{ voice: 'operator', domain: 'a.test' }, { voice: 'neutral', domain: 'www.a.test', kind: 'opportunity' }]) });
+      const other = await insertIdea(db, run3.id, { title: 'Other', signalIds: await sigs(db, [{ voice: 'operator', domain: 'a.test' }, { voice: 'neutral', domain: 'b.test', kind: 'opportunity' }]) });
+      expect((await screen(deps(db, fakeRouter({ structured: { screen: [scores(3)] } })), run, { ideaIds: [opp.id] })).ideaIds).toEqual([]);
+      expect((await screen(deps(db, fakeRouter({ structured: { screen: [scores(3), scores(3)] } })), run3, { ideaIds: [same.id, other.id] })).ideaIds).toEqual([other.id]);
     });
   });
 });

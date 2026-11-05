@@ -1,11 +1,12 @@
-import { eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { ideationContext, renderIdeationContext } from '../library/context';
-import { gateVerdicts, ideas, markets, signals } from '../db/schema';
+import type { Db } from '../db/client';
+import { gateVerdicts, ideas, knowledgeItems, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
-import { countEvidenceForSignals } from './evidence';
+import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
@@ -30,13 +31,45 @@ const judgeSchema = z
     message: `verdicts must contain each of ${CHECKS.join(', ')} exactly once`,
   });
 
-/** "N independent sources: <breakdown>[; excluded K vendor, M untagged]" (zero counts left out) for the evidence verdict. */
-function evidenceReasoning(e: ReturnType<typeof countEvidenceForSignals>): string {
+/** The evidence code rule's version, stored on the evidence verdict (v3: complaint route counts pain signals only; demand route). */
+export const EVIDENCE_RULE_VERSION = 'evidence-rule.v3';
+
+/**
+ * "N independent sources: <breakdown>[; excluded K vendor, M untagged]" (zero counts left out) over the complaint
+ * (pain) signals, plus "; demand route: library <kind> <id>, opportunity signal on <domain>" when the idea passes on
+ * the demand route.
+ */
+function evidenceReasoning(e: ReturnType<typeof evaluateEvidence>): string {
+  const c = e.complaints;
   const excluded = [
-    ...(e.excludedVendor ? [`${e.excludedVendor} vendor`] : []),
-    ...(e.excludedUntagged ? [`${e.excludedUntagged} untagged`] : []),
+    ...(c.excludedVendor ? [`${c.excludedVendor} vendor`] : []),
+    ...(c.excludedUntagged ? [`${c.excludedUntagged} untagged`] : []),
   ];
-  return `${e.units} independent sources${e.breakdown ? `: ${e.breakdown}` : ''}${excluded.length ? `; excluded ${excluded.join(', ')}` : ''}`;
+  const base = `${c.units} independent sources${c.breakdown ? `: ${c.breakdown}` : ''}${excluded.length ? `; excluded ${excluded.join(', ')}` : ''}`;
+  if (e.route !== 'demand' || !e.demand) return base;
+  const sources = [
+    ...e.demand.library.map((l) => `library ${l.kind} ${l.id}`),
+    ...[...new Set(e.demand.opportunities.map((o) => o.domain))].map((d) => `opportunity signal on ${d}`),
+  ];
+  return `${base}; demand route: ${sources.join(', ')}`;
+}
+
+/**
+ * The given library entries that can be demand sources (trend, market, rule_change, pricing): one bounded query by id.
+ * Ideas store only the library ids their ideate call was shown (ideate drops the rest), so a stored id stands for a
+ * shown entry; an id with no entry, or of another kind, is simply absent.
+ */
+export async function demandLibraryEntries(db: Db, ids: readonly string[]): Promise<{ id: string; kind: string; title: string; summary: string }[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  return db.select({ id: knowledgeItems.id, kind: knowledgeItems.kind, title: knowledgeItems.title, summary: knowledgeItems.summary })
+    .from(knowledgeItems)
+    .where(and(inArray(knowledgeItems.id, unique), inArray(knowledgeItems.kind, [...DEMAND_LIBRARY_KINDS])));
+}
+
+/** demandLibraryEntries as id to kind, for evaluateEvidence. */
+export async function demandLibraryKinds(db: Db, ids: readonly string[]): Promise<Map<string, string>> {
+  return new Map((await demandLibraryEntries(db, ids)).map((r) => [r.id, r.kind]));
 }
 
 export async function gate(
@@ -80,9 +113,14 @@ export async function gate(
     const sigRows = idea.signalIds.length
       ? await db.select().from(signals).where(inArray(signals.id, idea.signalIds))
       : [];
-    // Only operator- and neutral-voiced signals count toward the evidence rule; vendor and untagged ones never do (tuning-4).
-    const evidence = countEvidenceForSignals(sigRows);
-    const evidencePass = evidence.units >= run.config.minSignals;
+    // The evidence rule shared with ideate and screen: minSignals operator or neutral complaint (pain) units, or 1 such
+    // signal plus a demand source (a stored trend, market, rule_change or pricing entry, or an opportunity signal from
+    // another domain). Vendor and untagged signals never count (tuning-4).
+    const evidence = evaluateEvidence(idea, await demandLibraryKinds(db, idea.libraryItemIds ?? []), sigRows, run.config.minSignals);
+    const evidencePass = evidence.pass;
+    const evidenceSources = evidence.route === 'demand' && evidence.demand
+      ? [...new Set([...evidence.complaints.countedUrls, ...evidence.demand.signalUrls])]
+      : evidence.complaints.countedUrls;
 
     const sourceUrls = research.sources.map((s) => s.url);
     // Library startups already sold near this idea (needs the idea's embedding): extra evidence for the generic check.
@@ -118,7 +156,7 @@ export async function gate(
     values.push({
       ideaId: idea.id, check: 'evidence', pass: evidencePass,
       reasoning: evidenceReasoning(evidence),
-      sources: evidence.countedUrls, model: 'rule', promptVersion: 'evidence-rule.v2',
+      sources: evidenceSources, model: 'rule', promptVersion: EVIDENCE_RULE_VERSION,
     });
     const failed = ORDER.filter((c) => !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';

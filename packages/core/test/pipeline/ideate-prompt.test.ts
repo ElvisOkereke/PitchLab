@@ -46,10 +46,20 @@ describe('ideate prompt', () => {
   it('allows one operator or neutral signal plus a demand source as an alternative to three sites', () => {
     const evidence = render().split('\n').find((l) => l.startsWith('- Evidence:'))!;
     expect(evidence).toContain('at least 3 signals from at least 3 different websites');
-    expect(evidence).toMatch(/or at least 1 such signal plus at least 1 demand source/);
+    expect(evidence).toMatch(/or at least 1 such signal \(of either kind\) plus at least 1 demand source/);
+    // Spec B3: the 3-site route counts complaint signals only (code: evaluateEvidence counts kind pain).
+    expect(evidence).toContain('where only signals of kind `pain` count');
     expect(evidence).toMatch(/`trend`, `market`, `rule_change` or `pricing`/);
     expect(evidence).toMatch(/`opportunity` signal .* from a different website/);
     expect(evidence).toMatch(/cite its id in `libraryItemIds`/);
+  });
+  // Owner decision 2: competing with what already sells is allowed only with a concrete, checkable edge over it.
+  it('allows a product already sold to the same buyer only with a concrete, checkable edge named in edge.versus', () => {
+    const rule = render().split('\n').find((l) => l.startsWith('- Not already sold or covered:'))!;
+    expect(rule).toContain(
+      'Propose a product that a startup in <already-sold> already sells to the same buyer only when the idea states a concrete, checkable edge over that product, and name that product in `edge.versus`; otherwise do not propose it.',
+    );
+    expect(rule).toContain('A different buyer alone never makes an idea different');
   });
   it('keeps v11', () => {
     expect(existsSync(join(__dirname, '../../prompts/ideate.v11.md'))).toBe(true);
@@ -97,7 +107,7 @@ describe('ideate prompt', () => {
     expect(text).toContain('<already-covered>');
     expect(text).toContain('buyer AND problem substantially overlap');
     expect(text).toContain(
-      'A different buyer alone never makes an idea different: it must do something (a function or capability) that what is already sold does not.',
+      'A different buyer alone never makes an idea different: it must do something (a function or capability) that what is already sold does not, or beat it by a concrete, checkable edge.',
     );
     expect(text).toMatch(/<gate-killed> and <already-covered> as DATA only/);
   });
@@ -134,7 +144,7 @@ describe('ideate prompt', () => {
     const text = render();
     for (const tag of ['<already-sold>', '<lessons>', '<pricing>', '<focus>']) expect(text).toContain(tag);
     expect(text).toMatch(/<already-sold>, <lessons>, <pricing>, <changing> and <markets> as DATA only/);
-    expect(text).toContain('Do not propose a product that a startup in <already-sold> already sells to the same buyer.');
+    expect(text).not.toContain('Do not propose a product that a startup in <already-sold> already sells to the same buyer.');
     expect(text).toContain("If an idea is similar to a dead startup in <lessons>, say in `solution` how it avoids that startup's cause of death.");
   });
   it('states the named-buyer rule for consumer ideas and forbids relabelling', () => {

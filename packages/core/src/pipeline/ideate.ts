@@ -487,6 +487,13 @@ export const MOAT_KEYWORDS: readonly RegExp[] = [
   /\bcertif\w*/i,
   /\bdistribution\b/i,
   /\bcommunit(?:y|ies)\b/i,
+  // Spec B5 (screen v5): a model or benchmark built from data, each guarded against the generic praise next to it
+  // ("a proprietary business model", "accumulated history", "the benchmark of quality", "trained on public data").
+  /\bproprietary\s+(?!(?:business|revenue|pricing|operating)\s+models?\b)(?:[\w-]+\s+)?models?\b/i,
+  /\btrained\s+on\s+(?:our|its|their|customers?'?)\s+(?:own\s+)?(?:[\w-]+\s+){0,2}data(?:sets?)?\b/i,
+  /\baccumulat\w*\s+(?:[\w-]+\s+){0,2}(?:data|datasets?|records|labels|examples|corrections|outcomes)\b/i,
+  /\bbenchmarks?\s+of\s+(?!(?:quality|excellence|success|the\b))\S/i,
+  /\bworkflow\s+data\b/i,
 ];
 
 /** A toCopy of 4 or 5 whose reason names no moat mechanism is stored as 3. */
@@ -500,7 +507,7 @@ export const EVIDENCE_DROP = 'evidence:insufficient';
 
 export type IdeateOutput = {
   ideaIds: string[];
-  /** Generated ideas that failed the schema and were not stored. */
+  /** Generated ideas that failed the schema or the evidence rule and were not stored. */
   dropped: number;
   /** Why ideas were dropped: `path:code` (for example `functionalGap:too_big`) to the number of ideas. Never content. */
   dropReasons: Record<string, number>;
@@ -723,8 +730,9 @@ export async function ideate(
     const known: Known = new Map(library.sources);
     for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
     // The evidence rule (ideate.v12), counted against what this call was shown: minSignals independent operator or
-    // neutral sites, or 1 such signal plus a demand source (a shown trend, market, rule_change or pricing entry, or an
-    // opportunity signal from another site). An idea meeting neither is dropped as `evidence:insufficient`.
+    // neutral complaint (pain) sites, or 1 such signal of either kind plus a demand source (a shown trend, market,
+    // rule_change or pricing entry, or an opportunity signal from another site). An idea meeting neither is dropped as
+    // `evidence:insufficient`.
     const evidenced = valid.slice(0, count).filter((idea) => {
       const cited = new Set(idea.signalUrls);
       if (meetsEvidenceRule(idea, library.kinds, passed.filter((s) => cited.has(s.url)), cfg.minSignals)) return true;

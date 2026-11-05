@@ -92,30 +92,68 @@ export type EvidenceSignal = { url: string; voice: SignalVoice | null; kind: str
  * never count on either side. `signals` are the idea's cited signal rows.
  */
 export function hasDemandEvidence(
-  idea: { libraryItemIds: readonly string[] },
+  idea: { libraryItemIds: readonly string[] | null },
   shownLibraryKinds: ReadonlyMap<string, string>,
   signals: readonly EvidenceSignal[],
 ): boolean {
-  const eligible = signals.flatMap((s) => {
-    if (s.voice !== 'operator' && s.voice !== 'neutral') return [];
-    const src = parseSource(s.url);
-    return src ? [{ domain: src.domain, opportunity: s.kind === 'opportunity' }] : [];
-  });
-  if (eligible.length === 0) return false;
-  const demandKinds = new Set<string>(DEMAND_LIBRARY_KINDS);
-  if (idea.libraryItemIds.some((id) => demandKinds.has(shownLibraryKinds.get(id) ?? ''))) return true;
-  return eligible.some((o) => o.opportunity && eligible.some((a) => a.domain !== o.domain));
+  return demandSources(idea, shownLibraryKinds, signals) !== null;
 }
 
 /**
- * The full evidence rule: at least `minSignals` independent operator or neutral units (countEvidenceForSignals), or the
- * demand route (hasDemandEvidence).
+ * The demand sources behind the demand route, or null when it is not met: the cited demand library entries (id and
+ * kind, in citation order) and the opportunity signals from another domain (url and domain); `signalUrls` are the
+ * operator or neutral signal urls that parse, the evidence shown for this route.
  */
+export type DemandSources = { library: { id: string; kind: string }[]; opportunities: { url: string; domain: string }[]; signalUrls: string[] };
+
+function demandSources(
+  idea: { libraryItemIds: readonly string[] | null },
+  shownLibraryKinds: ReadonlyMap<string, string>,
+  signals: readonly EvidenceSignal[],
+): DemandSources | null {
+  const eligible = signals.flatMap((s) => {
+    if (s.voice !== 'operator' && s.voice !== 'neutral') return [];
+    const src = parseSource(s.url);
+    return src ? [{ url: s.url, domain: src.domain, opportunity: s.kind === 'opportunity' }] : [];
+  });
+  if (eligible.length === 0) return null;
+  const demandKinds = new Set<string>(DEMAND_LIBRARY_KINDS);
+  const library = [...new Set(idea.libraryItemIds ?? [])].flatMap((id) => {
+    const kind = shownLibraryKinds.get(id);
+    return kind && demandKinds.has(kind) ? [{ id, kind }] : [];
+  });
+  const opportunities = eligible
+    .filter((o) => o.opportunity && eligible.some((a) => a.domain !== o.domain))
+    .map(({ url, domain }) => ({ url, domain }));
+  if (library.length === 0 && opportunities.length === 0) return null;
+  return { library, opportunities, signalUrls: eligible.map((e) => e.url) };
+}
+
+/**
+ * The evidence rule in full, with the detail the gate's verdict shows:
+ * - the complaint route: at least `minSignals` independent operator or neutral units, counted over `pain` signals only
+ *   (spec B3: complaint signals; an opportunity signal is never a complaint), see countEvidenceForSignals;
+ * - otherwise the demand route (hasDemandEvidence), whose `demand` lists the sources.
+ * `complaints` is always the complaint count; `route` is the route that passed, or null.
+ */
+export function evaluateEvidence(
+  idea: { libraryItemIds: readonly string[] | null },
+  shownLibraryKinds: ReadonlyMap<string, string>,
+  signals: readonly EvidenceSignal[],
+  minSignals: number,
+): { pass: boolean; route: 'signals' | 'demand' | null; complaints: ReturnType<typeof countEvidenceForSignals>; demand: DemandSources | null } {
+  const complaints = countEvidenceForSignals(signals.filter((s) => s.kind === 'pain'));
+  if (complaints.units >= minSignals) return { pass: true, route: 'signals', complaints, demand: null };
+  const demand = demandSources(idea, shownLibraryKinds, signals);
+  return { pass: demand !== null, route: demand ? 'demand' : null, complaints, demand };
+}
+
+/** The evidence rule as a yes or no (evaluateEvidence): shared by ideate's storage, screen's pre-check and the gate. */
 export function meetsEvidenceRule(
-  idea: { libraryItemIds: readonly string[] },
+  idea: { libraryItemIds: readonly string[] | null },
   shownLibraryKinds: ReadonlyMap<string, string>,
   signals: readonly EvidenceSignal[],
   minSignals: number,
 ): boolean {
-  return countEvidenceForSignals([...signals]).units >= minSignals || hasDemandEvidence(idea, shownLibraryKinds, signals);
+  return evaluateEvidence(idea, shownLibraryKinds, signals, minSignals).pass;
 }

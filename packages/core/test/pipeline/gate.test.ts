@@ -1,6 +1,10 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import { gateVerdicts, ideas, signals } from '../../src/db/schema';
+import { gateVerdicts, ideas, knowledgeItems, signals } from '../../src/db/schema';
+import { loadPrompt } from '../../src/llm/prompts';
+import { evaluateEvidence, meetsEvidenceRule } from '../../src/pipeline/evidence';
 import { StructuredOutputError } from '../../src/llm/router';
 import { countEvidence, countEvidenceForSignals, gate } from '../../src/pipeline/gate';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
@@ -31,7 +35,7 @@ async function twoHostIdea(db: Awaited<ReturnType<typeof testDb>>, runId: string
   return insertIdea(db, runId, { origin, signalIds: sigs.map((s) => s.id) });
 }
 
-describe('gate.v4', () => {
+describe('gate.v4 checks kept in gate.v5', () => {
   it('control kills only what a company could switch off: official APIs pass with a fallback or alternatives', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
@@ -63,7 +67,7 @@ describe('gate.v4', () => {
     expect(autonomy).toMatch(/note the labour/i);
     expect(autonomy).not.toContain('really consulting labour');
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v4');
+    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v5');
   });
 
   it('judges reachability for individuals by channels, keeping the business wording', async () => {
@@ -272,25 +276,16 @@ describe('gate', () => {
     expect(router.calls).toHaveLength(0);
   });
 
-  it('loads gate.v3, whose generic check judges the claimed functional gap and incumbents', async () => {
+  it('loads the latest gate prompt and shows the claimed incumbents and functional gap in the idea block', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
     const idea = await insertIdea(db, run.id, { knownIncumbents: ['Cass', 'nVision'], functionalGap: 'Neither audits accessorial fees' });
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v4')).toBe(true);
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v5')).toBe(true);
     const judge = router.calls.find((c) => c.stage === 'gate')!.prompt;
-    expect(judge).toContain(
-      'The idea claims the functional gap and incumbents shown in its description. Mark `generic` as failed when the competitor research ' +
-        'or an already-sold startup shows an incumbent already provides that function, or when the claimed gap is only about who buys the product or how it is sold ' +
-        '(a positioning, packaging or channel difference). Pass `generic` only when the evidence shows a real functional gap or no incumbent serving this function.',
-    );
-    expect(judge).toContain('If the idea claims no functional gap, judge `generic` on the competitor research and the already-sold startups alone.');
-    expect(judge).toContain(
-      'The "Known incumbents" and "Functional gap" lines in the idea are the idea\'s own unverified claims: check them against the ' +
-        'competitor research and the already-sold startups and never accept them as fact.',
-    );
+    expect(judge).toContain('If the idea claims no functional gap and no edge, judge `generic` on the competitor research and the already-sold startups alone.');
     for (const { prompt } of router.calls) {
       expect(prompt).toContain(
         "Known incumbents (the idea's own unverified claim): Cass; nVision\nFunctional gap (the idea's own unverified claim): Neither audits accessorial fees",
@@ -306,7 +301,7 @@ describe('gate', () => {
     const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
     expect(out).toEqual({ passed: [idea.id], advisory: [] });
     for (const { prompt } of router.calls) {
-      // gate.v4's own instructions name both lines, so check the wrapped idea block itself.
+      // gate.v5's own instructions name both lines, so check the wrapped idea block itself.
       const block = /<idea>\n([\s\S]*?)\n<\/idea>/.exec(prompt)![1]!;
       expect(block).toContain('Title: t');
       expect(block).not.toContain('Known incumbents');
@@ -346,7 +341,7 @@ describe('gate', () => {
       ]);
       expect(ev.pass).toBe(true);
       expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com');
-      expect(ev.promptVersion).toBe('evidence-rule.v2');
+      expect(ev.promptVersion).toBe('evidence-rule.v3');
     });
 
     it('lists the excluded vendor and untagged sources in the reasoning and keeps them out of the verdict sources', async () => {
@@ -423,6 +418,173 @@ describe('gate', () => {
     it('excludes banned urls', async () => {
       const ev = await evidence(['https://www.reddit.com/r/x/1', 'https://a.com/1'], 1);
       expect(ev.reasoning).toBe('1 independent sources: a.com');
+    });
+  });
+});
+
+// ---- gate.v5: competition with a concrete edge (owner decision 2) and the demand evidence route (spec B4) ----
+
+describe('gate.v5', () => {
+  const EDGE = { kind: 'cost', claim: 'Audits every freight invoice for $0.10, against $2 a line at Cass', versus: 'Cass audit service', whyNow: 'LLM extraction of PDF invoices got cheap in 2025' };
+  async function judgePrompt(overrides: Partial<typeof ideas.$inferInsert> = {}) {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await insertIdea(db, run.id, overrides);
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const prompt = router.calls.find((c) => c.stage === 'gate')!.prompt;
+    return { db, idea, prompt, generic: prompt.split('\n').find((l) => l.startsWith('- generic:'))! };
+  }
+
+  it('is v5, keeps v4, and stores gate.v5 on the model verdicts', async () => {
+    expect(loadPrompt('gate').version).toBe('gate.v5');
+    expect(existsSync(join(__dirname, '../../prompts/gate.v4.md'))).toBe(true);
+    const { db, idea } = await judgePrompt();
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v5')).toBe(true);
+  });
+
+  it('generic passes an unserved function or a concrete, checkable edge against named incumbents the research does not contradict', async () => {
+    const { generic } = await judgePrompt();
+    expect(generic).toMatch(/real functional gap or no incumbent serving this function/);
+    expect(generic).toMatch(/concrete, checkable edge against named incumbents/);
+    expect(generic).toMatch(/do not contradict it/);
+  });
+
+  it('generic fails a missing, vague ("uses AI", "better UX") or contradicted edge, and "uses AI" alone is never an edge', async () => {
+    const { generic } = await judgePrompt();
+    expect(generic).toMatch(/FAIL when incumbents already do the same thing and the edge is missing, vague/);
+    expect(generic).toContain('"uses AI"');
+    expect(generic).toContain('"better UX"');
+    expect(generic).toMatch(/contradicted/);
+    expect(generic).toContain('"Uses AI" alone is never an edge.');
+    // Same thing, new label still dies.
+    expect(generic).toMatch(/positioning, packaging or channel difference\) is neither a functional gap nor an edge/);
+  });
+
+  it("generic reasoning names the incumbent and the edge, and treats the idea's own lines as unverified claims", async () => {
+    const { generic } = await judgePrompt();
+    expect(generic).toMatch(/In the reasoning, name the incumbent and the edge/);
+    expect(generic).toMatch(/"Known incumbents", "Functional gap" and "Edge" lines are the idea's own unverified claims/);
+  });
+
+  it("shows the idea's edge line to the judge", async () => {
+    const { prompt } = await judgePrompt({ edge: EDGE });
+    const block = /<idea>\n([\s\S]*?)\n<\/idea>/.exec(prompt)![1]!;
+    expect(block).toContain("Edge (the idea's own unverified claim): cost: Audits every freight invoice");
+    expect(block).toContain("Versus today's option: Cass audit service");
+  });
+
+  it('keeps the other checks (control keeps the ruling B wording) and drops "small"', async () => {
+    const { prompt } = await judgePrompt();
+    const control = prompt.split('\n').find((l) => l.startsWith('- control:'))!;
+    expect(control).toMatch(/An official API alone is not a fatal dependency/);
+    expect(control).toMatch(/A fallback or alternative stated in the idea's solution counts; do not demand proof that it is built/);
+    for (const c of ['- regulation:', '- autonomy:', '- reachability:']) expect(prompt).toContain(c);
+    expect(prompt).not.toMatch(/\bsmall\b/i);
+  });
+
+  describe('evidence code rule: 3 complaint units, or 1 operator or neutral signal plus a demand source', () => {
+    type Sig = { url: string; voice?: 'operator' | 'neutral' | 'vendor' | null; kind?: 'pain' | 'opportunity' };
+    type Kind = 'trend' | 'market' | 'rule_change' | 'pricing' | 'startup' | 'problem';
+    let seq = 0;
+    async function knowledge(db: Awaited<ReturnType<typeof testDb>>, kind: Kind) {
+      const n = ++seq;
+      const [row] = await db.insert(knowledgeItems).values({
+        kind, title: `K${n}`, summary: 'S', audience: 'business', countries: ['US'], industries: [], facts: {}, contentHash: `kh${n}`,
+      }).returning({ id: knowledgeItems.id });
+      return row!.id;
+    }
+    async function evidenceFor(sigs: Sig[], opts: { minSignals?: number; libraryItemIds?: string[] | null; kinds?: Kind[] } = {}) {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: opts.minSignals ?? 3 }));
+      const shown: string[] = [];
+      for (const k of opts.kinds ?? []) shown.push(await knowledge(db, k));
+      const rows = sigs.length ? await db.insert(signals).values(sigs.map((s, i) => ({
+        marketId: 'ca-us', source: 'web', url: s.url, title: 't', quote: `q${i}`, quoteHash: `he${++seq}`,
+        voice: s.voice === undefined ? ('operator' as const) : s.voice,
+        ...(s.kind ? { kind: s.kind } : {}),
+      }))).returning({ id: signals.id }) : [];
+      const idea = await insertIdea(db, run.id, { signalIds: rows.map((r) => r.id), libraryItemIds: opts.libraryItemIds === undefined ? shown : opts.libraryItemIds });
+      const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+      const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+      const ev = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'evidence')!;
+      return { ev, out, idea };
+    }
+
+    it.each(['trend', 'market', 'rule_change', 'pricing'] as const)('passes 1 operator signal plus a cited %s entry', async (kind) => {
+      const { ev, out, idea } = await evidenceFor([{ url: 'https://a.com/1' }], { kinds: [kind] });
+      expect(ev.pass).toBe(true);
+      expect(out.passed).toEqual([idea.id]);
+      expect(ev.reasoning).toMatch(new RegExp(`^1 independent sources: a\\.com; demand route: library ${kind} `));
+      expect(ev.promptVersion).toBe('evidence-rule.v3');
+      expect(ev.model).toBe('rule');
+      expect(ev.sources).toEqual(['https://a.com/1']);
+    });
+
+    it('a cited startup or problem entry is not a demand source', async () => {
+      for (const kind of ['startup', 'problem'] as const) {
+        const { ev } = await evidenceFor([{ url: 'https://a.com/1' }], { kinds: [kind] });
+        expect(ev.pass).toBe(false);
+        expect(ev.reasoning).toBe('1 independent sources: a.com');
+      }
+    });
+
+    it('Review Focus 4: a cited id with no library entry behind it (never shown) does not count', async () => {
+      const { ev } = await evidenceFor([{ url: 'https://a.com/1' }], { libraryItemIds: ['99999999-9999-4999-8999-999999999999'] });
+      expect(ev.pass).toBe(false);
+    });
+
+    it('Review Focus 4: an opportunity signal on the same domain as the only other signal does not count', async () => {
+      const { ev } = await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://www.a.com/launch', kind: 'opportunity' }]);
+      expect(ev.pass).toBe(false);
+      expect(ev.reasoning).toBe('1 independent sources: a.com');
+    });
+
+    it('passes 1 signal plus an operator or neutral opportunity signal from another domain', async () => {
+      const { ev } = await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://b.com/launch', voice: 'neutral', kind: 'opportunity' }]);
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('1 independent sources: a.com; demand route: opportunity signal on b.com');
+      expect(ev.sources).toEqual(['https://a.com/1', 'https://b.com/launch']);
+    });
+
+    it('a vendor or untagged opportunity signal, or a vendor anchor, never counts', async () => {
+      expect((await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://b.com/x', voice: 'vendor', kind: 'opportunity' }])).ev.pass).toBe(false);
+      expect((await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://b.com/x', voice: null, kind: 'opportunity' }])).ev.pass).toBe(false);
+      expect((await evidenceFor([{ url: 'https://a.com/1', voice: 'vendor' }], { kinds: ['trend'] })).ev.pass).toBe(false);
+    });
+
+    it('a demand entry with no operator or neutral signal fails', async () => {
+      expect((await evidenceFor([], { kinds: ['trend', 'market'] })).ev.pass).toBe(false);
+    });
+
+    it('opportunity signals never count toward the complaint route (spec B3: 3 complaint signals)', async () => {
+      // One opportunity signal alone, minSignals 1: no complaint unit and no second domain for the demand route.
+      const single = await evidenceFor([{ url: 'https://a.com/launch', kind: 'opportunity' }], { minSignals: 1 });
+      expect(single.ev.pass).toBe(false);
+      expect(single.ev.reasoning).toBe('0 independent sources');
+      // 2 pain + 1 opportunity on three domains: 2 complaint units; it passes on the demand route, not the complaint route.
+      const mixed = await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://b.com/1' }, { url: 'https://c.com/launch', kind: 'opportunity' }]);
+      expect(mixed.ev.pass).toBe(true);
+      expect(mixed.ev.reasoning).toBe('2 independent sources: a.com, b.com; demand route: opportunity signal on c.com');
+    });
+
+    it('old ideas (no library ids, pain signals) still pass on the 3-unit route', async () => {
+      const { ev } = await evidenceFor([{ url: 'https://a.com/1' }, { url: 'https://b.com/1', voice: 'neutral' }, { url: 'https://c.com/1' }], { libraryItemIds: null });
+      expect(ev.pass).toBe(true);
+      expect(ev.reasoning).toBe('3 independent sources: a.com, b.com, c.com');
+      expect(ev.sources).toEqual(['https://a.com/1', 'https://b.com/1', 'https://c.com/1']);
+    });
+
+    it('evaluateEvidence and meetsEvidenceRule count only pain signals toward minSignals', () => {
+      const s = (host: string, kind: 'pain' | 'opportunity') => ({ url: `https://${host}/p`, voice: 'operator' as const, kind });
+      expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain'), s('b.com', 'pain'), s('c.com', 'opportunity')], 3))
+        .toMatchObject({ pass: true, route: 'demand', complaints: { units: 2 } });
+      expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain'), s('b.com', 'pain'), s('c.com', 'pain')], 3))
+        .toMatchObject({ pass: true, route: 'signals', complaints: { units: 3 } });
+      expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'opportunity')], 1)).toMatchObject({ pass: false, route: null });
+      expect(meetsEvidenceRule({ libraryItemIds: [] }, new Map(), [s('a.com', 'opportunity')], 1)).toBe(false);
+      expect(meetsEvidenceRule({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain')], 1)).toBe(true);
     });
   });
 });

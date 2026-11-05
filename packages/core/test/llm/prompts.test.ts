@@ -18,7 +18,7 @@ describe('loadPrompt', () => {
   });
   it('latest versions after the generation rebuild', () => {
     expect(['ideate', 'gate', 'screen', 'extract-signals', 'harvest-research'].map((n) => loadPrompt(n).version))
-      .toEqual(['ideate.v12', 'gate.v4', 'screen.v4', 'extract-signals.v5', 'harvest-research.v7']);
+      .toEqual(['ideate.v12', 'gate.v5', 'screen.v5', 'extract-signals.v5', 'harvest-research.v7']);
   });
   it('normalises CRLF line endings (Windows checkouts with core.autocrlf)', () => {
     expect(loadPrompt('extract-signals').render({ ...AUDIENCE, countries: 'CA, US', items: 'X' })).not.toContain('\r');

@@ -13,6 +13,11 @@ const incumbentList = z.array(z.string());
 const edgeText = z.object({ kind: EdgeSchema.shape.kind, claim: z.string().min(1), versus: z.string().min(1), whyNow: z.string().min(1) });
 const scaleText = z.object({ buyers: z.string().min(1), basis: z.string().min(1), source: z.string().optional() });
 
+/** Whether ideaBlock shows an Edge line for this jsonb value (screen.v5 asks the model for `edge` only then). */
+export const hasEdgeLine = (raw: unknown): boolean => edgeText.safeParse(raw).success;
+/** Whether ideaBlock shows a Scale line for this jsonb value (screen.v5 asks the model for `scale` only then). */
+export const hasScaleLine = (raw: unknown): boolean => scaleText.safeParse(raw).success;
+
 /**
  * Incumbent names from the jsonb column, ready for one prompt line: anything but an array of strings is treated as
  * absent; `;` becomes `,` (the list separator stays unambiguous), newlines and control chars collapse, each name is
