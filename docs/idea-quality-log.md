@@ -13,11 +13,29 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
 
 ## Baseline: bench-v2 #4–#6, reviewed with idea-review.v1
 
-- **Change:** none. This is the starting point the next passes are compared with.
-- **Scorecard deltas:** to be filled.
-- **Audit deltas:** to be filled.
-- **Owner notes:** to be filled.
-- **Next:** to be filled.
+- **Change:** none. This is the starting point the next passes are compared with. Reviewed 2026-11-05 (142 ideas,
+  $1.14 on gemini-3.1-pro).
+- **Scorecard (#4 / #5 / #6):**
+  - median edge 4.0 / 4.0 / 3.5;
+  - median scale 3.0 / 3.0 / 3.0;
+  - niche share 59% / 46% / 48%;
+  - repetition 0.63 / 0.63 / 0.62;
+  - demand evidence 0% / 32% / 21%;
+  - cases 6 / 3 / 12.
+- **Audit (#6):** three flags raised:
+  - wordpress.org supplied 15.1% of the evidence (limit 15%);
+  - sellers (vendor voice) wrote 50.7% of it (limit 40%);
+  - the reviewer called 48% of ideas niche or small (limit 30%).
+
+  #4–#5 show the same pattern: wordpress.org 13.6–14.5%, vendor voice 50–60%, untagged voices on older signals.
+- **Owner notes:** the owner judged these ideas "not scalable, too niche, no perceived intelligence edge" (2026-11-04).
+  No ratings yet.
+- **Reading the reviewer:** its niche and scale scores agree with the owner. Its **edge** scores (median 3.5–4.0) do
+  not: the owner saw no edge in these ideas. The reviewer is probably too generous on edge, so treat median edge as
+  unreliable until the owner has rated about 10 ideas and the agreement row is measurable; if agreement is low,
+  tighten the edge rubric in an `idea-review.v2`.
+- **Next:** bench-v3 #1 with the ambition round (ideate v12, gate v5, screen v5, opportunity harvest, ambition lenses,
+  tech forums off).
 - **Notes on reading it:**
   - The demand-evidence metric counts only ideas citing a library **trend, rule change or market** entry. Pricing
     entries and opportunity signals, which ideate v12 also accepts as demand sources, are not counted, so it
