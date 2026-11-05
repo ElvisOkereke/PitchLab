@@ -462,6 +462,19 @@ describe('gate.v5', () => {
     expect(generic).toMatch(/positioning, packaging or channel difference\) is neither a functional gap nor an edge/);
   });
 
+  it('does not default-fail the edge case: an unconfirmed but concrete edge passes when the research does not contradict it', async () => {
+    const { prompt, generic } = await judgePrompt();
+    expect(prompt.split('\n')[0]).toContain('except autonomy and the edge case of generic, which have their own rules below');
+    expect(generic).toContain('Do not demand proof that the edge is real: it passes when it is concrete, checkable and not contradicted by the competitor research.');
+  });
+
+  it('counts a distribution edge only as a structural, earned channel, never a new buyer', async () => {
+    const { generic } = await judgePrompt();
+    expect(generic).toContain(
+      'The one exception is a `distribution` edge that is a structural, earned channel incumbents cannot easily copy (an owned audience, or an embedded partner channel we do not depend on for goodwill); merely selling to a new buyer or through a new channel is never one.',
+    );
+  });
+
   it("generic reasoning names the incumbent and the edge, and treats the idea's own lines as unverified claims", async () => {
     const { generic } = await judgePrompt();
     expect(generic).toMatch(/In the reasoning, name the incumbent and the edge/);
@@ -558,6 +571,13 @@ describe('gate.v5', () => {
       expect((await evidenceFor([], { kinds: ['trend', 'market'] })).ev.pass).toBe(false);
     });
 
+    it('the demand route needs a complaint: an opportunity signal plus a trend, or two opportunity signals, fail', async () => {
+      expect((await evidenceFor([{ url: 'https://a.com/launch', kind: 'opportunity' }], { kinds: ['trend'] })).ev.pass).toBe(false);
+      const two = await evidenceFor([{ url: 'https://a.com/launch', kind: 'opportunity' }, { url: 'https://b.com/launch', kind: 'opportunity' }]);
+      expect(two.ev.pass).toBe(false);
+      expect(two.ev.reasoning).toBe('0 independent sources');
+    });
+
     it('opportunity signals never count toward the complaint route (spec B3: 3 complaint signals)', async () => {
       // One opportunity signal alone, minSignals 1: no complaint unit and no second domain for the demand route.
       const single = await evidenceFor([{ url: 'https://a.com/launch', kind: 'opportunity' }], { minSignals: 1 });
@@ -583,6 +603,9 @@ describe('gate.v5', () => {
       expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain'), s('b.com', 'pain'), s('c.com', 'pain')], 3))
         .toMatchObject({ pass: true, route: 'signals', complaints: { units: 3 } });
       expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'opportunity')], 1)).toMatchObject({ pass: false, route: null });
+      expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'opportunity'), s('b.com', 'opportunity')], 1))
+        .toMatchObject({ pass: false, route: null, failure: 'no_complaint' });
+      expect(evaluateEvidence({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain')], 3)).toMatchObject({ pass: false, failure: 'no_demand_source' });
       expect(meetsEvidenceRule({ libraryItemIds: [] }, new Map(), [s('a.com', 'opportunity')], 1)).toBe(false);
       expect(meetsEvidenceRule({ libraryItemIds: [] }, new Map(), [s('a.com', 'pain')], 1)).toBe(true);
     });

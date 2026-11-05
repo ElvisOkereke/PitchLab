@@ -44,15 +44,14 @@ const stored = (s: unknown) => ({
 });
 type Vals = Record<string, { value: number }>;
 /**
- * The screen.v5 rank, pinned independently of the code: a weighted mean where every value weighs 1 except speed (0.5)
- * and novelty (2, kept from tuning-4): (pain + roi + evidence + 0.5 speed + autonomy + 2 novelty + reach + moneyCase
- * + barrier + edge + scale) / 11.5. `extra` fills what the model does not give (defaults: an idea with no data).
+ * The screen.v5 rank, pinned independently of the code: a weighted mean where every value weighs 1 except speed (0.5):
+ * (pain + roi + evidence + 0.5 speed + autonomy + novelty + reach + moneyCase + barrier + edge + scale) / 10.5. `extra` fills what the model does not give (defaults: an idea with no data).
  */
 const total5 = (m: unknown, extra: Partial<Record<'moneyCase' | 'barrier' | 'edge' | 'scale', number>> = {}) => {
   const v = m as Vals;
   const x = { moneyCase: 2, barrier: 3, edge: v.edge?.value ?? 2, scale: v.scale?.value ?? 2, ...extra };
-  return (v.pain!.value + v.roi!.value + v.evidence!.value + 0.5 * v.speed!.value + v.autonomy!.value + 2 * v.novelty!.value + v.reach!.value
-    + x.moneyCase + x.barrier + x.edge + x.scale) / 11.5;
+  return (v.pain!.value + v.roi!.value + v.evidence!.value + 0.5 * v.speed!.value + v.autonomy!.value + v.novelty!.value + v.reach!.value
+    + x.moneyCase + x.barrier + x.edge + x.scale) / 10.5;
 };
 /** The ideate.v12 edge and scale, valid for ideaBlock. */
 const EDGE = { kind: 'cost', claim: 'Half the price of Cass per invoice line', versus: 'Cass audit service', whyNow: 'PDF extraction got cheap' };
@@ -214,7 +213,7 @@ describe('screen', () => {
         expect(row.screenTotal).toBeCloseTo(total5(given[i]));
         expect(row.screenScores).toEqual(stored(given[i]));
       }
-      expect(logs.some((l) => l.includes('"High"') && l.includes('total 3.22'))).toBe(true); // 37 / 11.5
+      expect(logs.some((l) => l.includes('"High"') && l.includes('total 3.24'))).toBe(true); // 34 / 10.5
       expect(logs.some((l) => l.includes('penalty'))).toBe(false);
     });
 
@@ -247,8 +246,8 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [scores(3, { novelty: 1 }), scores(3, { novelty: 5 })] } });
       const out = await screen(deps(db, router), run, { ideaIds: [plain.id, novel.id] });
       expect(out.ideaIds).toEqual([novel.id]);
-      expect((await getIdea(db, plain.id)).screenTotal).toBeCloseTo(27.5 / 11.5);
-      expect((await getIdea(db, novel.id)).screenTotal).toBeCloseTo(35.5 / 11.5);
+      expect((await getIdea(db, plain.id)).screenTotal).toBeCloseTo(26.5 / 10.5);
+      expect((await getIdea(db, novel.id)).screenTotal).toBeCloseTo(30.5 / 10.5);
     });
   });
 
@@ -523,16 +522,17 @@ describe('screen', () => {
       expect(text).not.toMatch(/pilot quickly/);
     });
 
-    it('weightedScreenTotal: a weighted mean, all weights 1 except speed 0.5 (novelty keeps 2)', () => {
+    it('weightedScreenTotal: a weighted mean, all weights 1 except speed 0.5', () => {
       const s = { ...withEdgeScale(3, 4, 5), moneyCase: { value: 2, note: '' }, barrier: { value: 3, note: '' } };
-      expect(weightedScreenTotal(s as never)).toBeCloseTo((3 * 5 + 1.5 + 6 + 2 + 3 + 4 + 5) / 11.5);
+      expect(weightedScreenTotal(s as never)).toBeCloseTo((3 * 5 + 1.5 + 3 + 2 + 3 + 4 + 5) / 10.5);
       // A point of speed moves the rank half as much as a point of pain.
       const bump = (c: string) =>
         weightedScreenTotal({ ...s, [c]: { value: (s as Vals)[c]!.value + 1, note: '' } } as never) - weightedScreenTotal(s as never);
-      expect(bump('speed')).toBeCloseTo(0.5 / 11.5);
-      expect(bump('pain')).toBeCloseTo(1 / 11.5);
-      expect(bump('edge')).toBeCloseTo(1 / 11.5);
-      expect(bump('scale')).toBeCloseTo(1 / 11.5);
+      expect(bump('speed')).toBeCloseTo(0.5 / 10.5);
+      expect(bump('pain')).toBeCloseTo(1 / 10.5);
+      expect(bump('novelty')).toBeCloseTo(1 / 10.5);
+      expect(bump('edge')).toBeCloseTo(1 / 10.5);
+      expect(bump('scale')).toBeCloseTo(1 / 10.5);
     });
 
     it('asks the model for edge and scale when the idea states them, with rubrics, and stores and ranks on its scores', async () => {
@@ -628,6 +628,19 @@ describe('screen', () => {
       const verdicts = { verdicts: ['generic', 'regulation', 'control', 'autonomy', 'reachability'].map((check) => ({ check, pass: true, reasoning: 'ok', sourceUrls: [] })) };
       const gated = await gate(deps(db, fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts] } })), run, { ideaIds: out.ideaIds });
       expect(gated.passed).toEqual([demand.id]);
+    });
+
+    it('the demand route needs a complaint: an opportunity plus a trend, or two opportunities, are skipped with no valid evidence route', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 3 }));
+      const oppTrend = await insertIdea(db, run.id, { title: 'Opp+trend', signalIds: await sigs(db, [{ voice: 'operator', kind: 'opportunity' }]), libraryItemIds: [await trendItem(db)] });
+      const twoOpp = await insertIdea(db, run.id, { title: 'Two opps', signalIds: await sigs(db, [{ voice: 'operator', kind: 'opportunity' }, { voice: 'neutral', kind: 'opportunity' }]) });
+      const logs: string[] = [];
+      const out = await screen({ db, router: fakeRouter({ structured: { screen: [scores(4), scores(4)] } }), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [oppTrend.id, twoOpp.id] });
+      expect(out.ideaIds).toEqual([]);
+      for (const t of ['"Opp+trend"', '"Two opps"']) {
+        expect(logs.some((l) => l.includes(t) && l.includes('no valid evidence route') && !l.includes('no demand source'))).toBe(true);
+      }
     });
 
     it('an opportunity signal alone never meets the complaint route (minSignals 1), nor does one on the same domain as the only pain signal', async () => {

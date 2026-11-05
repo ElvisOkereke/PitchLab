@@ -1241,6 +1241,8 @@ describe('checkMix', () => {
       'a proprietary model of freight rates', 'a proprietary pricing-risk model', 'models trained on our data from every claim',
       'trained on our own labelled invoices data', 'accumulated usage data no newcomer has', 'accumulated customer data over years',
       'a benchmark of 40,000 real payouts', 'benchmarks of claim outcomes across customers', 'workflow data from every job it runs',
+      'a proprietary scoring model', 'proprietary models trained on claims', 'a benchmark from 2m invoices', 'benchmarks across shipping rates',
+      'accumulated labelled invoices', 'accumulated history of transactions', 'accumulated records of usage',
     ])('names a mechanism: %s', (why) => {
       expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(true);
     });
@@ -1250,6 +1252,10 @@ describe('checkMix', () => {
       'accumulated experience', 'accumulated goodwill and know-how', 'a proprietary business model', 'a proprietary revenue model',
       'sets the benchmark of quality', 'the benchmark of excellence in the industry', 'trained on public data', 'a smooth workflow',
       'a workflow database anyone can build', 'a model customer experience',
+      // review of Task 8: praise that leaked through the first version
+      'sets the benchmark of reliability', 'a benchmark of trust', 'benchmark of performance', 'benchmarks of customer satisfaction',
+      'a proprietary delivery model', 'a proprietary subscription model', 'a proprietary service model', 'a proprietary go-to-market model',
+      'a proprietary delivery model for clinics', 'accumulated track records', 'accumulated success examples',
     ])(
       'does not name a mechanism: %s',
       (why) => { expect(MOAT_KEYWORDS.some((re) => re.test(why))).toBe(false); },
@@ -1339,9 +1345,11 @@ describe('hasDemandEvidence', () => {
   const sig = (host: string, voice: 'operator' | 'neutral' | 'vendor' | null, kind: 'pain' | 'opportunity' = 'pain', path = 't') =>
     ({ url: `https://${host}/${path}`, voice, kind });
 
-  it.each([TREND, MARKET, RULE, PRICE])('passes for 1 operator or neutral signal plus a shown demand entry (%s)', (id) => {
+  it.each([TREND, MARKET, RULE, PRICE])('passes for 1 operator or neutral complaint signal plus a shown demand entry (%s)', (id) => {
     expect(hasDemandEvidence({ libraryItemIds: [id] }, shown, [sig('a.test', 'operator')])).toBe(true);
-    expect(hasDemandEvidence({ libraryItemIds: [id] }, shown, [sig('a.test', 'neutral', 'opportunity')])).toBe(true);
+    expect(hasDemandEvidence({ libraryItemIds: [id] }, shown, [sig('a.test', 'neutral')])).toBe(true);
+    // Owner decision 3 (controller ruling): the route needs a complaint; an opportunity signal is not one.
+    expect(hasDemandEvidence({ libraryItemIds: [id] }, shown, [sig('a.test', 'neutral', 'opportunity')])).toBe(false);
   });
   it('fails for a cited id that was not shown, or a shown entry that is not a demand kind', () => {
     expect(hasDemandEvidence({ libraryItemIds: [UNSHOWN] }, shown, [sig('a.test', 'operator')])).toBe(false);
@@ -1351,8 +1359,11 @@ describe('hasDemandEvidence', () => {
     expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator'), sig('a.test', 'operator', 'opportunity', 'o')])).toBe(false);
     expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator'), sig('www.a.test', 'neutral', 'opportunity', 'o')])).toBe(false);
     expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator'), sig('b.test', 'neutral', 'opportunity')])).toBe(true);
-    // Two opportunity signals from two domains: each is the other's demand source.
-    expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator', 'opportunity'), sig('b.test', 'operator', 'opportunity')])).toBe(true);
+    // Two opportunity signals from two domains, with no complaint: not the demand route (controller ruling).
+    expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator', 'opportunity'), sig('b.test', 'operator', 'opportunity')])).toBe(false);
+    // The opportunity must be on another domain than a complaint, not merely than another opportunity.
+    expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator'), sig('a.test', 'operator', 'opportunity', 'o'), sig('b.test', 'neutral', 'opportunity')])).toBe(true);
+    expect(hasDemandEvidence({ libraryItemIds: [] }, shown, [sig('a.test', 'operator'), sig('www.a.test', 'neutral', 'opportunity', 'o'), sig('a.test', 'neutral', 'opportunity', 'p')])).toBe(false);
   });
   it('never counts a vendor or untagged signal, on either side', () => {
     expect(hasDemandEvidence({ libraryItemIds: [TREND] }, shown, [sig('a.test', 'vendor'), sig('b.test', null)])).toBe(false);
@@ -1398,7 +1409,7 @@ describe('ideate v12 evidence rule in storage', () => {
       ] },
       // The re-ask round (3 of 5 kept): its top-up ideas go through the same evidence check.
       { ideas: [
-        idea('Top-up one signal', ['https://beta.test/1']),
+        idea('Top-up two opportunities, no complaint', ['https://alpha.test/2', 'https://delta.test/1']),
         idea('Top-up trend', ['https://beta.test/1'], [shownTrend]),
       ] },
     );

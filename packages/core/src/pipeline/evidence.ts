@@ -82,12 +82,12 @@ export const DEMAND_LIBRARY_KINDS: readonly KnowledgeKind[] = ['trend', 'market'
 export type EvidenceSignal = { url: string; voice: SignalVoice | null; kind: string };
 
 /**
- * The demand route of the evidence rule (ideate.v12, spec B3): at least 1 operator or neutral signal (pain or
- * opportunity) plus at least 1 demand source. A demand source is
+ * The demand route of the evidence rule (ideate.v12, spec B3, controller ruling on owner decision 3: one complaint
+ * plus one demand source): at least 1 operator or neutral `pain` signal plus at least 1 demand source. A demand source is
  * - a cited library entry that was shown to the call that wrote the idea (`shownLibraryKinds`, id to kind) and whose
  *   kind is trend, market, rule_change or pricing (an id that was not shown never counts), or
- * - an operator or neutral `opportunity` signal from a different registrable domain than another operator or neutral
- *   signal the idea cites (the same site twice is one source, not two).
+ * - an operator or neutral `opportunity` signal from a different registrable domain than such a complaint (the same
+ *   site twice is one source, not two; two opportunity signals with no complaint never qualify).
  * Fails closed like countEvidenceForSignals: vendor and untagged signals, and urls that do not parse (or are banned),
  * never count on either side. `signals` are the idea's cited signal rows.
  */
@@ -101,32 +101,50 @@ export function hasDemandEvidence(
 
 /**
  * The demand sources behind the demand route, or null when it is not met: the cited demand library entries (id and
- * kind, in citation order) and the opportunity signals from another domain (url and domain); `signalUrls` are the
- * operator or neutral signal urls that parse, the evidence shown for this route.
+ * kind, in citation order) and the opportunity signals from another domain than a complaint (url and domain);
+ * `signalUrls` are the urls of the complaints and of those opportunity signals, in input order.
  */
 export type DemandSources = { library: { id: string; kind: string }[]; opportunities: { url: string; domain: string }[]; signalUrls: string[] };
+
+/**
+ * The demand route's parts. `complaints` are the operator or neutral `pain` signals that parse; `library` the cited
+ * demand entries; `opportunities` the operator or neutral opportunity signals on another registrable domain than at
+ * least one of those complaints; `candidates` says whether the idea offered any demand source at all (a demand entry
+ * or an eligible opportunity signal), so a failure can be told apart: no complaint, or no demand source.
+ */
+function demandParts(
+  idea: { libraryItemIds: readonly string[] | null },
+  shownLibraryKinds: ReadonlyMap<string, string>,
+  signals: readonly EvidenceSignal[],
+) {
+  const eligible = signals.flatMap((s) => {
+    if (s.voice !== 'operator' && s.voice !== 'neutral') return [];
+    const src = parseSource(s.url);
+    return src ? [{ url: s.url, domain: src.domain, opportunity: s.kind === 'opportunity', pain: s.kind === 'pain' }] : [];
+  });
+  const complaints = eligible.filter((e) => e.pain);
+  const demandKinds = new Set<string>(DEMAND_LIBRARY_KINDS);
+  const library = [...new Set(idea.libraryItemIds ?? [])].flatMap((id) => {
+    const kind = shownLibraryKinds.get(id);
+    return kind && demandKinds.has(kind) ? [{ id, kind }] : [];
+  });
+  const offered = eligible.filter((e) => e.opportunity);
+  const opportunities = offered
+    .filter((o) => complaints.some((c) => c.domain !== o.domain))
+    .map(({ url, domain }) => ({ url, domain }));
+  return { eligible, complaints, library, opportunities, candidates: library.length > 0 || offered.length > 0 };
+}
 
 function demandSources(
   idea: { libraryItemIds: readonly string[] | null },
   shownLibraryKinds: ReadonlyMap<string, string>,
   signals: readonly EvidenceSignal[],
 ): DemandSources | null {
-  const eligible = signals.flatMap((s) => {
-    if (s.voice !== 'operator' && s.voice !== 'neutral') return [];
-    const src = parseSource(s.url);
-    return src ? [{ url: s.url, domain: src.domain, opportunity: s.kind === 'opportunity' }] : [];
-  });
-  if (eligible.length === 0) return null;
-  const demandKinds = new Set<string>(DEMAND_LIBRARY_KINDS);
-  const library = [...new Set(idea.libraryItemIds ?? [])].flatMap((id) => {
-    const kind = shownLibraryKinds.get(id);
-    return kind && demandKinds.has(kind) ? [{ id, kind }] : [];
-  });
-  const opportunities = eligible
-    .filter((o) => o.opportunity && eligible.some((a) => a.domain !== o.domain))
-    .map(({ url, domain }) => ({ url, domain }));
+  const { eligible, complaints, library, opportunities } = demandParts(idea, shownLibraryKinds, signals);
+  if (complaints.length === 0) return null;
   if (library.length === 0 && opportunities.length === 0) return null;
-  return { library, opportunities, signalUrls: eligible.map((e) => e.url) };
+  const used = new Set(opportunities.map((o) => o.url));
+  return { library, opportunities, signalUrls: eligible.filter((e) => e.pain || used.has(e.url)).map((e) => e.url) };
 }
 
 /**
@@ -134,19 +152,32 @@ function demandSources(
  * - the complaint route: at least `minSignals` independent operator or neutral units, counted over `pain` signals only
  *   (spec B3: complaint signals; an opportunity signal is never a complaint), see countEvidenceForSignals;
  * - otherwise the demand route (hasDemandEvidence), whose `demand` lists the sources.
- * `complaints` is always the complaint count; `route` is the route that passed, or null.
+ * `complaints` is always the complaint count; `route` is the route that passed, or null; `failure` says why it failed.
  */
 export function evaluateEvidence(
   idea: { libraryItemIds: readonly string[] | null },
   shownLibraryKinds: ReadonlyMap<string, string>,
   signals: readonly EvidenceSignal[],
   minSignals: number,
-): { pass: boolean; route: 'signals' | 'demand' | null; complaints: ReturnType<typeof countEvidenceForSignals>; demand: DemandSources | null } {
+): {
+  pass: boolean; route: 'signals' | 'demand' | null; complaints: ReturnType<typeof countEvidenceForSignals>; demand: DemandSources | null;
+  failure: EvidenceFailure | null;
+} {
   const complaints = countEvidenceForSignals(signals.filter((s) => s.kind === 'pain'));
-  if (complaints.units >= minSignals) return { pass: true, route: 'signals', complaints, demand: null };
+  if (complaints.units >= minSignals) return { pass: true, route: 'signals', complaints, demand: null, failure: null };
   const demand = demandSources(idea, shownLibraryKinds, signals);
-  return { pass: demand !== null, route: demand ? 'demand' : null, complaints, demand };
+  if (demand) return { pass: true, route: 'demand', complaints, demand, failure: null };
+  const parts = demandParts(idea, shownLibraryKinds, signals);
+  const failure: EvidenceFailure = parts.candidates && parts.complaints.length === 0 ? 'no_complaint' : 'no_demand_source';
+  return { pass: false, route: null, complaints, demand: null, failure };
 }
+
+/**
+ * Why the evidence rule failed: `no_complaint` when the idea offers a demand source (a demand entry or an operator or
+ * neutral opportunity signal) but no operator or neutral complaint to pair it with, so no route is valid; otherwise
+ * `no_demand_source` (too few complaint units and nothing to complete the demand route).
+ */
+export type EvidenceFailure = 'no_complaint' | 'no_demand_source';
 
 /** The evidence rule as a yes or no (evaluateEvidence): shared by ideate's storage, screen's pre-check and the gate. */
 export function meetsEvidenceRule(

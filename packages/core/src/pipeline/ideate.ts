@@ -487,12 +487,18 @@ export const MOAT_KEYWORDS: readonly RegExp[] = [
   /\bcertif\w*/i,
   /\bdistribution\b/i,
   /\bcommunit(?:y|ies)\b/i,
-  // Spec B5 (screen v5): a model or benchmark built from data, each guarded against the generic praise next to it
-  // ("a proprietary business model", "accumulated history", "the benchmark of quality", "trained on public data").
-  /\bproprietary\s+(?!(?:business|revenue|pricing|operating)\s+models?\b)(?:[\w-]+\s+)?models?\b/i,
+  // Spec B5 (screen v5): a model, benchmark or store built from data. Allowlists, so generic praise next to these words
+  // ("a proprietary delivery model", "accumulated track records", "the benchmark of reliability", "trained on public
+  // data") never matches.
+  // proprietary model: "proprietary [word] model(s) of|for|trained|built" (not a business-style model), or a
+  // prediction-style model ("proprietary [word] risk|pricing|prediction|scoring|rate model").
+  /\bproprietary\s+(?:(?!(?:business|revenue|pricing|operating|delivery|subscription|service|go-to-market|sales|engagement|franchise|membership|support)\b)[\w-]+\s+)?models?\s+(?:of|for|trained|built)\b/i,
+  /\bproprietary\s+(?:[\w-]+\s+)?(?:risk|pricing|prediction|predictive|scoring|rate|forecasting)(?:-[\w-]+)?\s+models?\b/i,
   /\btrained\s+on\s+(?:our|its|their|customers?'?)\s+(?:own\s+)?(?:[\w-]+\s+){0,2}data(?:sets?)?\b/i,
-  /\baccumulat\w*\s+(?:[\w-]+\s+){0,2}(?:data|datasets?|records|labels|examples|corrections|outcomes)\b/i,
-  /\bbenchmarks?\s+of\s+(?!(?:quality|excellence|success|the\b))\S/i,
+  // accumulated: data, labelled examples, or records / history / examples of a data noun ("accumulated history" alone is not).
+  /\baccumulat\w*\s+(?:(?:[\w-]+\s+)?data(?:sets?)?\b|labell?ed\s+[\w-]+|records\s+of\s+(?:usage|use|transactions|claims|jobs|payouts)\b|history\s+of\s+(?:usage|transactions|claims|jobs|payouts|outcomes)\b|examples\s+of\s+(?:[\w-]+\s+)?(?:data|claims|invoices|transactions|payouts|outcomes|jobs)\b)/i,
+  // benchmark(s) of|from|across [number] [up to 2 words] <data noun>.
+  /\bbenchmarks?\s+(?:of|from|across)\s+(?:\d[\d,.]*[km]?\+?\s+)?(?:[\w'-]+\s+){0,2}(?:payouts|prices|claims|outcomes|records|jobs|invoices|data|transactions|rates|results)\b/i,
   /\bworkflow\s+data\b/i,
 ];
 
@@ -730,9 +736,9 @@ export async function ideate(
     const known: Known = new Map(library.sources);
     for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
     // The evidence rule (ideate.v12), counted against what this call was shown: minSignals independent operator or
-    // neutral complaint (pain) sites, or 1 such signal of either kind plus a demand source (a shown trend, market,
-    // rule_change or pricing entry, or an opportunity signal from another site). An idea meeting neither is dropped as
-    // `evidence:insufficient`.
+    // neutral complaint (pain) sites, or 1 such complaint plus a demand source (a shown trend, market, rule_change or
+    // pricing entry, or an opportunity signal from another site than the complaint). An idea meeting neither is
+    // dropped as `evidence:insufficient`.
     const evidenced = valid.slice(0, count).filter((idea) => {
       const cited = new Set(idea.signalUrls);
       if (meetsEvidenceRule(idea, library.kinds, passed.filter((s) => cited.has(s.url)), cfg.minSignals)) return true;

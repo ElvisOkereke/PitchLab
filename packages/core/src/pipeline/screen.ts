@@ -6,7 +6,7 @@ import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
-import { evaluateEvidence } from './evidence';
+import { evaluateEvidence, type EvidenceFailure } from './evidence';
 import { demandLibraryEntries } from './gate';
 import { hasEdgeLine, hasScaleLine, ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
@@ -50,16 +50,19 @@ export type ScreenScoresV4 = AiScores & { moneyCase: Score; barrier: Score };
  */
 export type ScreenScores = ScreenScoresV4 & { edge: Score; scale: Score };
 
-/** screen.v5 rank weights: every value weighs 1, except speed (0.5, spec B5) and novelty (2, kept from tuning-4). */
+/**
+ * screen.v5 rank weights: every value weighs 1 except speed (0.5, spec B5). Novelty drops its tuning-4 double weight
+ * (owner decision 1: judge ideas on edge and scale).
+ */
 export const SCREEN_WEIGHTS = {
-  pain: 1, roi: 1, evidence: 1, speed: 0.5, autonomy: 1, novelty: 2, reach: 1, moneyCase: 1, barrier: 1, edge: 1, scale: 1,
+  pain: 1, roi: 1, evidence: 1, speed: 0.5, autonomy: 1, novelty: 1, reach: 1, moneyCase: 1, barrier: 1, edge: 1, scale: 1,
 } as const;
 /** The edge or scale score of an idea that does not state it (screen.v5, Review Focus 5). */
 export const MISSING_EDGE_OR_SCALE = 2;
 
 /**
  * The screen total, a weighted mean. screen.v5 scores (with edge and scale): the sum of SCREEN_WEIGHTS[k] * value over
- * the 11 values, over the sum of the weights (11.5). Older stored shapes keep their old form: screen.v4 (moneyCase and
+ * the 11 values, over the sum of the weights (10.5). Older stored shapes keep their old form: screen.v4 (moneyCase and
  * barrier, no edge or scale) is (sum of the 7 + novelty + moneyCase + barrier) / 10, and screen.v3 and earlier is
  * (sum of the 7 + novelty) / 8.
  * (Tuning-4 removed the crowd penalty: it saturated on almost every idea. Old screenScores rows may still hold a
@@ -100,9 +103,9 @@ type Scored = {
   businessModel: string | null; audience: string | null;
   /**
    * The gate's evidence rule on the idea's cited signals and stored library ids (evaluateEvidence): whether it passes,
-   * and the independent complaint units, for the log.
+   * the independent complaint units and why it failed, for the log.
    */
-  evidence: { pass: boolean; units: number };
+  evidence: { pass: boolean; units: number; failure: EvidenceFailure | null };
 };
 const isConsumer = (s: { audience: string | null }) => s.audience === 'consumer' || s.audience === 'both';
 
@@ -126,7 +129,12 @@ async function skipReason(
   db: Db, s: Scored, perModel: Map<string, number>, advancedVecs: number[][], minSignals: number,
 ): Promise<string | null> {
   // The gate would kill it on evidence alone, so it must not take an entrant slot.
-  if (!s.evidence.pass) return `${s.evidence.units} independent sources and no demand source, the gate needs ${minSignals} (or 1 plus a demand source)`;
+  if (!s.evidence.pass) {
+    const why = s.evidence.failure === 'no_complaint'
+      ? 'no valid evidence route (a demand source needs an operator or neutral complaint signal)'
+      : 'no demand source';
+    return `${s.evidence.units} independent sources and ${why}, the gate needs ${minSignals} (or 1 complaint plus a demand source)`;
+  }
   if (s.businessModel && (perModel.get(s.businessModel) ?? 0) >= MAX_PER_BUSINESS_MODEL) {
     return `${MAX_PER_BUSINESS_MODEL} ideas with business model ${s.businessModel} already advanced`;
   }
@@ -192,7 +200,7 @@ export async function screen(
   const libraryById = new Map(library.map((e) => [e.id, e]));
   const evidenceOf = (idea: typeof ideas.$inferSelect) => {
     const e = evaluateEvidence(idea, libraryKinds, idea.signalIds.flatMap((id) => sigById.get(id) ?? []), run.config.minSignals);
-    return { pass: e.pass, units: e.complaints.units };
+    return { pass: e.pass, units: e.complaints.units, failure: e.failure };
   };
   const marketsOf = (idea: typeof ideas.$inferSelect) =>
     [...new Set(idea.libraryItemIds ?? [])].flatMap((id) => {

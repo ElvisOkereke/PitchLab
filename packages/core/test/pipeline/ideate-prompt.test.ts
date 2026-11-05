@@ -46,7 +46,9 @@ describe('ideate prompt', () => {
   it('allows one operator or neutral signal plus a demand source as an alternative to three sites', () => {
     const evidence = render().split('\n').find((l) => l.startsWith('- Evidence:'))!;
     expect(evidence).toContain('at least 3 signals from at least 3 different websites');
-    expect(evidence).toMatch(/or at least 1 such signal \(of either kind\) plus at least 1 demand source/);
+    // Controller ruling on owner decision 3: one complaint plus one demand source.
+    expect(evidence).toMatch(/or at least 1 such `pain` signal plus at least 1 demand source/);
+    expect(evidence).toContain('from a different website than that `pain` signal');
     // Spec B3: the 3-site route counts complaint signals only (code: evaluateEvidence counts kind pain).
     expect(evidence).toContain('where only signals of kind `pain` count');
     expect(evidence).toMatch(/`trend`, `market`, `rule_change` or `pricing`/);
@@ -60,6 +62,12 @@ describe('ideate prompt', () => {
       'Propose a product that a startup in <already-sold> already sells to the same buyer only when the idea states a concrete, checkable edge over that product, and name that product in `edge.versus`; otherwise do not propose it.',
     );
     expect(rule).toContain('A different buyer alone never makes an idea different');
+  });
+  it('counts a distribution edge only as a structural, earned channel, never a new buyer', () => {
+    const rule = render().split('\n').find((l) => l.startsWith('- A real functional difference:'))!;
+    expect(rule).toContain(
+      'The one exception is a `distribution` edge that is a structural, earned channel incumbents cannot easily copy (an owned audience, or an embedded partner channel we do not depend on for goodwill); merely selling to a new buyer or through a new channel is never one.',
+    );
   });
   it('keeps v11', () => {
     expect(existsSync(join(__dirname, '../../prompts/ideate.v11.md'))).toBe(true);
