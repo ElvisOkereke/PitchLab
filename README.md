@@ -243,13 +243,34 @@ follow its progress.
   entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), cost per
   case (tracked). Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
-  benchmark, **bench-v2**: bench-v1's four seeds (open, two sector pairs, one lens pair) plus a consumer lens seed
-  (earn on the side, save money automatically); about $15–35. **bench-v1** stays frozen so old passes remain
-  comparable. It refuses while other runs are queued or a pass is running. The worker freezes the pass when its runs
+  benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
+  one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**
+  stay frozen so old passes remain comparable. It refuses while other runs are queued or a pass is running. The worker freezes the pass when its runs
   finish.
 - **Recompute:** after you add gut scores to a pass's cases (listed under "Score these cases"), press **Recompute**
   under its column, or `gen bench report <passId> --recompute`, to freeze a new snapshot that includes them.
   `gen bench report` prints the scorecard and writes it to `output/bench/`.
+
+#### What's new: rating ideas and the audit loop
+
+- **Rate ideas.** On **Runs** (history), give each generated idea a thumbs up or down and optional tags (too niche, no
+  edge, not scalable, boring, love it, would build and so on). Rate about 10 ideas per pass.
+- **Idea review.** `gen audit review` has a second model score each idea 1–5 for scale, edge, novelty and niche, with
+  reasons. Once 10 or more ideas are rated, the scorecard shows how often it agrees with you.
+- **Audit on Progress.** Under each finished pass, an **Audit** section shows where ideas came from (domains, vendor
+  voice, lenses, what the gate killed) and flags a pass when one source or lens dominates or too many ideas are niche.
+- **Holdout examples.** Write up to 10 ideas you would want in **Settings** (or `gen audit holdout add "..."`). The
+  report shows how close the nearest generated idea is to each. They are never shown to the generator or the reviewer.
+- **Edge and scale.** Ideas now say what gives them an edge (AI, cost, speed, accuracy, data, network, a new
+  capability or distribution) against named incumbents, and how many buyers there are and why. The gate allows
+  competition when the edge is concrete, and the screen scores edge and scale.
+- **More ambition.** Six ambition lenses (AI replaces labour, 10x on an incumbent, new capability, marketplace, data
+  flywheel, picks and shovels) get more of the lens slots, and research now looks for opportunity (growth, funding,
+  new tools) as well as pain.
+- **Tech forums are off by default.** WordPress and GitHub evidence is only collected when the setting
+  `harvest.techForums` is on. Hacker News and Stack Exchange are unchanged.
+- **bench-v3** is the current benchmark (see above). Results are logged in
+  [the idea quality log](docs/idea-quality-log.md).
 
 ### 7. Help
 
@@ -365,6 +386,7 @@ The reasons behind each rule are in [architecture](docs/architecture.md#security
 - [Setup and operations](docs/dashboard.md): database options, environment variables, phone access, troubleshooting.
 - [Architecture](docs/architecture.md): layout, pipeline, worker, data model, security model, tests.
 - [Glossary](docs/glossary.md): every term the app uses.
+- [Idea quality log](docs/idea-quality-log.md): what changed, what each pass measured and what to try next.
 - [Owner to-do](docs/OWNER-TODO.md): actions only the owner can take.
 - [Known limits and follow-ups](docs/plan-1-followups.md).
 - [Project log](docs/CONTEXT.md): the internal working log of decisions and runs.

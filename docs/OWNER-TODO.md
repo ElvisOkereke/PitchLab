@@ -33,6 +33,13 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 - [x] Nothing new to sign up for: every Slice B source is free and needs no key.
 - [ ] Score the 3 bench-v2 #5 cases (pre-bid permit timing packs for multi-city contractors, login-free caregiver fraud watch, dispute deadline clock for shoppers) (Score tab, **Your gut**), then press **Recompute** on the pass.
 
+## Idea quality loop
+
+- [ ] After merging, restart `npm run worker` (it applies the database update), then run a bench-v3 pass (about $30–50).
+- [ ] Rate about 10 ideas per pass on **Runs** (thumbs up or down, tags if you like), then run `npm run gen -- audit review`.
+- [ ] Optional: add 2 or 3 holdout examples (ideas you would want) in Settings, or with `npm run gen -- audit holdout add "..."`.
+- [ ] Tech forums are off (`harvest.techForums`). Turn them on only if you want WordPress and GitHub evidence back; there is no switch in the app yet, so ask Claude.
+
 ## Use the app
 
 - [ ] Do not generate a validation pack for a consumer case yet. Its outreach drafts are cold emails, and CASL does not allow cold emails to individuals without consent. Consumer outreach rules come later.

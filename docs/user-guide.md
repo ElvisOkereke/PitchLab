@@ -429,10 +429,10 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   the scores for a baseline and your newest benchmark passes side by side. Each row has a target, with a green or red
   badge when a result meets it or misses it.
 - **Why:** After you change something in PitchLab, you need to know whether ideas got better or only different. A
-  benchmark is a fixed set of 5 runs (called bench-v2), so every pass is measured the same way.
+  benchmark is a fixed set of 6 runs (called bench-v3), so every pass is measured the same way.
 - **Do it:**
   1. Freeze a baseline once with `npm run gen -- bench baseline`. Until then the page says "No baseline yet".
-  2. After a change, press **Run benchmark**. It queues 5 runs, about $15–35 in model calls, and only when you press
+  2. After a change, press **Run benchmark**. It queues 6 runs, about $30–50 in model calls, and only when you press
      it. It is refused while other runs are waiting or a pass is already running. Keep `npm run worker` running.
   3. The page refreshes while the pass runs. When it finishes, a new column appears. A pass where a run failed is
      marked "incomplete".
@@ -446,3 +446,24 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline
   --dry-run` shows what a baseline would hold without saving it.
+
+## Rate ideas and read the audit
+
+- **What:** You tell PitchLab which generated ideas you like, and it checks its own scoring against yours and shows
+  where a pass's ideas came from.
+- **Why:** The scorecard counts things; only you know whether an idea is any good. Ratings and a few examples of ideas
+  you want let the next change be judged against your taste, not a guess.
+- **Do it:**
+  1. Open **Runs**, open a run's history and rate its ideas with the thumbs up or down. Add tags such as "too niche",
+     "no edge", "not scalable", "already exists", "boring", "love it" or "would build" if you want. Rate about 10
+     ideas per pass. A re-run replaces a run's ideas, and their ratings go with them.
+  2. Run `npm run gen -- audit review` (it takes an optional pass id and uses the newest pass otherwise). A second model
+     scores each idea 1–5 for scale, edge, novelty and niche, ten ideas per call, and only reviews what is missing.
+  3. Open **Progress** and read the **Audit** section under a pass: the top domains and vendor voice, the lens mix,
+     what the gate killed, and the niche share. A flag means one source, lens or check dominates; it is a prompt to
+     look, not a failure. Reviewer agreement appears once 10 or more rated ideas are reviewed.
+  4. Add 2 or 3 holdout examples in **Settings** (Holdout examples), or with
+     `npm run gen -- audit holdout add "an idea you would want"`. `audit holdout list` shows them and
+     `audit holdout clear` removes them. The report shows the closest generated idea to each.
+- **What good looks like:** Your likes are at least half of the ideas you rate, the median edge and scale are 3.5 or
+  more, the niche share is at most 30%, and the reviewer agrees with you at least 70% of the time.

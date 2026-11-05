@@ -4,6 +4,7 @@
 > Update it whenever a decision is made or something new is learned.
 
 ## Status
+- **Idea quality loop and ambition round (branch `quality`, built 2026-11-04, awaiting merge):** owner idea ratings on Runs, an idea reviewer (`gen audit review`), pass audit with flags, holdout examples, opportunity harvest (`harvest.techForums` off by default), six ambition lenses with weighted sampling, ideate v12 (edge, scale, demand-evidence route), gate v5, screen v5, and bench-v3 (six runs, current; v1 and v2 frozen). Seed sectors are added additively for existing databases. Owner to-do: rate about 10 ideas per pass and run a bench-v3 pass; the controller fills the first entry in `docs/idea-quality-log.md`. Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design.md`.
 - **Slice B: what is changing and where the market is (merged 2026-10-29):** the library
   holds `trend`, `rule_change` and `market` entries. Free collectors (no keys): Federal Register rules, Wikipedia
   pageviews, Hacker News yearly counts, World Bank indicators; web search feeds all three kinds (Canadian rules, segment

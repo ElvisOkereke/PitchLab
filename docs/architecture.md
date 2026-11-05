@@ -187,14 +187,14 @@ flowchart TD
 ## Benchmark
 
 `packages/core/src/bench/` measures idea quality from stored rows only (no model calls). `definitions.ts` holds the
-immutable `bench-v1` and `bench-v2` seeds (v2 is v1 plus a run on the `consumer-earn-side` and `consumer-save-auto` lenses; `CURRENT_BENCHMARK` is `bench-v2`) and the 13 metric definitions (all measured); `scorecard.ts` computes a scorecard over a set of runs
+immutable `bench-v1`, `bench-v2` and `bench-v3` seeds (v2 is v1 plus a run on the `consumer-earn-side` and `consumer-save-auto` lenses; v3 is six runs: two open, sector pairs [logistics and freight, construction and trades] and [healthcare clinics, education and tutoring], and lens pairs [ai-replaces-labour, ten-x-incumbent] and [consumer-ai-chore, new-capability]; `CURRENT_BENCHMARK` is `bench-v3`) and the 18 metric definitions (edge, scale, niche share, reviewer agreement and owner likes added); `scorecard.ts` computes a scorecard over a set of runs
 (example data excluded, at most 200 runs and 3000 ideas, with a note when trimmed); `passes.ts` freezes baselines,
 queues passes and finalises them. A snapshot is stored once in `benchmark_passes` (kind `baseline`, `pass` or
 `recompute`; status `running`, `complete` or `incomplete`) and is never recomputed in place: `gen bench report
 --recompute` (or the Recompute button on Progress) adds a new `recompute` row.
 
 - **Queueing:** `queueBenchmarkPass` runs in one transaction under the queue advisory lock. It refuses when a pass is
-  running or any run is queued or running, then inserts the pass and its 5 runs, each with `runs.benchmark_pass_id`
+  running or any run is queued or running, then inserts the pass and its runs (6 for bench-v3; each seed is its own run row, so the two open seeds are two runs), each with `runs.benchmark_pass_id`
   set. The dashboard's Progress page and `gen bench run` both call it.
 - **Generation metrics:** `consumerShare` is generated ideas with audience consumer or both over those with an audience
   (target 30%). `modelVariety` is distinct `business_model` values per run, averaged over runs with at least one
@@ -210,6 +210,38 @@ queues passes and finalises them. A snapshot is stored once in `benchmark_passes
   is idempotent and a failure in it never stops the worker.
 - **Dashboard:** `apps/web` imports these modules as web-safe core code; the Progress page only reads passes and queues
   one through `runBenchmarkAction` and recomputes one through `recomputePassAction`.
+
+## Idea quality loop and ambition round
+
+Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design.md`; diagnosis: `docs/idea-direction-diagnosis.md`.
+
+- **Audit modules** (`packages/core/src/audit/`): `owner-tags.ts` (the owner's idea tags; `owner_rating` is -1, 0 or 1),
+  `review.ts` (the reviewer), `pass-audit.ts` (pass audit and flags) and `holdout.ts` (holdout examples). All read stored
+  rows only, except the reviewer and the holdout embedding, which log their cost.
+- **Reviewer stage:** `idea-review.v1` scores each generated idea 1–5 for `scale`, `edge`, `novelty` and `niche`, with
+  reasons, ten ideas per call, on the model stage `review` (default: the `score` stage's model), stored in
+  `idea_reviews`. Valid reviews are stored, the rest skipped with a count, and a re-run reviews only what is missing.
+  `gen audit review` runs it. Liked is `edge >= 4 && scale >= 3`; disliked is `edge <= 2 || scale <= 2`; the niche
+  share counts `niche >= 4 || scale <= 2`. Agreement with the owner shows from 10 rated ideas.
+- **Pass audit and flags:** top domain over 15%, vendor voice over 40%, one lens over 35% of ideas, one gate check over
+  50% of kills, niche share over 30%. A pass with no signals or gate entrants renders "no data" lines and no flags.
+- **Holdout:** the setting `audit.holdout` holds up to 10 items of up to 1,000 characters, compared by cosine
+  similarity with the library embedding model. No prompt code reads it; a guard test enforces this.
+- **Opportunity harvest:** `harvest-research.v7` splits a run's research calls between pain and opportunity
+  (`opportunityShare` 0.4; `signals.kind` is `pain` or `opportunity`). The setting `harvest.techForums` (default off)
+  gates the WordPress and GitHub collectors; Hacker News and Stack Exchange are unchanged.
+- **Ambition lenses and sampling:** six lenses (`ai-replaces-labour`, `ten-x-incumbent`, `new-capability`,
+  `marketplace-network`, `data-flywheel`, `picks-and-shovels`). Open and sector runs take at most 6 lenses with at least
+  2 ambition and at least 2 consumer; `review-gap` and `platform-shockwave` have weight 0.5 in weighted sampling.
+- **ideate v12:** each idea adds `edge` (`kind`, `claim`, `versus`, `whyNow`) and `scale` (`buyers`, `basis`, optional
+  `source`). The evidence rule has two routes: 3 operator or neutral complaint signals from 3 domains, or 1 operator
+  or neutral signal plus 1 demand source (a cited library trend, market, rule change or pricing entry, or an
+  opportunity signal from another domain). An unshown source, or the same domain as the only signal, does not count.
+- **gate v5:** `generic` passes a concrete, checkable edge against named incumbents; the `evidence` code rule matches
+  ideate's two routes.
+- **screen v5:** adds `edge` and `scale` criteria (1–5); `speed` weighs 0.5. A missing edge or scale on an old idea
+  counts as 2 and never crashes. Old prompt versions are kept.
+- **bench-v3:** see Benchmark. Ratings and the audit reach Progress through web-safe modules.
 
 ## Data model
 
