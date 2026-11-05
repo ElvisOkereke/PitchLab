@@ -197,6 +197,10 @@ Validate and Score.
 - **What:** The one-liner, buyer, problem, solution and price, then why now, why it wins and the suggested next
   action. Then the gate verdicts, failed checks first. At the bottom, **For you to check** lists sources and claims
   that nobody could confirm automatically.
+- **Idea's edge** says what gives the idea its advantage (AI, cost, speed, accuracy, data, network, a new capability
+  or distribution), what it beats ("Versus today's option") and why it is possible now. **Idea's scale** says how
+  many buyers there are and the basis for that number, with its source when there is one. Both are the idea's own
+  claims, not checked facts. Ideas from before these fields existed don't show these lines.
 - **Why:** This is the case in brief. "For you to check" is the work PitchLab could not do for you.
 - **Good:** A buyer you could name and find, a problem that costs them real money or time, and a short "For you to
   check" list.
@@ -457,12 +461,17 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   1. Open **Runs**, open a run's history and rate its ideas with the thumbs up or down. Add tags such as "too niche",
      "no edge", "not scalable", "already exists", "boring", "love it" or "would build" if you want. Rate about 10
      ideas per pass. A re-run replaces a run's ideas, and their ratings go with them.
-  2. Run `npm run gen -- audit review` (it takes an optional pass id and uses the newest pass otherwise). A second model
-     scores each idea 1–5 for scale, edge, novelty and niche, ten ideas per call, and only reviews what is missing.
-  3. Open **Progress** and read the **Audit** section under a pass: the top domains and vendor voice, the lens mix,
+  2. Run `npm run gen -- audit review --last` for the newest finished pass, or `npm run gen -- audit review <passId>`
+     for a given one (you need one or the other). A second model scores each idea 1–5 for scale, edge, novelty and
+     niche, ten ideas per call, and only reviews what is missing. It stops early, with what it has done so far, if it
+     spends more than twice its estimate.
+  3. A pass snapshot is frozen, so press **Recompute** under the pass on **Progress** (or run
+     `npm run gen -- bench report <passId> --recompute`) after you rate or review. Your ratings and the reviews then
+     show in a new column.
+  4. Open **Progress** and read the **Audit** section under a pass: the top domains and vendor voice, the lens mix,
      what the gate killed, and the niche share. A flag means one source, lens or check dominates; it is a prompt to
      look, not a failure. Reviewer agreement appears once 10 or more rated ideas are reviewed.
-  4. Add 2 or 3 holdout examples in **Settings** (Holdout examples), or with
+  5. Add 2 or 3 holdout examples in **Settings** (Holdout examples), or with
      `npm run gen -- audit holdout add "an idea you would want"`. `audit holdout list` shows them and
      `audit holdout clear` removes them. The report shows the closest generated idea to each.
 - **What good looks like:** Your likes are at least half of the ideas you rate, the median edge and scale are 3.5 or

@@ -36,7 +36,10 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 ## Idea quality loop
 
 - [ ] After merging, restart `npm run worker` (it applies the database update), then run a bench-v3 pass (about $30–50).
-- [ ] Rate about 10 ideas per pass on **Runs** (thumbs up or down, tags if you like), then run `npm run gen -- audit review`.
+- [x] Baseline review of bench-v2 #4, #5 and #6: Claude runs the reviewer on these passes at merge. Nothing for you to do.
+- [ ] Rate about 10 ideas per pass on **Runs** (thumbs up or down, tags if you like). This is your part: only you can say which ideas are good.
+- [ ] After a bench-v3 pass, run `npm run gen -- audit review --last` (or `npm run gen -- audit review <passId>`) so a second model reviews its ideas.
+- [ ] After reviewing or rating, press **Recompute** under the pass on **Progress** (or run `npm run gen -- bench report <passId> --recompute`). A pass snapshot is frozen, so new ratings and reviews only show after a recompute.
 - [ ] Optional: add 2 or 3 holdout examples (ideas you would want) in Settings, or with `npm run gen -- audit holdout add "..."`.
 - [ ] Tech forums are off (`harvest.techForums`). Turn them on only if you want WordPress and GitHub evidence back; there is no switch in the app yet, so ask Claude.
 
