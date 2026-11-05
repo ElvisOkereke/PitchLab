@@ -160,6 +160,21 @@ describe('listRuns', () => {
     expect(ra.stages[0]).not.toHaveProperty('output');
     void cases; void ideas;
   });
+
+  it('lists each run\'s ideas (both origins) with the owner rating and tags, not the idea body', async () => {
+    const a = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const g = await insertIdea(db, a.id, { title: 'Gen idea', ownerRating: 1, ownerTags: ['love it'] });
+    const o = await insertIdea(db, a.id, { title: 'Mine', origin: 'owner' });
+    const b = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const res = await listRuns(db, {});
+    expect(res.rows.find((r) => r.id === b.id)!.ideas).toEqual([]);
+    const ra = res.rows.find((r) => r.id === a.id)!;
+    expect(ra.ideas.map((i) => i.id).sort()).toEqual([g.id, o.id].sort());
+    const gen = ra.ideas.find((i) => i.id === g.id)!;
+    expect(gen).toMatchObject({ origin: 'generated', title: 'Gen idea', ownerRating: 1, ownerTags: ['love it'] });
+    expect(ra.ideas.find((i) => i.id === o.id)).toMatchObject({ origin: 'owner', ownerRating: null, ownerTags: null });
+    expect(gen).not.toHaveProperty('solution');
+  });
 });
 
 describe('countRunsByStatus', () => {

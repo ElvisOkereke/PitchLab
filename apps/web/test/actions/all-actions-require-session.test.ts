@@ -55,6 +55,9 @@ const SPECS: Record<string, Spec> = {
       return { prospectId: prospect.id, slug: kase.slug, type: 'note', note: 'interview: owner says forms break monthly' };
     },
   },
+  'ideas.ts#rateIdeaAction': {
+    seed: async (db) => ({ ideaId: (await seedGatedOutIdea(db)).id, rating: '', op: 'up' }),
+  },
   'runs.ts#queueRunAction': {
     seed: async () => ({ seedType: 'open', ideaCount: '1', advanceCount: '1' }),
   },

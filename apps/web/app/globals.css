@@ -1162,3 +1162,21 @@ blockquote {
   gap: 6px;
   max-width: 28rem;
 }
+
+/* Idea rating controls on the Runs page: pressed buttons show the saved rating and tags. */
+.idea-rating-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.idea-rating button[aria-pressed='true'] {
+  outline: 2px solid var(--info);
+  font-weight: 600;
+}
+
+.idea-tag {
+  padding: 2px 8px;
+  font-size: 0.85em;
+}

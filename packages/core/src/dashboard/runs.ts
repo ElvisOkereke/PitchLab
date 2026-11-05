@@ -173,7 +173,14 @@ const IDEA_TEXT_SHOWN = 200;
 
 export type RunRow = typeof runs.$inferSelect;
 export type RunStageSummary = { stage: string; status: (typeof runStages.$inferSelect)['status']; startedAt: Date | null; finishedAt: Date | null };
-export type RunListRow = RunRow & { caseCount: number; stages: RunStageSummary[] };
+/** One idea of a run, as the Runs page lists it: no body text, only what the owner needs to recognise and rate it. */
+export type RunIdeaRow = {
+  id: string; origin: (typeof ideas.$inferSelect)['origin']; title: string; oneLiner: string; status: (typeof ideas.$inferSelect)['status'];
+  ownerRating: number | null; ownerTags: string[] | null;
+};
+export type RunListRow = RunRow & { caseCount: number; stages: RunStageSummary[]; ideas: RunIdeaRow[] };
+/** Most ideas read for one page of runs (50 runs of up to 30 ideas, with room for owner reruns). */
+const IDEAS_PER_PAGE_MAX = 2_000;
 
 const intOr = (v: unknown, d: number) => {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : Number.NaN;
@@ -204,7 +211,7 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
     db.select({ n: count() }).from(runs).where(eq(runs.isExample, false)),
   ]);
   const ids = rows.map((r) => r.id);
-  const [caseCounts, stageRows] = ids.length === 0 ? [[], []] : await Promise.all([
+  const [caseCounts, stageRows, ideaRows] = ids.length === 0 ? [[], [], []] : await Promise.all([
     db.select({ runId: ideas.runId, n: count(cases.id) }).from(cases)
       .innerJoin(ideas, eq(cases.ideaId, ideas.id))
       .where(inArray(ideas.runId, ids))
@@ -212,6 +219,10 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
     db.select({ runId: runStages.runId, stage: runStages.stage, status: runStages.status, startedAt: runStages.startedAt, finishedAt: runStages.finishedAt })
       .from(runStages)
       .where(inArray(runStages.runId, ids)),
+    db.select({
+      id: ideas.id, runId: ideas.runId, origin: ideas.origin, title: ideas.title, oneLiner: ideas.oneLiner, status: ideas.status,
+      ownerRating: ideas.ownerRating, ownerTags: ideas.ownerTags,
+    }).from(ideas).where(inArray(ideas.runId, ids)).orderBy(ideas.createdAt, ideas.id).limit(IDEAS_PER_PAGE_MAX),
   ]);
   return {
     total: totalRow?.n ?? 0,
@@ -221,6 +232,7 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
       error: r.error === null ? null : scrubError(r.error),
       config: r.config.ideaText !== undefined ? { ...r.config, ideaText: r.config.ideaText.slice(0, IDEA_TEXT_SHOWN) } : r.config,
       caseCount: caseCounts.find((c) => c.runId === r.id)?.n ?? 0,
+      ideas: ideaRows.filter((i) => i.runId === r.id).map(({ runId: _runId, ...i }) => i),
       stages: stageRows.filter((s) => s.runId === r.id)
         .sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage))
         .map(({ stage, status, startedAt, finishedAt }) => ({ stage, status, startedAt, finishedAt })),

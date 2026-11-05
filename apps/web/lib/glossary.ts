@@ -24,7 +24,8 @@ export type GlossaryTerm =
   | 'trend'
   | 'ruleChange'
   | 'market'
-  | 'demandEvidence';
+  | 'demandEvidence'
+  | 'rateIdeas';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -131,5 +132,9 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   demandEvidence: {
     label: 'Demand evidence',
     text: 'The share of generated ideas that rest on a trend, a rule change or a market entry from the library. Ideas cite one only when they depend on it, and the benchmark aims for 80 percent.',
+  },
+  rateIdeas: {
+    label: 'Rating ideas',
+    text: 'Rate ideas so PitchLab can tell whether changes make them better. Your ratings are never shown to the idea generator.',
   },
 };

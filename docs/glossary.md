@@ -133,3 +133,6 @@ How big a group of customers is and whether it is growing, for example the peopl
 
 ### Demand evidence
 The share of generated ideas that rest on a trend, a rule change or a market entry from the library. Ideas cite one only when they depend on it, and the benchmark aims for 80 percent.
+
+### Rating ideas
+Rate ideas so PitchLab can tell whether changes make them better. Your ratings are never shown to the idea generator.

@@ -1,6 +1,8 @@
 import type { RunListRow } from '@bcg/core/dashboard/runs';
 import Link from 'next/link';
 import { requeueRunAction } from '@/actions/runs';
+import { HelpTip } from './help-tip';
+import { IdeaRating } from './idea-rating';
 import { runCost, seedSummary } from '@/lib/run-format';
 import { runsHref } from '@/lib/runs-query';
 import { formatDateTime } from '@/lib/time';
@@ -30,6 +32,7 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                 <th scope="col">Cases</th>
                 <th scope="col">Error</th>
                 <th scope="col">Stages</th>
+                <th scope="col">Ideas</th>
               </tr>
             </thead>
             <tbody>
@@ -64,6 +67,20 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                         {r.stages.map((s) => (
                           <li key={s.stage}>
                             {s.stage}: {s.status} · {formatDateTime(s.startedAt)} → {formatDateTime(s.finishedAt)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  </td>
+                  <td data-label="Ideas">
+                    <details>
+                      <summary>{r.ideas.length} ideas</summary>
+                      <HelpTip term="rateIdeas" />
+                      <ul className="plain">
+                        {r.ideas.map((i) => (
+                          <li key={i.id}>
+                            <strong>{i.title}</strong> <span className="muted small">{i.oneLiner}</span>
+                            {i.origin === 'generated' ? <IdeaRating idea={i} /> : null}
                           </li>
                         ))}
                       </ul>
