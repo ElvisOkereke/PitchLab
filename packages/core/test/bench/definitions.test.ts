@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { BENCHMARKS, CURRENT_BENCHMARK, METRIC_DEFS } from '../../src/bench/definitions';
-import { CA_US, CONSUMER_LENSES, LENSES } from '../../src/db/seed';
+import { AMBITION_LENSES, CA_US, CONSUMER_LENSES, LENSES } from '../../src/db/seed';
 import { testDb } from '../helpers/db';
 import { benchmarkPasses, runs } from '../../src/db/schema';
 
@@ -23,7 +23,7 @@ describe('bench definitions', () => {
     });
   });
 
-  it('bench-v2 is frozen and current', () => {
+  it('bench-v2 is frozen', () => {
     expect(BENCHMARKS['bench-v2'], 'bench-v2 is immutable; add bench-v3 instead').toEqual({
       seeds: [
         ...BENCHMARKS['bench-v1'].seeds,
@@ -34,12 +34,28 @@ describe('bench definitions', () => {
       costNote: 'about $15–35 in model calls (5 runs at about $3–7 each)',
     });
     expect(BENCHMARKS['bench-v2'].seeds).toHaveLength(5);
-    expect(CURRENT_BENCHMARK).toBe('bench-v2');
+  });
+
+  it('bench-v3 is frozen and current', () => {
+    expect(BENCHMARKS['bench-v3'], 'bench-v3 is immutable; add bench-v4 instead').toEqual({
+      seeds: [
+        { seedType: 'open' },
+        { seedType: 'open' },
+        { seedType: 'sector', sectors: ['logistics and freight', 'construction and trades'] },
+        { seedType: 'sector', sectors: ['healthcare clinics', 'education and tutoring'] },
+        { seedType: 'lens', lensIds: ['ai-replaces-labour', 'ten-x-incumbent'] },
+        { seedType: 'lens', lensIds: ['consumer-ai-chore', 'new-capability'] },
+      ],
+      ideaCount: 12,
+      advanceCount: 3,
+      costNote: 'about $30–50 in model calls (6 runs)',
+    });
+    expect(CURRENT_BENCHMARK).toBe('bench-v3');
   });
 
   it('every sector and lens id exists in the seed data', () => {
-    const lensIds = new Set([...LENSES, ...CONSUMER_LENSES].map((l) => l.id));
-    for (const v of ['bench-v1', 'bench-v2'] as const) for (const s of BENCHMARKS[v].seeds) {
+    const lensIds = new Set([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES].map((l) => l.id));
+    for (const v of ['bench-v1', 'bench-v2', 'bench-v3'] as const) for (const s of BENCHMARKS[v].seeds) {
       if (s.seedType === 'sector') for (const x of s.sectors) expect(CA_US.sectors).toContain(x);
       if (s.seedType === 'lens') for (const x of s.lensIds) expect(lensIds.has(x)).toBe(true);
     }

@@ -26,6 +26,10 @@ export const SECTOR_PAIN_PHRASES: Record<string, string[]> = {
   'ecommerce brands (Shopify)': ['chargeback disputes', 'inventory sync errors', 'abandoned cart recovery', 'returns processing manual', 'supplier stock out'],
   'franchise groups': ['franchisee compliance reporting', 'royalty reporting manual', 'location audit tracking', 'brand standard violations', 'franchisee onboarding paperwork'],
   'logistics/freight brokers': ['invoice disputes carrier', 'manual load tracking', 'detention charges unbilled', 'carrier onboarding paperwork', 'proof of delivery chasing'],
+  'logistics and freight': ['detention charges unbilled', 'manual load tracking', 'carrier invoice disputes', 'proof of delivery chasing', 'rate quote turnaround'],
+  'construction and trades': ['change order paperwork', 'permit timing delays', 'subcontractor compliance tracking', 'job costing spreadsheet', 'unpaid progress invoices'],
+  'healthcare clinics': ['no-show patients', 'insurance claim denied', 'prior authorization paperwork', 'manual appointment reminders', 'patient intake forms'],
+  'education and tutoring': ['student scheduling conflicts', 'parent communication manual', 'unpaid tuition invoices', 'lesson progress reporting', 'no-show students'],
 };
 
 /** The sector's phrases plus 2 generic ones chosen with `random`; an unknown sector gets generic phrases only. */

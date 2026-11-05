@@ -127,3 +127,23 @@ describe('db', () => {
     await db.insert(ideaReviews).values({ ...review, promptVersion: 'review.v2' });
   });
 });
+
+describe('seed sectors', () => {
+  const NEW = ['logistics and freight', 'construction and trades', 'healthcare clinics', 'education and tutoring'];
+  it('are present on a fresh database', async () => {
+    const db = await testDb();
+    await seedDefaults(db);
+    const [m] = await db.select().from(markets);
+    for (const x of NEW) expect(m!.sectors).toContain(x);
+  });
+  it('are added to an existing database once, keeping its own edits', async () => {
+    const db = await testDb();
+    await seedDefaults(db);
+    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] });
+    await seedDefaults(db);
+    await seedDefaults(db);
+    const [m] = await db.select().from(markets);
+    expect(m!.sectors.slice(0, 2)).toEqual(['my own sector', 'HVAC']);
+    for (const x of NEW) expect(m!.sectors.filter((s) => s === x)).toHaveLength(1);
+  });
+});

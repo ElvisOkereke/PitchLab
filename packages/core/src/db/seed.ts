@@ -1,5 +1,5 @@
 import type { Db } from './client';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { lenses, markets } from './schema';
 
 export const CA_US = {
@@ -14,6 +14,7 @@ export const CA_US = {
     'veterinary clinics', 'law firm operations', 'accounting/bookkeeping firms', 'property management',
     'event rentals', 'auto repair', 'restaurants/multi-location food', 'ecommerce brands (Shopify)',
     'franchise groups', 'logistics/freight brokers',
+    'logistics and freight', 'construction and trades', 'healthcare clinics', 'education and tutoring',
   ],
 };
 
@@ -177,6 +178,11 @@ export const CONSUMER_SEGMENTS = [
 export async function seedDefaults(db: Db): Promise<void> {
   await db.insert(markets).values(CA_US).onConflictDoNothing({ target: markets.id });
   await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES]).onConflictDoNothing({ target: lenses.id });
+  // Existing databases: append any sector the market lacks (bench-v3 names some); never remove or reorder.
+  for (const sector of CA_US.sectors) {
+    await db.update(markets).set({ sectors: sql`array_append(${markets.sectors}, ${sector})` })
+      .where(and(eq(markets.id, CA_US.id), sql`not (${sector} = any(${markets.sectors}))`));
+  }
   // Existing databases: set a weight only where none is set, so this stays idempotent.
   for (const [id, weight] of Object.entries(LENS_WEIGHTS)) {
     await db.update(lenses).set({ weight }).where(and(eq(lenses.id, id), isNull(lenses.weight)));

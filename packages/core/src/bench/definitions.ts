@@ -8,7 +8,7 @@ export type BenchSeed =
 
 export type BenchmarkDef = { seeds: readonly BenchSeed[]; ideaCount: 12; advanceCount: 3; costNote: string };
 
-export const BENCHMARKS: Readonly<Record<'bench-v1' | 'bench-v2', BenchmarkDef>> = {
+export const BENCHMARKS: Readonly<Record<'bench-v1' | 'bench-v2' | 'bench-v3', BenchmarkDef>> = {
   'bench-v1': {
     seeds: [
       { seedType: 'open' },
@@ -33,9 +33,24 @@ export const BENCHMARKS: Readonly<Record<'bench-v1' | 'bench-v2', BenchmarkDef>>
     advanceCount: 3,
     costNote: 'about $15–35 in model calls (5 runs at about $3–7 each)',
   },
+  // Wider seeds for the ambition round: two open runs, new sectors, and the ambition and consumer lenses.
+  // Two identical open seeds are two separate runs (each queued run is its own row; nothing dedupes by config).
+  'bench-v3': {
+    seeds: [
+      { seedType: 'open' },
+      { seedType: 'open' },
+      { seedType: 'sector', sectors: ['logistics and freight', 'construction and trades'] },
+      { seedType: 'sector', sectors: ['healthcare clinics', 'education and tutoring'] },
+      { seedType: 'lens', lensIds: ['ai-replaces-labour', 'ten-x-incumbent'] },
+      { seedType: 'lens', lensIds: ['consumer-ai-chore', 'new-capability'] },
+    ],
+    ideaCount: 12,
+    advanceCount: 3,
+    costNote: 'about $30–50 in model calls (6 runs)',
+  },
 };
 
-export const CURRENT_BENCHMARK = 'bench-v2' as const;
+export const CURRENT_BENCHMARK = 'bench-v3' as const;
 
 /**
  * The idea-review prompt version whose reviews the scorecard counts. It must name the newest
