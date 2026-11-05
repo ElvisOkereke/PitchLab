@@ -40,6 +40,26 @@ describe('ideaBlock', () => {
     expect(lines.find((l) => l.startsWith('Known incumbents'))!.split('; ')).toHaveLength(2);
   });
 
+  // ideate.v12: screen, gate and the reviewer see the idea's edge and scale.
+  it('appends the edge and scale lines when present, labelled as unverified claims and capped', () => {
+    const edge = { kind: 'ai', claim: 'Reads\nevery line', versus: 'Manual spot checks', whyNow: 'Models got cheap' };
+    const scale = { buyers: '40,000 firms', basis: 'Assumption: one in five', source: 'https://x.test/a' };
+    expect(ideaBlock({ ...base, edge, scale })).toBe(
+      `${BASE_TEXT}\nEdge (the idea's own unverified claim): ai: Reads every line. Versus today's option: Manual spot checks. Why now: Models got cheap` +
+        `\nScale (the idea's own unverified claim): 40,000 firms. Basis: Assumption: one in five. Source: https://x.test/a`,
+    );
+    expect(ideaBlock({ ...base, scale: { buyers: 'b', basis: 'Assumption: x' } })).toBe(`${BASE_TEXT}\nScale (the idea's own unverified claim): b. Basis: Assumption: x`);
+    const long = ideaBlock({ ...base, edge: { ...edge, claim: 'c'.repeat(900) } });
+    expect(long).toContain(`ai: ${'c'.repeat(300)}. Versus`);
+  });
+
+  it('omits the edge and scale lines for older ideas (null) and for garbage jsonb', () => {
+    expect(ideaBlock({ ...base, edge: null, scale: null })).toBe(BASE_TEXT);
+    for (const junk of [{ a: 1 }, 'edge', 42, [], { kind: 'magic', claim: 'c', versus: 'v', whyNow: 'w' }]) {
+      expect(ideaBlock({ ...base, edge: junk as never, scale: junk as never })).toBe(BASE_TEXT);
+    }
+  });
+
   it('keeps at most 8 names', () => {
     const text = ideaBlock({ ...base, knownIncumbents: Array.from({ length: 9 }, (_, i) => `Inc${i}`), functionalGap: null });
     expect(text).toBe(`${BASE_TEXT}\n${INC}${Array.from({ length: 8 }, (_, i) => `Inc${i}`).join('; ')}`);

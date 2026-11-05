@@ -1,13 +1,17 @@
 import { z } from 'zod';
 import type { ideas } from '../db/schema';
 import { capField } from '../llm/untrusted';
+import { EdgeSchema } from './business-models';
 
 type IdeaFields = Pick<typeof ideas.$inferSelect, 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution'> &
-  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap'>>;
+  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale'>>;
 
 const MAX_INCUMBENTS = 8;
 const CLAIM = "(the idea's own unverified claim)";
 const incumbentList = z.array(z.string());
+/** Edge and scale as read from jsonb for prompt text: the kind must be valid; over-long text is capped below, not refused. */
+const edgeText = z.object({ kind: EdgeSchema.shape.kind, claim: z.string().min(1), versus: z.string().min(1), whyNow: z.string().min(1) });
+const scaleText = z.object({ buyers: z.string().min(1), basis: z.string().min(1), source: z.string().optional() });
 
 /**
  * Incumbent names from the jsonb column, ready for one prompt line: anything but an array of strings is treated as
@@ -24,7 +28,9 @@ function incumbentNames(raw: unknown): string[] {
  * An idea as prompt text: one line per field, each capped (title 200, others 2000) with newlines collapsed. Ideas from
  * ideate.v7 also get the incumbents (joined with "; ") and the functional gap (capped at 600), each labelled as the
  * idea's own unverified claim; a line is omitted when its value is null, empty or invalid (owner and older ideas), never
- * synthesised. Feeds screen, gate and deep-case. Wrap before use.
+ * synthesised. Ideas from ideate.v12 also get an edge line (kind, claim, today's option, why now) and a scale line
+ * (buyers, basis, source), validated from jsonb and capped, under the same rules. Feeds screen, gate, deep-case and the
+ * idea reviewer. Wrap before use.
  */
 export function ideaBlock(idea: IdeaFields): string {
   const lines = [
@@ -38,6 +44,16 @@ export function ideaBlock(idea: IdeaFields): string {
   if (names.length) lines.push(`Known incumbents ${CLAIM}: ${names.join('; ')}`);
   const gap = typeof idea.functionalGap === 'string' ? capField(idea.functionalGap, 600) : '';
   if (gap) lines.push(`Functional gap ${CLAIM}: ${gap}`);
+  const edge = edgeText.safeParse(idea.edge);
+  if (edge.success) {
+    const e = edge.data;
+    lines.push(`Edge ${CLAIM}: ${e.kind}: ${capField(e.claim, 300)}. Versus today's option: ${capField(e.versus, 200)}. Why now: ${capField(e.whyNow, 300)}`);
+  }
+  const scale = scaleText.safeParse(idea.scale);
+  if (scale.success) {
+    const s = scale.data;
+    lines.push(`Scale ${CLAIM}: ${capField(s.buyers, 200)}. Basis: ${capField(s.basis, 300)}${s.source ? `. Source: ${capField(s.source, 300)}` : ''}`);
+  }
   return lines.join('\n');
 }
 

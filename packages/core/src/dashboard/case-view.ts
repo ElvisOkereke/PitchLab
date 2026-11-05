@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { cases, claims, gateCheck, gateVerdicts, ideas, lenses, scores, stageEvents } from '../db/schema';
+import { EdgeSchema, ScaleSchema, type Edge, type Scale } from '../pipeline/business-models';
 
 export type CaseRow = typeof cases.$inferSelect;
 export type ClaimRow = typeof claims.$inferSelect;
@@ -17,6 +18,9 @@ export type CaseView = {
   /** The latest stage events, newest first. */
   events: StageEventRow[];
   lensName: string | null;
+  /** The idea's edge and scale (ideate.v12; model claims), or null for older ideas and invalid jsonb. Optional for older callers. */
+  edge?: Edge | null;
+  scale?: Scale | null;
 };
 
 export const CASE_SLUG = /^[a-z0-9-]{1,120}$/;
@@ -30,7 +34,7 @@ const CHECK_ORDER = new Map<string, number>(gateCheck.enumValues.map((c, i) => [
 /** Everything the case page shows, or null for a malformed or unknown slug. */
 export async function getCaseView(db: Db, slug: string): Promise<CaseView | null> {
   if (typeof slug !== 'string' || !CASE_SLUG.test(slug)) return null;
-  const [row] = await db.select({ case: cases, lensName: lenses.name })
+  const [row] = await db.select({ case: cases, lensName: lenses.name, edge: ideas.edge, scale: ideas.scale })
     .from(cases)
     .innerJoin(ideas, eq(ideas.id, cases.ideaId))
     .leftJoin(lenses, eq(lenses.id, ideas.lensId))
@@ -48,5 +52,10 @@ export async function getCaseView(db: Db, slug: string): Promise<CaseView | null
   ]);
   const gate = [...verdicts].sort((a, b) =>
     Number(a.pass) - Number(b.pass) || (CHECK_ORDER.get(a.check)! - CHECK_ORDER.get(b.check)!));
-  return { case: kase, claims: claimRows, scores: scoreRows, gate, events, lensName: row.lensName ?? null };
+  const edge = EdgeSchema.safeParse(row.edge);
+  const scale = ScaleSchema.safeParse(row.scale);
+  return {
+    case: kase, claims: claimRows, scores: scoreRows, gate, events, lensName: row.lensName ?? null,
+    edge: edge.success ? edge.data : null, scale: scale.success ? scale.data : null,
+  };
 }

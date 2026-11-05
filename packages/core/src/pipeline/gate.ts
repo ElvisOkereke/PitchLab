@@ -1,13 +1,16 @@
 import { eq, inArray } from 'drizzle-orm';
-import { parse } from 'tldts';
 import { z } from 'zod';
 import { ideationContext, renderIdeationContext } from '../library/context';
-import { gateVerdicts, ideas, markets, signals, type SignalVoice } from '../db/schema';
+import { gateVerdicts, ideas, markets, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
-import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
+import { BANNED_DOMAINS } from '../tools/banned-sources';
+import { countEvidenceForSignals } from './evidence';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
+
+// The evidence helpers moved to ./evidence (shared with ideate); re-exported so existing imports keep working.
+export { COMMUNITY_PLATFORMS, countEvidence, countEvidenceForSignals } from './evidence';
 
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
 const ORDER = [...CHECKS, 'evidence'] as const;
@@ -26,74 +29,6 @@ const judgeSchema = z
   .refine((v) => CHECKS.every((c) => v.verdicts.filter((x) => x.check === c).length === 1), {
     message: `verdicts must contain each of ${CHECKS.join(', ')} exactly once`,
   });
-
-/** Community platforms: several distinct threads on one of these count as separate evidence, up to the cap. */
-export const COMMUNITY_PLATFORMS = ['ycombinator.com', 'stackexchange.com', 'stackoverflow.com', 'github.com', 'wordpress.org'] as const;
-const COMMUNITY = new Set<string>(COMMUNITY_PLATFORMS);
-const THREADS_PER_PLATFORM = 2;
-
-/** Registrable domain and thread key (URL without fragment) of an http(s) URL, or null (fail closed). */
-function parseSource(url: string): { domain: string; thread: string } | null {
-  try {
-    if (isBannedSource(url)) return null;
-    const u = new URL(url);
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
-    const r = parse(u.hostname.toLowerCase());
-    if (r.isIp || !r.domain) return null;
-    u.hash = '';
-    u.protocol = 'https:';
-    if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '');
-    return { domain: r.domain.toLowerCase(), thread: u.href };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Hybrid evidence units: community platforms count distinct threads (max 2 each), every other domain once.
- * `countedUrls` (input order) are the urls behind those units: unparseable, banned, IP and dotless urls are dropped, and
- * on a community platform only urls of its first 2 distinct threads are kept; every url of another counted domain is kept.
- */
-export function countEvidence(urls: string[]): { units: number; breakdown: string; countedUrls: string[] } {
-  const byDomain = new Map<string, Set<string>>();
-  const parsed: { url: string; domain: string; thread: string }[] = [];
-  for (const url of urls) {
-    const s = parseSource(url);
-    if (!s) continue;
-    parsed.push({ url, ...s });
-    const set = byDomain.get(s.domain) ?? new Set<string>();
-    // A capped platform keeps only its first THREADS_PER_PLATFORM threads, so countedUrls matches the units.
-    if (!COMMUNITY.has(s.domain) || set.size < THREADS_PER_PLATFORM || set.has(s.thread)) set.add(s.thread);
-    byDomain.set(s.domain, set);
-  }
-  let units = 0;
-  const parts: string[] = [];
-  for (const [domain, threads] of byDomain) {
-    const n = COMMUNITY.has(domain) ? threads.size : 1;
-    units += n;
-    parts.push(n > 1 ? `${domain} ×${n} threads` : domain);
-  }
-  const countedUrls = parsed.filter((p) => byDomain.get(p.domain)!.has(p.thread)).map((p) => p.url);
-  return { units, breakdown: parts.join(', '), countedUrls };
-}
-
-/**
- * countEvidence over signal rows, counting only independent voices: `operator` and `neutral`. Fails closed: `vendor`
- * signals (written by companies already selling a fix) and untagged ones (NULL voice, extracted before tuning-4 and not
- * re-harvested since) are excluded and counted in `excludedVendor` / `excludedUntagged`. `counted` lists the urls that
- * were passed to countEvidence (voice-eligible); `countedUrls` those that earned a unit.
- */
-export function countEvidenceForSignals(rows: { url: string; voice: SignalVoice | null }[]): {
-  units: number; breakdown: string; countedUrls: string[]; counted: string[]; excludedVendor: number; excludedUntagged: number;
-} {
-  const counted = rows.filter((r) => r.voice === 'operator' || r.voice === 'neutral').map((r) => r.url);
-  return {
-    ...countEvidence(counted),
-    counted,
-    excludedVendor: rows.filter((r) => r.voice === 'vendor').length,
-    excludedUntagged: rows.filter((r) => r.voice == null).length,
-  };
-}
 
 /** "N independent sources: <breakdown>[; excluded K vendor, M untagged]" (zero counts left out) for the evidence verdict. */
 function evidenceReasoning(e: ReturnType<typeof countEvidenceForSignals>): string {

@@ -16,12 +16,43 @@ const render = (gap = '') =>
   });
 
 describe('ideate prompt', () => {
-  it('is v11 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v11');
+  it('is v12 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v12');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
     }
+  });
+  // ideate.v12 (owner decisions 1-3, 2026-11-04)
+  it('states the ambition identity and drops "small", "pilot fast" and gendered pronouns', () => {
+    const text = render();
+    expect(text).toContain('an owner who wants a software business with a real edge that can grow; software does most of the work');
+    for (const w of ['small', 'pilot fast', 'he', 'his', 'him', 'she', 'her', 'hers']) expect(text).not.toMatch(banned(w));
+  });
+  it('asks for an edge with its kind, today\'s option and why now, with the rubric anchors', () => {
+    const text = render();
+    for (const k of ['ai', 'cost', 'speed', 'accuracy', 'data', 'network', 'new_capability', 'distribution']) expect(text).toContain(`\`${k}\``);
+    for (const f of ['edge', 'claim', 'versus', 'whyNow']) expect(text).toContain(`\`${f}\``);
+    expect(text).toContain('"Uses AI" or "better UX" alone is not an edge.');
+    expect(text).toMatch(/concrete, checkable advantage/);
+    expect(text).toMatch(/why it is possible now/);
+  });
+  it('asks for scale: who and how many buyers, the basis, and a source or an assumption', () => {
+    const text = render();
+    for (const f of ['scale', 'buyers', 'basis']) expect(text).toContain(`\`${f}\``);
+    expect(text).toMatch(/`scale\.source`/);
+    expect(text).toMatch(/starting with "Assumption:"/);
+  });
+  it('allows one operator or neutral signal plus a demand source as an alternative to three sites', () => {
+    const evidence = render().split('\n').find((l) => l.startsWith('- Evidence:'))!;
+    expect(evidence).toContain('at least 3 signals from at least 3 different websites');
+    expect(evidence).toMatch(/or at least 1 such signal plus at least 1 demand source/);
+    expect(evidence).toMatch(/`trend`, `market`, `rule_change` or `pricing`/);
+    expect(evidence).toMatch(/`opportunity` signal .* from a different website/);
+    expect(evidence).toMatch(/cite its id in `libraryItemIds`/);
+  });
+  it('keeps v11', () => {
+    expect(existsSync(join(__dirname, '../../prompts/ideate.v11.md'))).toBe(true);
   });
   // ideate.v10
   it('carries the changing and markets blocks and the cite-only-when-it-depends rule', () => {

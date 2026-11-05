@@ -34,6 +34,27 @@ export const BarriersSchema = z.object({
 });
 export type Barriers = z.infer<typeof BarriersSchema>;
 
+/** What kind of advantage an idea claims over today's option (ideate.v12). */
+export const EDGE_KINDS = ['ai', 'cost', 'speed', 'accuracy', 'data', 'network', 'new_capability', 'distribution'] as const;
+export type EdgeKind = (typeof EDGE_KINDS)[number];
+
+/** The idea's edge (ideate.v12; a model claim): the advantage, today's option it beats, and why it is possible now. */
+export const EdgeSchema = z.object({
+  kind: z.enum(EDGE_KINDS),
+  claim: z.string().min(1).max(300),
+  versus: z.string().min(1).max(200),
+  whyNow: z.string().min(1).max(300),
+});
+export type Edge = z.infer<typeof EdgeSchema>;
+
+/** Who and how many buyers (ideate.v12; a model claim). `source` is a library id or signal url; otherwise the basis is an assumption. */
+export const ScaleSchema = z.object({
+  buyers: z.string().min(1).max(200),
+  basis: z.string().min(1).max(300),
+  source: z.string().max(300).optional(),
+});
+export type Scale = z.infer<typeof ScaleSchema>;
+
 /** Yearly value to the user divided by the yearly price; null when it cannot be worked out. */
 export function valueMultiple(valueToUser: ValueToUser, priceHint: PriceHint, periodsPerYear?: number): number | null {
   if (!Number.isFinite(priceHint.amount) || !(priceHint.amount > 0)) return null;

@@ -40,6 +40,18 @@ describe('getCaseView', () => {
     expect(view.events[0]!.kind).toBe('move');
   });
 
+  it("carries the idea's edge and scale (ideate.v12) when valid, and null for older ideas or garbage jsonb", async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const edge = { kind: 'cost', claim: 'Half the price', versus: 'An agency retainer', whyNow: 'Models got cheap' };
+    const scale = { buyers: '40,000 firms', basis: 'Assumption: one in five' };
+    await insertCase(db, (await insertIdea(db, run.id, { edge, scale })).id, { slug: 'new-idea' });
+    await insertCase(db, (await insertIdea(db, run.id)).id, { slug: 'old-idea' });
+    await insertCase(db, (await insertIdea(db, run.id, { edge: { kind: 'magic' }, scale: 'lots' })).id, { slug: 'junk-idea' });
+    expect(await getCaseView(db, 'new-idea')).toMatchObject({ edge, scale });
+    expect(await getCaseView(db, 'old-idea')).toMatchObject({ edge: null, scale: null });
+    expect(await getCaseView(db, 'junk-idea')).toMatchObject({ edge: null, scale: null });
+  });
+
   it('keeps only the latest 20 stage events, newest first, and a null lens for owner ideas', async () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea' }));
     const idea = await insertIdea(db, run.id, { origin: 'owner' });

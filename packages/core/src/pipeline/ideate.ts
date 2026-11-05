@@ -10,9 +10,13 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { errorMessage } from '../tools/scrub';
 import { loadAlreadySold } from './already-sold';
 import {
-  AUDIENCES, BarriersSchema, BUSINESS_MODELS, PriceHintSchema, ValueToUserSchema, type Barriers, type BusinessModel, type IdeaAudience,
+  AUDIENCES, BarriersSchema, BUSINESS_MODELS, EDGE_KINDS, EdgeSchema, PriceHintSchema, ScaleSchema, ValueToUserSchema,
+  type Barriers, type BusinessModel, type IdeaAudience,
 } from './business-models';
+import { meetsEvidenceRule } from './evidence';
 import type { RunConfig, StageDeps } from './types';
+
+export { hasDemandEvidence } from './evidence';
 
 const MAX_SIGNALS = 40;
 const VALUE_KINDS = ValueToUserSchema.shape.kind.options;
@@ -82,6 +86,9 @@ const lensIdeaSchema = z.object({
   signalUrls: z.array(z.string()),
   ...moneyFields,
   libraryItemIds: z.array(LIBRARY_ID).max(10),
+  // ideate.v12: required on generated ideas (an idea without them drops with a reason).
+  edge: EdgeSchema,
+  scale: ScaleSchema,
 });
 type LensIdea = z.infer<typeof lensIdeaSchema>;
 /** Plain object copy, or null. */
@@ -156,8 +163,10 @@ function enumValue(v: unknown, allowed: readonly string[]): unknown {
  *   only) and the barrier scores; scores are rounded and clamped to 1–5;
  * - enum values are trimmed, lower-cased and matched through a short synonym list; a mechanism that is not on the list
  *   (only a label; unknown, missing or not text) becomes `other`;
- * - cited library ids are unwrapped, filtered to well-formed uuids and capped at 10.
- * Still strict: an unknown business model, audience or value kind is left as is and drops the idea (no relabelling).
+ * - cited library ids are unwrapped, filtered to well-formed uuids and capped at 10;
+ * - edge and scale text (ideate.v12) is cut to its limits (claim 300, versus 200, whyNow 300; buyers 200, basis 300,
+ *   source 300), and the edge kind goes through the same enum matching (`"New capability"` → `new_capability`).
+ * Still strict: an unknown business model, audience, value kind or edge kind is left as is and drops the idea (no relabelling).
  */
 export function normalizeIdea(raw: unknown): unknown {
   const idea = asRecord(raw);
@@ -192,6 +201,17 @@ export function normalizeIdea(raw: unknown): unknown {
     // Only a preference: yes/true text reads as true; missing, null or anything else reads as false (the cautious answer).
     barriers.soloBuildable = soloFlag(barriers.soloBuildable);
     idea.barriers = barriers;
+  }
+  const edge = asRecord(idea.edge);
+  if (edge) {
+    cut(edge, 'claim', 300); cut(edge, 'versus', 200); cut(edge, 'whyNow', 300);
+    set(edge, 'kind', (v) => enumValue(v, EDGE_KINDS));
+    idea.edge = edge;
+  }
+  const scale = asRecord(idea.scale);
+  if (scale) {
+    cut(scale, 'buyers', 200); cut(scale, 'basis', 300); cut(scale, 'source', 300);
+    idea.scale = scale;
   }
   if (Array.isArray(idea.libraryItemIds)) {
     // One malformed id (a name, a url, a number) is dropped on its own instead of failing the whole idea.
@@ -244,6 +264,8 @@ const ownerIdeaSchema = z.object({
   valueToUser: moneyFields.valueToUser.optional(),
   priceHint: moneyFields.priceHint.optional(),
   barriers: moneyFields.barriers.optional(),
+  edge: EdgeSchema.optional(),
+  scale: ScaleSchema.optional(),
 });
 
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
@@ -439,6 +461,8 @@ function ground<T extends Grounded>(v: T, basisMax: number, known: Known, prefix
 type LibraryBlocks = {
   alreadySold: string; lessons: string; pricing: string; changing: string; markets: string;
   ids: Set<string>;
+  /** Each shown entry's id to its library kind (the demand evidence route counts only shown trend, market, rule_change and pricing entries). */
+  kinds: Map<string, string>;
   /** Lower-cased id, url and rendered url of each shown entry, to its id. */
   sources: Known;
   /** Rendered urls that were cut off (lower case), to the entry id. */
@@ -470,6 +494,9 @@ export function checkToCopy(b: Barriers): { barriers: Barriers; lowered: boolean
   if (b.toCopy < 4 || MOAT_KEYWORDS.some((re) => re.test(b.toCopyWhy))) return { barriers: b, lowered: false };
   return { barriers: { ...b, toCopy: 3 }, lowered: true };
 }
+
+/** The drop reason for a generated idea that meets neither evidence route (counted in `dropReasons`). */
+export const EVIDENCE_DROP = 'evidence:insufficient';
 
 export type IdeateOutput = {
   ideaIds: string[];
@@ -523,7 +550,7 @@ export async function ideate(
       },
       callCtx(prompt.version),
     );
-    const { audience, businessModel, revenueMechanics, valueToUser, priceHint, barriers, ...fields } = out;
+    const { audience, businessModel, revenueMechanics, valueToUser, priceHint, barriers, edge, scale, ...fields } = out;
     let toCopyLowered = 0;
     let ownerBarriers: Barriers | null = barriers ?? null;
     if (ownerBarriers) {
@@ -539,6 +566,7 @@ export async function ideate(
       valueToUser: valueToUser ? ground(valueToUser, 400, none) : null,
       priceHint: priceHint ? ground(priceHint, 300, none) : null,
       barriers: ownerBarriers, libraryItemIds: null,
+      edge: edge ?? null, scale: scale ? ground(scale, 300, none) : null,
       signalIds: input.signalIds, status: 'candidate',
     }]);
     log('ideate: 1 owner idea');
@@ -559,7 +587,10 @@ export async function ideate(
   const signalById = new Map(rows.map((r) => [r.id, r]));
   const passed = used.map((id) => signalById.get(id)).filter((r): r is NonNullable<typeof r> => !!r);
   // Each signal carries who wrote it; untagged (pre-tuning-4) rows show as `untagged`, which never counts as evidence.
-  const signalsText = passed.map((s) => `- url: ${s.url}\n  voice: ${s.voice ?? 'untagged'}\n  quote: ${oneLine(s.quote)}`).join('\n');
+  // Its kind (pain or opportunity) matters for the demand evidence route (ideate.v12).
+  const signalsText = passed
+    .map((s) => `- url: ${s.url}\n  voice: ${s.voice ?? 'untagged'}\n  kind: ${s.kind === 'opportunity' ? 'opportunity' : 'pain'}\n  quote: ${oneLine(s.quote)}`)
+    .join('\n');
   const signalUrls = new Set(passed.map((s) => s.url));
 
   // The run's focus: business sectors (the seed's, or those the evidence came from) and, for open seeds, consumer segments.
@@ -581,7 +612,7 @@ export async function ideate(
   const libraryFor = async (lens: LensRow): Promise<LibraryBlocks> => {
     const cached = libraryCache.get(lens.id);
     if (cached) return cached;
-    let blocks: LibraryBlocks = { ...EMPTY_LIBRARY, ids: new Set(), sources: new Map(), prefixes: [] };
+    let blocks: LibraryBlocks = { ...EMPTY_LIBRARY, ids: new Set(), kinds: new Map(), sources: new Map(), prefixes: [] };
     try {
       const text = capField(`${lens.pattern} ${seedText || lens.promptHint}`, 1000);
       const [vector] = await router.embed([text], { runId: run.id, promptVersion: 'library-query.v1' });
@@ -599,7 +630,13 @@ export async function ideate(
           if (!sources.has(rendered)) sources.set(rendered, e.id);
           if (url.length > RENDERED_URL_MAX) prefixes.push([rendered, e.id]);
         }
-        blocks = { ...renderIdeationContext(ctx), ids: new Set(shown.map((x) => x.id)), sources, prefixes };
+        const kinds = new Map<string, string>([
+          ...[...ctx.alreadySold, ...ctx.lessons].map((e) => [e.id, 'startup'] as const),
+          ...ctx.pricing.map((e) => [e.id, 'pricing'] as const),
+          ...ctx.changing.map((e) => [e.id, e.kind] as const),
+          ...ctx.markets.map((e) => [e.id, 'market'] as const),
+        ]);
+        blocks = { ...renderIdeationContext(ctx), ids: new Set(shown.map((x) => x.id)), kinds, sources, prefixes };
       }
     } catch (err) {
       log(`ideate: library context unavailable for lens ${lens.id} (${errorMessage(err)})`);
@@ -685,7 +722,17 @@ export async function ideate(
     }
     const known: Known = new Map(library.sources);
     for (const url of signalUrls) if (!known.has(url.toLowerCase())) known.set(url.toLowerCase(), url);
-    return valid.slice(0, count).map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, ...f }) => {
+    // The evidence rule (ideate.v12), counted against what this call was shown: minSignals independent operator or
+    // neutral sites, or 1 such signal plus a demand source (a shown trend, market, rule_change or pricing entry, or an
+    // opportunity signal from another site). An idea meeting neither is dropped as `evidence:insufficient`.
+    const evidenced = valid.slice(0, count).filter((idea) => {
+      const cited = new Set(idea.signalUrls);
+      if (meetsEvidenceRule(idea, library.kinds, passed.filter((s) => cited.has(s.url)), cfg.minSignals)) return true;
+      dropped++;
+      dropReasons[EVIDENCE_DROP] = (dropReasons[EVIDENCE_DROP] ?? 0) + 1;
+      return false;
+    });
+    return evidenced.map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, scale, ...f }) => {
       const cited = new Set(urls);
       const checked = checkToCopy(barriers);
       if (checked.lowered) toCopyLowered++;
@@ -697,6 +744,7 @@ export async function ideate(
         barriers: checked.barriers,
         valueToUser: ground(valueToUser, 400, known, library.prefixes),
         priceHint: ground(priceHint, 300, known, library.prefixes),
+        scale: ground(scale, 300, known, library.prefixes),
         // Only library entries this lens was shown; invented ids are not stored.
         libraryItemIds: [...new Set(libraryItemIds.filter((id) => library.ids.has(id)))],
         signalIds: passed.filter((s) => cited.has(s.url)).map((s) => s.id),

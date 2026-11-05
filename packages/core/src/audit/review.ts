@@ -91,7 +91,7 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
 
   const todo = pass.runIds.length === 0 ? [] : await db.select({
     id: ideas.id, title: ideas.title, oneLiner: ideas.oneLiner, buyer: ideas.buyer, problem: ideas.problem, solution: ideas.solution,
-    knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap,
+    knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap, edge: ideas.edge, scale: ideas.scale,
   })
     .from(ideas)
     .innerJoin(runs, eq(runs.id, ideas.runId))

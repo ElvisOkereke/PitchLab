@@ -84,6 +84,20 @@ describe('reviewPassIdeas', () => {
     expect(prompt).not.toMatch(/owner/i);
   });
 
+  it("shows the reviewer an idea's edge and scale (ideate.v12) when it has them", async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await insertIdea(db, r.id, {
+      edge: { kind: 'speed', claim: 'Same-day quotes', versus: 'Two-week manual quotes', whyNow: 'Parts prices are public now' },
+      scale: { buyers: '12,000 machine shops', basis: 'Assumption: census count' },
+    });
+    const [p] = await db.insert(benchmarkPasses).values({ version: 'bench-v2', label: 'p', kind: 'pass', status: 'complete', runIds: [r.id] }).returning();
+    const router = echoRouter();
+    await reviewPassIdeas({ db, router, ...quiet }, p!.id);
+    expect(router.prompts[0]!).toContain("Edge (the idea's own unverified claim): speed: Same-day quotes. Versus today's option: Two-week manual quotes.");
+    expect(router.prompts[0]!).toContain("Scale (the idea's own unverified claim): 12,000 machine shops. Basis: Assumption: census count");
+  });
+
   it('reviews only generated ideas of the pass runs', async () => {
     const db = await testDb();
     const { passId, runIds } = await passWith(db, [2]);

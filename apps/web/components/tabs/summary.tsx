@@ -108,6 +108,26 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
             </dd>
           </div>
         ))}
+        {view.edge ? (
+          <div>
+            <dt>Idea&apos;s edge</dt>
+            <dd>
+              <TextBlock text={`${view.edge.kind.replace(/_/g, ' ')}: ${view.edge.claim}`} />
+              <TextBlock text={`Versus today's option: ${view.edge.versus}`} />
+              <TextBlock text={`Why now: ${view.edge.whyNow}`} />
+            </dd>
+          </div>
+        ) : null}
+        {view.scale ? (
+          <div>
+            <dt>Idea&apos;s scale</dt>
+            <dd>
+              <TextBlock text={view.scale.buyers} />
+              <TextBlock text={`Basis: ${view.scale.basis}`} />
+              <ValueSource source={view.scale.source} />
+            </dd>
+          </div>
+        ) : null}
         {view.lensName ? (
           <div>
             <dt>Lens</dt>
