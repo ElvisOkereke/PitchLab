@@ -4,7 +4,7 @@ import { eq, sql } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { llmCalls, runs } from '../db/schema';
 import type { Env } from '../config/env';
-import { DEFAULT_MODELS, adapterFor, isModelStage, validateModelConfig, type ModelStage } from '../config/models';
+import { adapterFor, isModelStage, resolveModelConfig, validateModelConfig, type ModelStage } from '../config/models';
 import { costOf, type Usage } from '../config/prices';
 import { createAnthropicAdapter } from './anthropic';
 import { createOpenAIAdapter } from './openai';
@@ -161,7 +161,7 @@ export function createRouter(opts: {
 export function buildRouter(env: Env, db: Db): ModelRouter {
   const unknown = Object.keys(env.MODEL_OVERRIDES).filter((k) => !isModelStage(k));
   if (unknown.length) throw new Error(`MODEL_OVERRIDES has unknown stage(s): ${unknown.join(', ')}`);
-  const models = { ...DEFAULT_MODELS, ...env.MODEL_OVERRIDES } as Record<ModelStage, string>;
+  const models = resolveModelConfig(env.MODEL_OVERRIDES);
   validateModelConfig(models);
   return createRouter({
     adapters: {

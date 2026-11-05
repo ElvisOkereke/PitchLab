@@ -71,7 +71,12 @@ export type CliHandlers = {
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
   research(topic: string, opts: ResearchCliOpts): Promise<number>;
   researchStatus(): Promise<number>;
+  auditReview(passId: string | undefined, opts: AuditReviewOpts): Promise<number>;
 };
+
+export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
+
+const PASS_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type ResearchCliOpts = { kinds?: string[]; countries?: string[]; audience?: 'business' | 'consumer' | 'both'; budget?: number };
 
@@ -275,6 +280,18 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--recompute', "freeze a new snapshot of that pass with today's data first")
     .action(async (passId: string | undefined, opts: { recompute?: boolean }) => {
       process.exitCode = await h.benchReport(passId, opts);
+    });
+
+  const auditCmd = program.command('audit').description('Audit idea quality on a benchmark pass');
+  auditCmd.command('review')
+    .description("Review a pass's generated ideas for scale, edge, novelty and niche (costs model calls, about 1–2 cents an idea; only ideas without a review are sent)")
+    .argument('[passId]', 'a pass id')
+    .option('--last', 'the newest benchmark pass')
+    .option('--dry-run', 'show how many ideas would be reviewed and the estimated cost, without calling the model')
+    .action(async (passId: string | undefined, opts: AuditReviewOpts) => {
+      if ((passId === undefined) === !opts.last) throw new CliError('Give a pass id or --last (not both).', 2);
+      if (passId !== undefined && !PASS_ID_RE.test(passId)) throw new CliError(`That is not a pass id: ${passId}`, 2);
+      process.exitCode = await h.auditReview(passId, opts);
     });
 
   return program;

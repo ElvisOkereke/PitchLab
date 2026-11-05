@@ -45,12 +45,13 @@ describe('bench definitions', () => {
     }
   });
 
-  it('METRIC_DEFS has 14 unique ids in order', () => {
+  it('METRIC_DEFS has 18 unique ids in order', () => {
     expect(METRIC_DEFS.map((m) => m.id)).toEqual([
       'repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed',
-      'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'costPerCase',
+      'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes',
+      'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase',
     ]);
-    expect(new Set(METRIC_DEFS.map((m) => m.id)).size).toBe(14);
+    expect(new Set(METRIC_DEFS.map((m) => m.id)).size).toBe(18);
     const phased = Object.fromEntries(METRIC_DEFS.filter((m) => m.phase).map((m) => [m.id, m.phase]));
     expect(phased).toEqual({});
   });

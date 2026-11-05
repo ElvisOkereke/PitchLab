@@ -207,7 +207,8 @@ describe('runWorker', () => {
     expect((await statusOf(db, newer)).status).toBe('queued');
     const hb = await readWorkerStatus(db);
     expect(hb).toMatchObject({ providers: { llm: true, github: true, stackexchange: false, places: false, producthunt: false, youtube: false, browser: false } });
-    expect(hb!.models).toEqual({ ...DEFAULT_MODELS, score: 'gemini-x' });
+    // The review stage follows the score override (it has none of its own).
+    expect(hb!.models).toEqual({ ...DEFAULT_MODELS, score: 'gemini-x', review: 'gemini-x' });
     expect(JSON.stringify(hb)).not.toContain('test-key-value');
     expect(JSON.stringify(hb)).not.toContain('gh-secret-value');
   });

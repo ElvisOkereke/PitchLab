@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { ideas, lenses, markets, signals } from '../db/schema';
+import { ideaReviews, ideas, lenses, markets, signals } from '../db/schema';
 import { CONSUMER_SEGMENTS } from '../db/seed';
 import { ideationContext, renderIdeationContext } from '../library/context';
 import { loadPrompt } from '../llm/prompts';
@@ -253,10 +253,12 @@ type LensRow = typeof lenses.$inferSelect;
 
 /**
  * Idempotent per run (R20): in one transaction, drop any ideas an earlier attempt left for this run and insert
- * the new set. Safe because no later stage can have run while ideate is not done.
+ * the new set. Safe because no later stage can have run while ideate is not done. Reviews of the dropped ideas go
+ * with them (idea_reviews has no cascade), so a review never outlives its idea or lands on a different one.
  */
 async function replaceRunIdeas(db: Db, runId: string, values: IdeaInsert[]): Promise<string[]> {
   return db.transaction(async (tx) => {
+    await tx.delete(ideaReviews).where(inArray(ideaReviews.ideaId, tx.select({ id: ideas.id }).from(ideas).where(eq(ideas.runId, runId))));
     await tx.delete(ideas).where(eq(ideas.runId, runId));
     if (values.length === 0) return [];
     const inserted = await tx.insert(ideas).values(values).returning({ id: ideas.id });

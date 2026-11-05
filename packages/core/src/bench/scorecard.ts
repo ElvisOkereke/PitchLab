@@ -3,8 +3,8 @@
 import { and, count, countDistinct, desc, eq, inArray, isNotNull, lt, min, ne, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client';
-import { cases, dataCalls, gateVerdicts, ideas, knowledgeItems, llmCalls, runs, scores, signals } from '../db/schema';
-import { METRIC_DEFS, type MetricId } from './definitions';
+import { cases, dataCalls, gateVerdicts, ideaReviews, ideas, knowledgeItems, llmCalls, runs, scores, signals } from '../db/schema';
+import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from './definitions';
 
 /**
  * One scorecard row. Share metrics (near-duplicates, real need, customer return, margin, wasted entrants) hold a
@@ -49,6 +49,18 @@ const MODEL_VARIETY_TARGET = 4;
 const EASY_START_TARGET = 0.5;
 const EASY_START_MAX = 2;
 const HARD_COPY_MIN = 4;
+const MEDIAN_REVIEW_TARGET = 3.5;
+const NICHE_SHARE_TARGET = 0.3;
+/** Niche when the reviewer's niche is at least this, or its scale at most SMALL_SCALE_MAX. */
+const NICHE_MIN = 4;
+const SMALL_SCALE_MAX = 2;
+/** The reviewer likes an idea at edge >= 4 and scale >= 3, and dislikes it at edge <= 2 or scale <= 2. */
+const LIKED_EDGE_MIN = 4;
+const LIKED_SCALE_MIN = 3;
+const DISLIKED_EDGE_MAX = 2;
+const DISLIKED_SCALE_MAX = 2;
+const AGREEMENT_TARGET = 0.7;
+const AGREEMENT_MIN_RATED = 10;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -151,12 +163,15 @@ type Data = {
   modelCounts: number[];
   gut: number[];
   likes: { rated: number; liked: number; tags: { tag: string; n: number }[] };
+  /** Reviews under the current prompt version: count, medians, niche count, owner-rated (±1) and agreeing counts. */
+  review: { n: number; medianEdge: number | null; medianScale: number | null; niche: number; rated: number; agree: number };
   entrants: { total: number; wasted: number };
   cost: number;
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] }, entrants: { total: 0, wasted: 0 }, cost: 0,
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
+  review: { n: 0, medianEdge: null, medianScale: null, niche: 0, rated: 0, agree: 0 }, entrants: { total: 0, wasted: 0 }, cost: 0,
 });
 
 function extraOf(d: Data, runCount: number): Scorecard['extra'] {
@@ -192,7 +207,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const within = await nearestSims(db, embedded.ids, embedded.ids);
   const history = await nearestSims(db, embedded.ids, historyIds.ids);
 
-  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow]] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
     db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
@@ -235,6 +250,16 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       liked: sql<number>`(count(*) filter (where ${ideas.ownerRating} = 1))::int`,
     }).from(ideas).where(and(generated, inArray(ideas.ownerRating, [-1, 1]))),
     db.select({ tags: ideas.ownerTags }).from(ideas).where(and(generated, isNotNull(ideas.ownerRating), isNotNull(ideas.ownerTags))),
+    // Reviews of the current prompt version only; reviews go with ideas a re-run replaced (ideate deletes them).
+    db.select({
+      n: sql<number>`count(*)::int`,
+      medianEdge: sql<number | null>`percentile_cont(0.5) within group (order by ${ideaReviews.edge})`,
+      medianScale: sql<number | null>`percentile_cont(0.5) within group (order by ${ideaReviews.scale})`,
+      niche: sql<number>`(count(*) filter (where ${ideaReviews.niche} >= ${NICHE_MIN} or ${ideaReviews.scale} <= ${SMALL_SCALE_MAX}))::int`,
+      rated: sql<number>`(count(*) filter (where ${inArray(ideas.ownerRating, [-1, 1])}))::int`,
+      agree: sql<number>`(count(*) filter (where (${ideas.ownerRating} = 1 and ${ideaReviews.edge} >= ${LIKED_EDGE_MIN} and ${ideaReviews.scale} >= ${LIKED_SCALE_MIN})
+        or (${ideas.ownerRating} = -1 and (${ideaReviews.edge} <= ${DISLIKED_EDGE_MAX} or ${ideaReviews.scale} <= ${DISLIKED_SCALE_MAX}))))::int`,
+    }).from(ideaReviews).innerJoin(ideas, eq(ideas.id, ideaReviews.ideaId)).where(and(generated, eq(ideaReviews.promptVersion, IDEA_REVIEW_VERSION))),
   ]);
 
   const caseIds = caseRows.map((c) => c.id);
@@ -279,6 +304,14 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     }),
     gut: gutRows.map((g) => g.value),
     likes: { rated: Number(likeRow?.rated ?? 0), liked: Number(likeRow?.liked ?? 0), tags: topTags(tagRows.flatMap((t) => t.tags ?? [])) },
+    review: {
+      n: Number(reviewRow?.n ?? 0),
+      medianEdge: num(reviewRow?.medianEdge),
+      medianScale: num(reviewRow?.medianScale),
+      niche: Number(reviewRow?.niche ?? 0),
+      rated: Number(reviewRow?.rated ?? 0),
+      agree: Number(reviewRow?.agree ?? 0),
+    },
     entrants: { total: Number(entrantRow?.total ?? 0), wasted: Number(entrantRow?.wasted ?? 0) },
     cost: Number(llm?.sum ?? 0) + Number(dat?.sum ?? 0),
   };
@@ -287,6 +320,10 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
 function buildMetrics(d: Data): MetricResult[] {
   const NEED_EMBEDDINGS = 'Needs at least 2 generated ideas with embeddings.';
   const NO_CASES = 'No cases in this set.';
+  const NOT_REVIEWED = "Review this pass's ideas (gen audit review) to fill this in.";
+  const r = d.review;
+  const medianRow = (v: number | null): Row => (r.n === 0 || v === null ? noData(NOT_REVIEWED, 'not reviewed yet')
+    : measured(v, `${v.toFixed(1)} (${r.n} reviewed)`, v >= MEDIAN_REVIEW_TARGET));
   const share = (k: number, n: number, meets: (v: number) => boolean, suffix = ''): Row =>
     measured(k / n, `${pctText(k, n, meets)} (${k} of ${n})${suffix}`, meets(k / n));
   const nCases = d.caseRows.length;
@@ -342,6 +379,13 @@ function buildMetrics(d: Data): MetricResult[] {
         const tags = d.likes.tags.map((t) => `${t.tag} ×${t.n}`).join(', ');
         return tags ? { ...base, display: `${base.display} · top tags: ${tags}` } : base;
       })(),
+    medianEdge: medianRow(r.medianEdge),
+    medianScale: medianRow(r.medianScale),
+    nicheShare: r.n === 0 ? noData(NOT_REVIEWED, 'not reviewed yet') : share(r.niche, r.n, (v) => v <= NICHE_SHARE_TARGET),
+    reviewerAgreement: r.n === 0 ? noData(NOT_REVIEWED, 'not reviewed yet')
+      : r.rated < AGREEMENT_MIN_RATED
+        ? noData(`${r.rated} of ${AGREEMENT_MIN_RATED} rated ideas reviewed so far; rate and review more ideas to fill this in.`, 'not enough ratings yet')
+        : share(r.agree, r.rated, (v) => v >= AGREEMENT_TARGET),
     costPerCase: nCases === 0 ? noData(NO_CASES) : (() => {
       const v = d.cost / nCases;
       return measured(v, `$${v.toFixed(2)}`, null);

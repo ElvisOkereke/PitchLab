@@ -8,6 +8,7 @@ function handlers() {
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
+    auditReview: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -133,6 +134,23 @@ describe('gen bench', () => {
     expect((await parse(['bench', 'run'])).benchRun).toHaveBeenCalledWith();
     expect((await parse(['bench', 'report', 'abc', '--recompute'])).benchReport).toHaveBeenCalledWith('abc', { recompute: true });
     expect((await parse(['bench', 'report'])).benchReport).toHaveBeenCalledWith(undefined, {});
+  });
+});
+
+describe('gen audit review', () => {
+  const id = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  it('takes a pass id or --last, plus --dry-run', async () => {
+    expect((await parse(['audit', 'review', id])).auditReview).toHaveBeenCalledWith(id, {});
+    expect((await parse(['audit', 'review', '--last'])).auditReview).toHaveBeenCalledWith(undefined, { last: true });
+    expect((await parse(['audit', 'review', id, '--dry-run'])).auditReview).toHaveBeenCalledWith(id, { dryRun: true });
+    expect((await parse(['audit', 'review', '--last', '--dry-run'])).auditReview).toHaveBeenCalledWith(undefined, { last: true, dryRun: true });
+  });
+
+  it('needs exactly one of a pass id and --last, and a well-formed id', async () => {
+    await expect(parse(['audit', 'review'])).rejects.toThrow(/pass id or --last/);
+    await expect(parse(['audit', 'review', id, '--last'])).rejects.toThrow(/pass id or --last/);
+    await expect(parse(['audit', 'review', 'abc'])).rejects.toThrow(/not a pass id/);
+    await expect(parse(['audit', 'review', 'abc'])).rejects.toBeInstanceOf(CliError);
   });
 });
 

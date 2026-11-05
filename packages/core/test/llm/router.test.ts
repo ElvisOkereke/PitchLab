@@ -220,6 +220,15 @@ describe('buildRouter', () => {
     expect(r.modelFor('extract')).toBe('claude-haiku-5-5');
   });
 
+  it('the review stage follows a score override, and can be overridden on its own', async () => {
+    const db = await testDb();
+    const followed = buildRouter(loadEnv({ ...base, MODEL_OVERRIDES: '{"score":"gpt-6-sol"}' }), db);
+    expect(followed.modelFor('review')).toBe('gpt-6-sol');
+    const own = buildRouter(loadEnv({ ...base, MODEL_OVERRIDES: '{"review":"gpt-6-sol"}' }), db);
+    expect(own.modelFor('review')).toBe('gpt-6-sol');
+    expect(own.modelFor('score')).toBe(DEFAULT_MODELS.score);
+  });
+
   it('rejects unknown override keys', async () => {
     const db = await testDb();
     expect(() => buildRouter(loadEnv({ ...base, MODEL_OVERRIDES: '{"scren":"x"}' }), db)).toThrow(/scren/);

@@ -4,8 +4,9 @@ import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizz
 import { caseToMarkdown } from './case/export-markdown';
 import {
   CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
-  type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  type AuditReviewOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
+import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
 import { scrubError } from './tools/scrub';
 import { BENCHMARKS, CURRENT_BENCHMARK } from './bench/definitions';
@@ -561,6 +562,38 @@ async function benchReportCommand(passId: string | undefined, opts: { recompute?
   });
 }
 
+// ---- Audit -------------------------------------------------------------------------------------------
+
+/** `gen audit review`: reviews a pass's generated ideas that lack a review, then prints reviewed, skipped and cost. */
+async function auditReviewCommand(passId: string | undefined, opts: AuditReviewOpts): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const id = passId ?? await newestPassId(db);
+    if (!id) throw new CliError('No benchmark passes yet. Queue one first: npm run gen -- bench run', 1);
+    const started = new Date();
+    let res;
+    try {
+      res = await reviewPassIdeas({ db, router: buildRouter(env, db), log: out }, id, { dryRun: opts.dryRun });
+    } catch (err) {
+      if (err instanceof ReviewRefusal) throw new CliError(err.message, 1);
+      throw err;
+    }
+    if (opts.dryRun) {
+      out('Dry run: no model calls were made and nothing was saved.');
+      return 0;
+    }
+    const [spent] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
+      .where(and(eq(llmCalls.stage, 'review'), isNull(llmCalls.runId), gte(llmCalls.createdAt, started)));
+    out(`Pass ${id}: reviewed ${res.reviewed}, skipped ${res.skipped}, cost $${Number(spent?.total ?? 0).toFixed(4)} (estimated $${res.estimatedUsd.toFixed(2)}).`);
+    if (res.reviewed > 0) out(`See the reviewer metrics: npm run gen -- bench report ${id} --recompute`);
+    return 0;
+  } finally {
+    await closeDb(db);
+  }
+}
+
 const program = buildProgram({
   run: (opts: RunOpts) => execute(null, configFrom(opts)),
   resume: async (runId: string) => {
@@ -581,6 +614,7 @@ const program = buildProgram({
   benchBaseline: benchBaselineCommand,
   benchRun: benchRunCommand,
   benchReport: benchReportCommand,
+  auditReview: auditReviewCommand,
 });
 
 try {

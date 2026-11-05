@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { CONSUMER_LENSES, CONSUMER_SEGMENTS } from '../../src/db/seed';
-import { gateVerdicts, ideas, lenses, signals } from '../../src/db/schema';
+import { eq } from 'drizzle-orm';
+import { gateVerdicts, ideaReviews, ideas, lenses, signals } from '../../src/db/schema';
 import { computeScorecard } from '../../src/bench/scorecard';
 import { rateIdea } from '../../src/dashboard/idea-ratings';
 import { upsertKnowledgeItem } from '../../src/library/store';
@@ -122,6 +123,24 @@ describe('ideate', () => {
     expect(second.every((i) => i.ownerRating === null && i.ownerTags === null && i.ownerRatedAt === null)).toBe(true);
     const sc = await computeScorecard(t.db, [t.run.id]);
     expect(sc.metrics.find((m) => m.id === 'ownerLikes')).toMatchObject({ status: 'no_data', value: null });
+  });
+
+  it('reviews go with replaced ideas: a re-run succeeds and leaves no orphan reviews (R20)', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2', 'tl3'], ideaCount: 3 });
+    const t = await setup(config, { structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    await t.db.insert(lenses).values(['tl1', 'tl2', 'tl3'].map((id) => ({ id, name: id, pattern: 'p', promptHint: 'h' })));
+    await ideate(t.deps, t.run, { signalIds: [] });
+    const first = await t.db.select().from(ideas);
+    // Another run's idea and review must survive.
+    const other = await insertRun(t.db, config);
+    const keep = await insertIdea(t.db, other.id);
+    const rev = (ideaId: string, promptVersion: string) => ({ ideaId, scale: 3, edge: 3, novelty: 3, niche: 3, reasons: {}, model: 'm', promptVersion });
+    await t.db.insert(ideaReviews).values([rev(first[0]!.id, 'idea-review.v1'), rev(first[0]!.id, 'idea-review.v0'), rev(first[1]!.id, 'idea-review.v1'), rev(keep.id, 'idea-review.v1')]);
+    const router = fakeRouter({ structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    await ideate({ ...t.deps, router }, t.run, { signalIds: [] });
+    expect(await t.db.select().from(ideas).where(eq(ideas.runId, t.run.id))).toHaveLength(3);
+    const left = await t.db.select().from(ideaReviews);
+    expect(left.map((r) => r.ideaId)).toEqual([keep.id]);
   });
 
   it('owner seed re-run replaces the owner idea instead of duplicating it', async () => {

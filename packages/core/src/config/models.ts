@@ -4,6 +4,8 @@ export const MODEL_STAGES = [
   'pack', 'prospect', 'outreach', 'landing',
   // Research library (Slice A)
   'research', 'library_extract',
+  // Idea reviewer (gen audit review), outside the run pipeline
+  'review',
 ] as const;
 
 export type ModelStage = (typeof MODEL_STAGES)[number];
@@ -27,7 +29,11 @@ export const DEFAULT_MODELS: Record<ModelStage, string> = {
   landing: 'claude-sonnet-5-5',
   research: 'claude-sonnet-5-5',
   library_extract: 'claude-haiku-5-5',
+  review: 'gemini-3.1-pro',
 };
+
+/** A stage without its own override takes the override of the stage it follows (review follows score). */
+const FOLLOWS: Partial<Record<ModelStage, ModelStage>> = { review: 'score' };
 
 /**
  * Claude models seen rejecting forced tool_choice (`tool`/`any`) with a 400 on the live run (2026-10-17):
@@ -54,9 +60,18 @@ export function adapterFor(model: string): 'anthropic' | 'openai' {
   return family(model) === 'claude' ? 'anthropic' : 'openai';
 }
 
+/** The model per stage: the defaults plus `overrides` (unknown keys ignored), with followed stages applied. */
+export function resolveModelConfig(overrides: Record<string, string>): Record<ModelStage, string> {
+  const own = (s: ModelStage): string | undefined => (Object.hasOwn(overrides, s) ? overrides[s] : undefined);
+  return Object.fromEntries(MODEL_STAGES.map((s) => {
+    const followed = FOLLOWS[s];
+    return [s, own(s) ?? (followed ? own(followed) : undefined) ?? DEFAULT_MODELS[s]];
+  })) as Record<ModelStage, string>;
+}
+
 export function validateModelConfig(m: Record<ModelStage, string>): void {
   const ideation = family(m.ideate);
-  for (const stage of ['gate', 'score'] as const) {
+  for (const stage of ['gate', 'score', 'review'] as const) {
     if (family(m[stage]) === ideation) {
       throw new Error(`Model config: ${stage} model (${m[stage]}) must be a different family from ideate (${m.ideate})`);
     }

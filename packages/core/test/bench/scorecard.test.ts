@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import type { CaseSections } from '../../src/case/schema';
-import { dataCalls, gateVerdicts, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
-import { METRIC_DEFS, type MetricId } from '../../src/bench/definitions';
+import { dataCalls, gateVerdicts, ideaReviews, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
+import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from '../../src/bench/definitions';
 import { computeScorecard, type MetricResult, type Scorecard } from '../../src/bench/scorecard';
 import { ensureExample } from '../../src/example/example';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -471,5 +471,95 @@ describe('computeScorecard: consumer, model and barrier metrics', () => {
       await insertIdea(db, r, { libraryItemIds: [] });
       expect(metric(await computeScorecard(db, [r]), 'demandEvidence')).toMatchObject({ value: 0.8, meets: true });
     });
+  });
+});
+
+/** A generated idea with a review under the current prompt version (or `promptVersion`). */
+const reviewed = async (
+  db: Db, runId: string, r: { scale: number; edge: number; niche?: number; novelty?: number }, idea: Partial<Parameters<typeof insertIdea>[2]> = {}, promptVersion = IDEA_REVIEW_VERSION,
+) => {
+  const row = await insertIdea(db, runId, idea);
+  await db.insert(ideaReviews).values({
+    ideaId: row.id, scale: r.scale, edge: r.edge, novelty: r.novelty ?? 3, niche: r.niche ?? 2, reasons: {}, model: 'm', promptVersion,
+  });
+  return row;
+};
+
+describe('computeScorecard: reviewer metrics', () => {
+  it('no reviews: every reviewer metric is no_data', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r, { ownerRating: 1 });
+    const sc = await computeScorecard(db, [r]);
+    for (const id of ['medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement'] as const) {
+      expect(metric(sc, id)).toMatchObject({ value: null, meets: null, status: 'no_data' });
+      expect(metric(sc, id).note).toBeTruthy();
+    }
+  });
+
+  it('medians of edge and scale over reviewed generated ideas, meeting at 3.5', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await reviewed(db, r, { scale: 3, edge: 4 });
+    await reviewed(db, r, { scale: 4, edge: 3 });
+    await reviewed(db, r, { scale: 5, edge: 5 });
+    await reviewed(db, r, { scale: 2, edge: 2 });
+    await reviewed(db, r, { scale: 1, edge: 1 }, { origin: 'owner' }); // owner idea: left out
+    await reviewed(db, r, { scale: 1, edge: 1 }, {}, 'idea-review.v0'); // older prompt version: left out
+    await insertIdea(db, r); // not reviewed
+    const sc = await computeScorecard(db, [r]);
+    expect(metric(sc, 'medianEdge')).toMatchObject({ value: 3.5, meets: true, status: 'measured' });
+    expect(metric(sc, 'medianEdge').display).toBe('3.5 (4 reviewed)');
+    expect(metric(sc, 'medianScale')).toMatchObject({ value: 3.5, meets: true });
+    await reviewed(db, r, { scale: 3, edge: 3 });
+    const sc2 = await computeScorecard(db, [r]);
+    expect(metric(sc2, 'medianEdge')).toMatchObject({ value: 3, meets: false, display: '3.0 (5 reviewed)' });
+    expect(metric(sc2, 'medianScale')).toMatchObject({ value: 3, meets: false });
+  });
+
+  it('niche share counts niche >= 4 or scale <= 2, meeting at 30% or less', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await reviewed(db, r, { scale: 4, edge: 4, niche: 4 }); // niche
+    await reviewed(db, r, { scale: 2, edge: 4, niche: 1 }); // small scale
+    for (let i = 0; i < 4; i++) await reviewed(db, r, { scale: 3, edge: 3, niche: 3 });
+    const m = metric(await computeScorecard(db, [r]), 'nicheShare');
+    expect(m.value).toBeCloseTo(2 / 6, 6);
+    expect(m.meets).toBe(false);
+    expect(m.display).toBe('33% (2 of 6)');
+    await reviewed(db, r, { scale: 3, edge: 3, niche: 3 });
+    await reviewed(db, r, { scale: 3, edge: 3, niche: 3 });
+    expect(metric(await computeScorecard(db, [r]), 'nicheShare')).toMatchObject({ value: 0.25, meets: true });
+  });
+
+  it('reviewer agreement: no_data under 10 rated reviewed ideas; neither verdict is a miss; meets at 70%', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    // 6 agreeing: liked +1 (edge >= 4 and scale >= 3), disliked -1 (edge <= 2 or scale <= 2).
+    for (let i = 0; i < 3; i++) await reviewed(db, r, { scale: 3, edge: 4 }, { ownerRating: 1 });
+    await reviewed(db, r, { scale: 4, edge: 2 }, { ownerRating: -1 });
+    await reviewed(db, r, { scale: 2, edge: 5 }, { ownerRating: -1 });
+    await reviewed(db, r, { scale: 1, edge: 1 }, { ownerRating: -1 });
+    // 2 neither (edge 3, scale 3): misses whichever way the owner rated.
+    await reviewed(db, r, { scale: 3, edge: 3 }, { ownerRating: 1 });
+    await reviewed(db, r, { scale: 3, edge: 3 }, { ownerRating: -1 });
+    // 1 disagreeing.
+    await reviewed(db, r, { scale: 5, edge: 5 }, { ownerRating: -1 });
+    // Left out: neutral rating, rated but not reviewed, unrated but reviewed.
+    await reviewed(db, r, { scale: 5, edge: 5 }, { ownerRating: 0 });
+    await insertIdea(db, r, { ownerRating: 1 });
+    await reviewed(db, r, { scale: 5, edge: 5 });
+    const nine = metric(await computeScorecard(db, [r]), 'reviewerAgreement');
+    expect(nine).toMatchObject({ value: null, meets: null, status: 'no_data' });
+    expect(nine.note).toMatch(/9 of 10/);
+
+    // Tenth: agreeing, so 7 of 10 = 70% meets.
+    await reviewed(db, r, { scale: 4, edge: 4 }, { ownerRating: 1 });
+    const ten = metric(await computeScorecard(db, [r]), 'reviewerAgreement');
+    expect(ten).toMatchObject({ value: 0.7, meets: true, status: 'measured', display: '70% (7 of 10)' });
+
+    // Eleventh: disagreeing, so 7 of 11 misses.
+    await reviewed(db, r, { scale: 4, edge: 4 }, { ownerRating: -1 });
+    expect(metric(await computeScorecard(db, [r]), 'reviewerAgreement')).toMatchObject({ meets: false, display: '64% (7 of 11)' });
   });
 });

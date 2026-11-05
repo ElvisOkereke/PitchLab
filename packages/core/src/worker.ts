@@ -1,6 +1,6 @@
 import { and, asc, eq, lt, sql } from 'drizzle-orm';
 import type { Env } from './config/env';
-import { DEFAULT_MODELS, MODEL_STAGES, isModelStage, type ModelStage } from './config/models';
+import { resolveModelConfig, type ModelStage } from './config/models';
 import type { Db } from './db/client';
 import { maybeQueueBackgroundMission, STALE_MISSION_MS } from './dashboard/missions';
 import { researchMissions, runs, validationJobs } from './db/schema';
@@ -65,8 +65,7 @@ export async function claimNextMission(db: Db): Promise<string | null> {
 
 /** The model per stage the worker will use (defaults plus MODEL_OVERRIDES), as buildRouter resolves them. */
 export function resolveModels(env: Env): Record<ModelStage, string> {
-  const overrides = Object.fromEntries(Object.entries(env.MODEL_OVERRIDES).filter(([k]) => isModelStage(k)));
-  return Object.fromEntries(MODEL_STAGES.map((s) => [s, overrides[s] ?? DEFAULT_MODELS[s]])) as Record<ModelStage, string>;
+  return resolveModelConfig(env.MODEL_OVERRIDES);
 }
 
 /** The heartbeat the dashboard shows: which keys are set (booleans, never values) and the resolved models. */

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { DEFAULT_MODELS, MODEL_STAGES, adapterFor, family, validateModelConfig } from '../../src/config/models';
+import { DEFAULT_MODELS, MODEL_STAGES, adapterFor, family, resolveModelConfig, validateModelConfig } from '../../src/config/models';
 import { costOf } from '../../src/config/prices';
 
 describe('model config', () => {
@@ -13,6 +13,20 @@ describe('model config', () => {
 
   it('rejects same-family score and ideation', () => {
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, score: 'claude-haiku-5-5' })).toThrow(/score/);
+  });
+
+  it('has a review stage on the score model by default, a different family from ideate', () => {
+    expect(MODEL_STAGES).toContain('review');
+    expect(DEFAULT_MODELS.review).toBe(DEFAULT_MODELS.score);
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, review: 'claude-sonnet-5-5' })).toThrow(/review/);
+  });
+
+  it('review follows a score override unless it has its own', () => {
+    expect(resolveModelConfig({})).toEqual(DEFAULT_MODELS);
+    expect(resolveModelConfig({ score: 'gpt-6-sol' })).toMatchObject({ score: 'gpt-6-sol', review: 'gpt-6-sol' });
+    expect(resolveModelConfig({ score: 'gpt-6-sol', review: 'gemini-3.1-pro' })).toMatchObject({ score: 'gpt-6-sol', review: 'gemini-3.1-pro' });
+    expect(resolveModelConfig({ review: 'gpt-6-sol' })).toMatchObject({ score: DEFAULT_MODELS.score, review: 'gpt-6-sol' });
+    expect(resolveModelConfig({ bogus: 'x' } as Record<string, string>)).toEqual(DEFAULT_MODELS);
   });
 
   it('rejects a non-claude research stage', () => {
