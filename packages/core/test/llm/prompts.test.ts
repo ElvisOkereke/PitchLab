@@ -7,7 +7,7 @@ const AUDIENCE = extractAudienceVars('business');
 describe('loadPrompt', () => {
   it('loads latest version and renders vars', () => {
     const p = loadPrompt('extract-signals');
-    expect(p.version).toBe('extract-signals.v4');
+    expect(p.version).toBe('extract-signals.v5');
     expect(() => p.render({})).toThrow(/items/);
     expect(p.render({ ...AUDIENCE, countries: 'CA, US', items: 'X' })).toContain('CA, US');
   });
@@ -18,7 +18,7 @@ describe('loadPrompt', () => {
   });
   it('latest versions after the generation rebuild', () => {
     expect(['ideate', 'gate', 'screen', 'extract-signals', 'harvest-research'].map((n) => loadPrompt(n).version))
-      .toEqual(['ideate.v11', 'gate.v4', 'screen.v4', 'extract-signals.v4', 'harvest-research.v6']);
+      .toEqual(['ideate.v11', 'gate.v4', 'screen.v4', 'extract-signals.v5', 'harvest-research.v7']);
   });
   it('normalises CRLF line endings (Windows checkouts with core.autocrlf)', () => {
     expect(loadPrompt('extract-signals').render({ ...AUDIENCE, countries: 'CA, US', items: 'X' })).not.toContain('\r');
