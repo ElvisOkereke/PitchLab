@@ -5,6 +5,7 @@ import { checkLabel } from '@/lib/gate';
 import { STAGE_LABEL } from '@/lib/stages';
 import { ExampleBadge } from './example-badge';
 import { HelpTip } from './help-tip';
+import { RunOriginLine } from './run-origin';
 import { StageMoveForm } from './stage-move-form';
 
 /** The guided tour's anchors on the tab links. */
@@ -38,6 +39,7 @@ export function CaseHeader({ view, tab, notice }: { view: CaseView; tab: CaseTab
       {c.isExample ? (
         <p className="muted">This is a built-in example with made-up businesses. Practise freely; Settings can reset or hide it.</p>
       ) : null}
+      <RunOriginLine origin={view.origin} />
       {notice ? (
         <p className="notice card" role="status">
           {CASE_NOTICES[notice]}

@@ -1,6 +1,7 @@
 import { and, count, countDistinct, desc, eq, gte, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
-import { caseStage, cases, gateVerdicts, ideas, outreachEvents, prospects, scores, type CaseStage } from '../db/schema';
+import { benchmarkPasses, caseStage, cases, gateVerdicts, ideas, outreachEvents, prospects, runs, scores, type CaseStage } from '../db/schema';
+import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
 
 /** Most cards shown per stage column (counts are not limited). */
 export const BOARD_LIMIT = 200;
@@ -17,6 +18,8 @@ export type BoardCard = {
   ownerScore: number | null;
   metric: string;
   updatedAt: Date;
+  /** The run (and benchmark pass) the case came from; null for the example. Optional for older callers. */
+  origin?: RunOrigin | null;
 };
 
 export type BoardFilters = { lensId?: string; minAi?: number };
@@ -65,9 +68,12 @@ export async function listBoard(db: Db, f: BoardFilters): Promise<{ columns: Rec
     db.select({
       id: cases.id, slug: cases.slug, title: cases.title, stage: cases.stage, isExample: cases.isExample, updatedAt: cases.updatedAt,
       aiScore: means.ai, ownerScore: means.owner, roi,
+      runId: runs.id, runCreatedAt: runs.createdAt, runIsExample: runs.isExample, seed: runSeedSql, passLabel: benchmarkPasses.label,
     })
       .from(cases)
       .innerJoin(ideas, eq(ideas.id, cases.ideaId))
+      .leftJoin(runs, eq(runs.id, ideas.runId))
+      .leftJoin(benchmarkPasses, eq(benchmarkPasses.id, runs.benchmarkPassId))
       .leftJoin(means, eq(means.caseId, cases.id))
       .where(and(eq(cases.stage, stage), ...filters))
       .orderBy(desc(cases.updatedAt), cases.slug)
@@ -96,6 +102,7 @@ export async function listBoard(db: Db, f: BoardFilters): Promise<{ columns: Rec
     id: r.id, slug: r.slug, title: r.title, stage: r.stage, isExample: r.isExample, updatedAt: r.updatedAt,
     aiScore: r.aiScore ?? null, ownerScore: r.ownerScore ?? null,
     metric: keyMetric({ roiMultiple: r.roi ?? null, outreach: outreachOf.get(r.id) }),
+    origin: toRunOrigin({ runId: r.runId, createdAt: r.runCreatedAt, seed: r.seed, passLabel: r.passLabel, isExample: r.runIsExample }),
   }))])) as Record<CaseStage, BoardCard[]>;
   const counts = Object.fromEntries(STAGES.map((s) => [s, countRows.find((c) => c.stage === s)?.n ?? 0])) as Record<CaseStage, number>;
   return { columns, counts };

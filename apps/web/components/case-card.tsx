@@ -2,6 +2,7 @@ import type { BoardCard } from '@bcg/core/dashboard/board';
 import Link from 'next/link';
 import { formatScore } from '@/lib/stages';
 import { ExampleBadge } from './example-badge';
+import { RunOriginLine } from './run-origin';
 import { StageMoveForm } from './stage-move-form';
 
 /**
@@ -15,6 +16,7 @@ export function CaseCard({ card, tourAnchor = false }: { card: BoardCard; tourAn
         <Link href={`/cases/${card.slug}`}>{card.title}</Link>
         {card.isExample ? <> <ExampleBadge /></> : null}
       </h3>
+      <RunOriginLine origin={card.origin} />
       <dl className="case-card-stats">
         <div>
           <dt>AI</dt>

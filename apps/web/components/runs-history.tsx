@@ -11,6 +11,8 @@ import { formatDateTime } from '@/lib/time';
 const ERROR_SHOWN = 200;
 const STATUS_BADGE: Record<string, string> = { queued: 'badge-info', running: 'badge-info', succeeded: 'badge-ok', failed: 'badge-bad' };
 
+const IDEA_OUTCOME: Record<string, string> = { gated_out: 'gate killed', screened_out: 'not shortlisted', duplicate: 'duplicate' };
+
 const cut = (s: string) => (s.length > ERROR_SHOWN ? `${s.slice(0, ERROR_SHOWN)}…` : s);
 
 /** Run history (newest first): created, seed, status, stage, cost, cases, error, stage rows, and Resume on failed runs. */
@@ -38,10 +40,11 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id}>
+                <tr key={r.id} id={`run-${r.id}`}>
                   <td data-label="Created">{formatDateTime(r.createdAt)}</td>
                   <td data-label="Seed" className="pre">
                     {seedSummary(r.config)}
+                    {r.passLabel ? ` · ${r.passLabel}` : ''}
                   </td>
                   <td data-label="Status">
                     <span className={`badge ${STATUS_BADGE[r.status] ?? 'badge-muted'}`}>{r.status}</span>
@@ -57,7 +60,20 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                   </td>
                   <td data-label="Stage">{r.currentStage ?? '–'}</td>
                   <td data-label="Cost">{runCost(r.costUsd)}</td>
-                  <td data-label="Cases">{r.caseCount}</td>
+                  <td data-label="Cases">
+                    {r.cases.length === 0 ? (
+                      'none'
+                    ) : (
+                      <ul className="plain">
+                        {r.cases.map((c) => (
+                          <li key={c.id}>
+                            <Link href={`/cases/${c.slug}`}>{c.title}</Link>
+                          </li>
+                        ))}
+                        {r.caseCount > r.cases.length ? <li className="muted small">and {r.caseCount - r.cases.length} more</li> : null}
+                      </ul>
+                    )}
+                  </td>
                   <td data-label="Error" className="pre">
                     {r.error ? cut(r.error) : ''}
                   </td>
@@ -80,7 +96,11 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                       <ul className="plain">
                         {r.ideas.map((i) => (
                           <li key={i.id}>
-                            <strong>{i.title}</strong> <span className="muted small">{i.oneLiner}</span>
+                            <strong>{i.title}</strong>{' '}
+                            <span className="badge badge-muted" data-testid="idea-outcome">
+                              {i.caseSlug ? <Link href={`/cases/${i.caseSlug}`}>case</Link> : (IDEA_OUTCOME[i.status] ?? i.status)}
+                            </span>{' '}
+                            <span className="muted small">{i.oneLiner}</span>
                             {i.origin === 'generated' ? <IdeaRating idea={i} /> : null}
                           </li>
                         ))}

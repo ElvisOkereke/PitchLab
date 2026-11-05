@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
-import { cases, claims, gateCheck, gateVerdicts, ideas, lenses, scores, stageEvents } from '../db/schema';
+import { benchmarkPasses, cases, claims, gateCheck, gateVerdicts, ideas, lenses, runs, scores, stageEvents } from '../db/schema';
+import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
 import { EdgeSchema, ScaleSchema, type Edge, type Scale } from '../pipeline/business-models';
 
 export type CaseRow = typeof cases.$inferSelect;
@@ -21,6 +22,8 @@ export type CaseView = {
   /** The idea's edge and scale (ideate.v12; model claims), or null for older ideas and invalid jsonb. Optional for older callers. */
   edge?: Edge | null;
   scale?: Scale | null;
+  /** The run and benchmark pass the case came from; null for the example (its run is hidden). Optional for older callers. */
+  origin?: RunOrigin | null;
 };
 
 export const CASE_SLUG = /^[a-z0-9-]{1,120}$/;
@@ -34,10 +37,13 @@ const CHECK_ORDER = new Map<string, number>(gateCheck.enumValues.map((c, i) => [
 /** Everything the case page shows, or null for a malformed or unknown slug. */
 export async function getCaseView(db: Db, slug: string): Promise<CaseView | null> {
   if (typeof slug !== 'string' || !CASE_SLUG.test(slug)) return null;
-  const [row] = await db.select({ case: cases, lensName: lenses.name, edge: ideas.edge, scale: ideas.scale })
+  const [row] = await db.select({ case: cases, lensName: lenses.name, edge: ideas.edge, scale: ideas.scale,
+    runId: runs.id, runCreatedAt: runs.createdAt, runIsExample: runs.isExample, seed: runSeedSql, passLabel: benchmarkPasses.label })
     .from(cases)
     .innerJoin(ideas, eq(ideas.id, cases.ideaId))
     .leftJoin(lenses, eq(lenses.id, ideas.lensId))
+    .leftJoin(runs, eq(runs.id, ideas.runId))
+    .leftJoin(benchmarkPasses, eq(benchmarkPasses.id, runs.benchmarkPassId))
     .where(eq(cases.slug, slug));
   if (!row) return null;
   const kase = row.case;
@@ -57,5 +63,6 @@ export async function getCaseView(db: Db, slug: string): Promise<CaseView | null
   return {
     case: kase, claims: claimRows, scores: scoreRows, gate, events, lensName: row.lensName ?? null,
     edge: edge.success ? edge.data : null, scale: scale.success ? scale.data : null,
+    origin: toRunOrigin({ runId: row.runId, createdAt: row.runCreatedAt, seed: row.seed, passLabel: row.passLabel, isExample: row.runIsExample }),
   };
 }

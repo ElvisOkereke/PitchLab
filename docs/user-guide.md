@@ -142,6 +142,10 @@ It already has one.
 - **Good:** Do not worry if an Open, Sectors or Lenses run ends with **no case**. The gate is strict on purpose, and
   most ideas fail it. "Your idea" runs always produce a case: there the gate only advises, and its verdicts show as
   flags.
+- **Which run made a case:** In History, the Seed column adds the benchmark pass (such as "bench-v3 #1") when the run
+  belongs to one. The Cases column lists each case by title, and each idea shows what became of it: **case** (a link),
+  **gate killed**, **not shortlisted** or **duplicate**. On the board and on a case page, **From:** shows the date, seed
+  and pass of the run behind it. Press it to jump to that run in History.
 
 ### Check "Needs you"
 

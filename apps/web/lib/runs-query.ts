@@ -13,11 +13,19 @@ export type RunsNotice = keyof typeof RUNS_NOTICES;
 const first = (v: unknown) => (Array.isArray(v) ? v[0] : v);
 const NoticeSchema = z.preprocess(first, z.enum(Object.keys(RUNS_NOTICES) as [RunsNotice, ...RunsNotice[]]).optional()).catch(undefined);
 
-/** `?page=&notice=`: page clamped to ≥ 1, notice allow-listed. */
-export function parseRunsQuery(sp: Record<string, string | string[] | undefined>): { page: number; notice?: RunsNotice } {
+const RunSchema = z.preprocess(first, z.uuid().optional()).catch(undefined);
+
+/** `?page=&notice=&run=`: page clamped to ≥ 1, notice allow-listed, run a uuid (the page then shows the page that run is on). */
+export function parseRunsQuery(sp: Record<string, string | string[] | undefined>): { page: number; notice?: RunsNotice; run?: string } {
   const page = pageParam(sp.page);
   const notice = NoticeSchema.parse(sp.notice);
-  return notice ? { page, notice } : { page };
+  const run = RunSchema.parse(sp.run);
+  return { page, ...(notice ? { notice } : {}), ...(run ? { run } : {}) };
+}
+
+/** Link to one run in the history: `?run=` picks the right page, the hash scrolls to its row. */
+export function runLinkHref(runId: string): string {
+  return `/runs?run=${encodeURIComponent(runId)}#run-${encodeURIComponent(runId)}`;
 }
 
 export function runsHref(page: number, notice?: RunsNotice): string {

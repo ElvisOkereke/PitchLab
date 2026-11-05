@@ -1,7 +1,7 @@
-import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { cases, ideas, lenses, markets, runStages, runStatus, runs } from '../db/schema';
+import { benchmarkPasses, cases, ideas, lenses, markets, runStages, runStatus, runs } from '../db/schema';
 import { STAGES, defaultRunConfig, type RunConfig } from '../pipeline/types';
 import { scrubError } from '../tools/scrub';
 
@@ -177,8 +177,50 @@ export type RunStageSummary = { stage: string; status: (typeof runStages.$inferS
 export type RunIdeaRow = {
   id: string; origin: (typeof ideas.$inferSelect)['origin']; title: string; oneLiner: string; status: (typeof ideas.$inferSelect)['status'];
   ownerRating: number | null; ownerTags: string[] | null;
+  /** Slug of the case this idea became, or null. */
+  caseSlug: string | null;
 };
-export type RunListRow = RunRow & { caseCount: number; stages: RunStageSummary[]; ideas: RunIdeaRow[] };
+/** A case a run produced, as the Runs page links it. */
+export type RunCaseLink = { id: string; slug: string; title: string };
+export type RunListRow = RunRow & {
+  /** All cases of the run (the count is not capped). */
+  caseCount: number;
+  /** Benchmark pass label when the run belongs to one. */
+  passLabel: string | null;
+  /** At most RUN_CASES_MAX cases of the run, oldest first. */
+  cases: RunCaseLink[];
+  stages: RunStageSummary[]; ideas: RunIdeaRow[];
+};
+
+/** Most cases listed per run on the Runs page. */
+export const RUN_CASES_MAX = 50;
+/** Most cases read for one page of runs. */
+const CASES_PER_PAGE_MAX = RUN_CASES_MAX * RUNS_PAGE_MAX;
+
+/** Where a case came from: its run, how the run was seeded (idea text cut to 200 chars) and the benchmark pass, if any. */
+export type RunOrigin = { runId: string; createdAt: Date; seed: Partial<RunConfig>; passLabel: string | null };
+
+/** SQL for a case's origin: the seed keys only, so a long owner idea text is cut in the database, not shipped whole. */
+export const runSeedSql = sql<Partial<RunConfig>>`jsonb_build_object('seedType', ${runs.config} -> 'seedType', 'sectors', ${runs.config} -> 'sectors', 'lensIds', ${runs.config} -> 'lensIds', 'ideaText', left(${runs.config} ->> 'ideaText', ${IDEA_TEXT_SHOWN}))`;
+
+/** Maps a joined origin row (run left-joined from the idea) to a RunOrigin; null when there is no visible run (example runs are hidden). */
+export function toRunOrigin(r: { runId: string | null; createdAt: Date | null; seed: Partial<RunConfig> | null; passLabel: string | null; isExample: boolean | null }): RunOrigin | null {
+  if (!r.runId || !r.createdAt || r.isExample !== false) return null;
+  return { runId: r.runId, createdAt: r.createdAt, seed: r.seed ?? {}, passLabel: r.passLabel ?? null };
+}
+
+/** The 1-based history page a run is on at `pageSize`, or null for a malformed, unknown or example run. */
+export async function runPageOf(db: Db, runId: string, pageSize: number): Promise<number | null> {
+  if (typeof runId !== 'string' || !UUID.test(runId)) return null;
+  const size = Math.min(Math.max(intOr(pageSize, RUNS_PAGE_DEFAULT), 1), RUNS_PAGE_MAX);
+  const [run] = await db.select({ createdAt: runs.createdAt }).from(runs).where(and(eq(runs.id, runId), eq(runs.isExample, false)));
+  if (!run) return null;
+  const [newer] = await db.select({ n: count() }).from(runs).where(and(
+    eq(runs.isExample, false),
+    or(gt(runs.createdAt, run.createdAt), and(eq(runs.createdAt, run.createdAt), gt(runs.id, runId))),
+  ));
+  return clampPage(Math.floor((newer?.n ?? 0) / size) + 1);
+}
 /** Most ideas read for one page of runs (50 runs of up to 30 ideas, with room for owner reruns). */
 const IDEAS_PER_PAGE_MAX = 2_000;
 
@@ -206,23 +248,30 @@ export const clampPage = (page: unknown) => Math.min(Math.max(intOr(page, 1), 1)
 export async function listRuns(db: Db, o: { page?: number; pageSize?: number }): Promise<{ rows: RunListRow[]; total: number }> {
   const pageSize = Math.min(Math.max(intOr(o.pageSize, RUNS_PAGE_DEFAULT), 1), RUNS_PAGE_MAX);
   const page = clampPage(o.page);
-  const [rows, [totalRow]] = await Promise.all([
-    db.select().from(runs).where(eq(runs.isExample, false)).orderBy(desc(runs.createdAt), desc(runs.id)).limit(pageSize).offset((page - 1) * pageSize),
+  const [runRows, [totalRow]] = await Promise.all([
+    db.select({ run: runs, passLabel: benchmarkPasses.label }).from(runs)
+      .leftJoin(benchmarkPasses, eq(benchmarkPasses.id, runs.benchmarkPassId))
+      .where(eq(runs.isExample, false)).orderBy(desc(runs.createdAt), desc(runs.id)).limit(pageSize).offset((page - 1) * pageSize),
     db.select({ n: count() }).from(runs).where(eq(runs.isExample, false)),
   ]);
+  const rows = runRows.map((r) => ({ ...r.run, passLabel: r.passLabel ?? null }));
   const ids = rows.map((r) => r.id);
-  const [caseCounts, stageRows, ideaRows] = ids.length === 0 ? [[], [], []] : await Promise.all([
+  const [caseCounts, caseRows, stageRows, ideaRows] = ids.length === 0 ? [[], [], [], []] : await Promise.all([
     db.select({ runId: ideas.runId, n: count(cases.id) }).from(cases)
       .innerJoin(ideas, eq(cases.ideaId, ideas.id))
       .where(inArray(ideas.runId, ids))
       .groupBy(ideas.runId),
+    db.select({ runId: ideas.runId, id: cases.id, slug: cases.slug, title: cases.title }).from(cases)
+      .innerJoin(ideas, eq(cases.ideaId, ideas.id))
+      .where(inArray(ideas.runId, ids))
+      .orderBy(cases.createdAt, cases.id).limit(CASES_PER_PAGE_MAX),
     db.select({ runId: runStages.runId, stage: runStages.stage, status: runStages.status, startedAt: runStages.startedAt, finishedAt: runStages.finishedAt })
       .from(runStages)
       .where(inArray(runStages.runId, ids)),
     db.select({
       id: ideas.id, runId: ideas.runId, origin: ideas.origin, title: ideas.title, oneLiner: ideas.oneLiner, status: ideas.status,
-      ownerRating: ideas.ownerRating, ownerTags: ideas.ownerTags,
-    }).from(ideas).where(inArray(ideas.runId, ids)).orderBy(ideas.createdAt, ideas.id).limit(IDEAS_PER_PAGE_MAX),
+      ownerRating: ideas.ownerRating, ownerTags: ideas.ownerTags, caseSlug: cases.slug,
+    }).from(ideas).leftJoin(cases, eq(cases.ideaId, ideas.id)).where(inArray(ideas.runId, ids)).orderBy(ideas.createdAt, ideas.id).limit(IDEAS_PER_PAGE_MAX),
   ]);
   return {
     total: totalRow?.n ?? 0,
@@ -232,7 +281,8 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
       error: r.error === null ? null : scrubError(r.error),
       config: r.config.ideaText !== undefined ? { ...r.config, ideaText: r.config.ideaText.slice(0, IDEA_TEXT_SHOWN) } : r.config,
       caseCount: caseCounts.find((c) => c.runId === r.id)?.n ?? 0,
-      ideas: ideaRows.filter((i) => i.runId === r.id).map(({ runId: _runId, ...i }) => i),
+      cases: caseRows.filter((c) => c.runId === r.id).slice(0, RUN_CASES_MAX).map(({ id, slug, title }) => ({ id, slug, title })),
+      ideas: ideaRows.filter((i) => i.runId === r.id).map(({ runId: _runId, ...i }) => ({ ...i, caseSlug: i.caseSlug ?? null })),
       stages: stageRows.filter((s) => s.runId === r.id)
         .sort((a, b) => stageOrder(a.stage) - stageOrder(b.stage))
         .map(({ stage, status, startedAt, finishedAt }) => ({ stage, status, startedAt, finishedAt })),

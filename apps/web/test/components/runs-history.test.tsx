@@ -14,7 +14,8 @@ const NOW = new Date('2026-10-20T15:00:00Z');
 function run(o: Partial<RunListRow> = {}): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded',
-    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 3, ideas: [],
+    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 3, passLabel: null,
+    cases: [{ id: 'c1', slug: 'one', title: 'One' }], ideas: [],
     stages: [{ stage: 'harvest', status: 'done', startedAt: NOW, finishedAt: NOW }, { stage: 'ideate', status: 'done', startedAt: NOW, finishedAt: null }],
     ...o,
   };
@@ -27,7 +28,7 @@ describe('RunsHistory', () => {
     const rows = [...getByTestId('runs').querySelectorAll('tbody tr')];
     expect(rows[0]!.textContent).toContain('open');
     expect(rows[0]!.textContent).toContain('$2.50');
-    expect(rows[0]!.querySelector('[data-label="Cases"]')?.textContent).toBe('3');
+    expect(rows[0]!.querySelector('[data-label="Cases"]')?.textContent).toBe('Oneand 2 more');
     expect(rows[0]!.querySelector('details')?.textContent).toContain('harvest');
     expect(rows[0]!.querySelector('form')).toBeNull();
 

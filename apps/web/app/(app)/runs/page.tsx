@@ -1,7 +1,7 @@
 import { listActiveLenses } from '@bcg/core/dashboard/lenses';
 import { getMarket } from '@bcg/core/dashboard/markets';
 import { missionRunning } from '@bcg/core/dashboard/missions';
-import { QUEUE_MARKET_ID, countRunsByStatus, listRuns } from '@bcg/core/dashboard/runs';
+import { QUEUE_MARKET_ID, countRunsByStatus, listRuns, runPageOf } from '@bcg/core/dashboard/runs';
 import { AutoRefresh } from '@/components/auto-refresh';
 import { QueueRunForm } from '@/components/queue-run-form';
 import { RunsHistory } from '@/components/runs-history';
@@ -17,8 +17,9 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
   await requireOwner();
   const query = parseRunsQuery(await searchParams);
   const db = getDb();
+  const page = (query.run ? await runPageOf(db, query.run, PAGE_SIZE) : null) ?? query.page;
   const [history, counts, lenses, market, missionBusy] = await Promise.all([
-    listRuns(db, { page: query.page, pageSize: PAGE_SIZE }),
+    listRuns(db, { page, pageSize: PAGE_SIZE }),
     countRunsByStatus(db),
     listActiveLenses(db),
     getMarket(db, QUEUE_MARKET_ID),
@@ -49,7 +50,7 @@ export default async function RunsPage({ searchParams }: { searchParams: Promise
         {counts.queued} queued · {counts.running} running
         {busy ? <span className="muted small"> · this page refreshes every 10 s</span> : null}
       </p>
-      <RunsHistory rows={history.rows} total={history.total} page={query.page} pageSize={PAGE_SIZE} />
+      <RunsHistory rows={history.rows} total={history.total} page={page} pageSize={PAGE_SIZE} />
       {busy ? <AutoRefresh everyMs={REFRESH_MS} /> : null}
     </main>
   );

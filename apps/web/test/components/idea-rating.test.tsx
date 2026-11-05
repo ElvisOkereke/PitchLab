@@ -15,12 +15,12 @@ afterEach(cleanup);
 const NOW = new Date('2026-10-20T15:00:00Z');
 const idea = (o: Partial<RunListRow['ideas'][number]> = {}): RunListRow['ideas'][number] => ({
   id: '11111111-1111-4111-8111-111111111111', origin: 'generated', title: 'Dispatch bot', oneLiner: 'Routes jobs', status: 'advanced',
-  ownerRating: null, ownerTags: null, ...o,
+  ownerRating: null, ownerTags: null, caseSlug: null, ...o,
 });
 function run(ideas: RunListRow['ideas']): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded',
-    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 1,
+    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 1, passLabel: null, cases: [],
     stages: [], ideas,
   };
 }
