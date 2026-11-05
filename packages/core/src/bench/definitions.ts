@@ -39,7 +39,7 @@ export const CURRENT_BENCHMARK = 'bench-v2' as const;
 
 export type MetricId =
   | 'repetition' | 'nearDuplicates' | 'buyerVariety' | 'consumerShare' | 'modelVariety' | 'realNeed'
-  | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'costPerCase';
+  | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes' | 'costPerCase';
 
 export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string; phase?: 2 | 3 }[] = [
   { id: 'repetition', label: 'Repetition', target: 'below 0.55' },
@@ -54,5 +54,6 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'wastedEntrants', label: 'Wasted gate entrants', target: 'below 30% of entrants' },
   { id: 'easyStartHardCopy', label: 'Easy to start, hard to copy', target: 'at least 50%' },
   { id: 'ownerVerdict', label: 'Owner verdict', target: 'at least 3.5, all scored' },
+  { id: 'ownerLikes', label: 'Owner likes', target: 'at least 50% of rated ideas' },
   { id: 'costPerCase', label: 'Cost per case', target: 'tracked, no target' },
 ];

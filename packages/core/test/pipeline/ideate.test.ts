@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { CONSUMER_LENSES, CONSUMER_SEGMENTS } from '../../src/db/seed';
 import { gateVerdicts, ideas, lenses, signals } from '../../src/db/schema';
+import { computeScorecard } from '../../src/bench/scorecard';
+import { rateIdea } from '../../src/dashboard/idea-ratings';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 import {
@@ -100,6 +102,26 @@ describe('ideate', () => {
     const again = fakeRouter({ structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
     await ideate({ ...t.deps, router: again }, t.run, { signalIds: [] });
     expect(await t.db.select().from(ideas)).toHaveLength(3);
+  });
+
+  it('ratings go with replaced ideas: a re-run never carries a rating onto a new idea (R20)', async () => {
+    const config = defaultRunConfig({ seedType: 'lens', lensIds: ['tl1', 'tl2', 'tl3'], ideaCount: 3 });
+    const t = await setup(config, { structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    await t.db.insert(lenses).values(['tl1', 'tl2', 'tl3'].map((id) => ({ id, name: id, pattern: 'p', promptHint: 'h' })));
+    await ideate(t.deps, t.run, { signalIds: [] });
+    const first = await t.db.select().from(ideas);
+    expect(first).toHaveLength(3);
+    await rateIdea(t.db, { ideaId: first[0]!.id, rating: 1, tags: ['love it'] });
+    await rateIdea(t.db, { ideaId: first[1]!.id, rating: -1, tags: ['boring'] });
+    const router = fakeRouter({ structured: { ideate: [mk(1, []), mk(1, []), mk(1, [])] } });
+    await ideate({ ...t.deps, router }, t.run, { signalIds: [] });
+    const second = await t.db.select().from(ideas);
+    expect(second).toHaveLength(3);
+    const oldIds = new Set(first.map((i) => i.id));
+    expect(second.every((i) => !oldIds.has(i.id))).toBe(true);
+    expect(second.every((i) => i.ownerRating === null && i.ownerTags === null && i.ownerRatedAt === null)).toBe(true);
+    const sc = await computeScorecard(t.db, [t.run.id]);
+    expect(sc.metrics.find((m) => m.id === 'ownerLikes')).toMatchObject({ status: 'no_data', value: null });
   });
 
   it('owner seed re-run replaces the owner idea instead of duplicating it', async () => {

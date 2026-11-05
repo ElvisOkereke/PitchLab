@@ -85,6 +85,13 @@
       "when": 1793168955388,
       "tag": "0011_research_reach",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793839899758,
+      "tag": "0012_idea_quality",
+      "breakpoints": true
     }
   ]
 }

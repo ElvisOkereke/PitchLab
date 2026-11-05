@@ -7,7 +7,7 @@ import type { StepResult } from '../validation/run';
 import type { Scorecard } from '../bench/scorecard';
 import {
   pgTable, pgEnum, text, uuid, boolean, integer, real, numeric, jsonb, timestamp,
-  vector, primaryKey, uniqueIndex, index, check, type AnyPgColumn,
+  vector, smallint, primaryKey, uniqueIndex, index, check, type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 
 const id = () => uuid('id').primaryKey().defaultRandom();
@@ -42,6 +42,8 @@ export const lenses = pgTable('lenses', {
   version: integer('version').notNull().default(1),
   /** Who the lens is for: 'business', 'consumer' or 'any'. */
   audience: text('audience').$type<'business' | 'consumer' | 'any'>().notNull().default('business'),
+  /** Sampling weight for open and sector runs; null reads as 1. */
+  weight: real('weight'),
   createdAt: createdAt(),
 });
 
@@ -112,6 +114,8 @@ export const signals = pgTable('signals', {
   publishedAt: timestamp('published_at', { withTimezone: true }),
   /** One of SIGNAL_VOICES (type-level only, no DB constraint); null for signals extracted before tuning-4 (untagged). */
   voice: text('voice', { enum: SIGNAL_VOICES }),
+  /** 'pain' (a complaint) or 'opportunity' (a demand or growth signal); type-level only, no DB constraint. */
+  kind: text('kind').$type<'pain' | 'opportunity'>().notNull().default('pain'),
   embedding: vector('embedding', { dimensions: 1536 }),
   /** The library entry this signal was promoted from (null for pipeline-collected signals). */
   knowledgeItemId: uuid('knowledge_item_id').references((): AnyPgColumn => knowledgeItems.id),
@@ -144,6 +148,14 @@ export const ideas = pgTable('ideas', {
   valueToUser: jsonb('value_to_user').$type<ValueToUser>(),
   priceHint: jsonb('price_hint').$type<PriceHint>(),
   barriers: jsonb('barriers').$type<Barriers>(),
+  /** Owner rating: -1, 0 or 1; null when unrated. Lives on the row, so a re-run that replaces the ideas drops it with them. */
+  ownerRating: smallint('owner_rating'),
+  ownerTags: text('owner_tags').array(),
+  ownerRatedAt: timestamp('owner_rated_at', { withTimezone: true }),
+  /** What the idea does better than incumbents (ideate v12; model claim); null for older ideas. */
+  edge: jsonb('edge').$type<unknown>(),
+  /** How many buyers there are and how we know (ideate v12; model claim); null for older ideas. */
+  scale: jsonb('scale').$type<unknown>(),
   /** Research library items the idea drew on. */
   libraryItemIds: uuid('library_item_ids').array(),
   signalIds: uuid('signal_ids').array().notNull(),
@@ -154,6 +166,26 @@ export const ideas = pgTable('ideas', {
   duplicateOf: uuid('duplicate_of'),
   createdAt: createdAt(),
 });
+
+/** The reviewer's 1-5 scores for an idea, one row per idea and prompt version. */
+export const ideaReviews = pgTable('idea_reviews', {
+  id: id(),
+  ideaId: uuid('idea_id').notNull().references(() => ideas.id),
+  scale: integer('scale').notNull(),
+  edge: integer('edge').notNull(),
+  novelty: integer('novelty').notNull(),
+  niche: integer('niche').notNull(),
+  reasons: jsonb('reasons').$type<unknown>().notNull(),
+  model: text('model').notNull(),
+  promptVersion: text('prompt_version').notNull(),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex('idea_reviews_idea_prompt_uq').on(t.ideaId, t.promptVersion),
+  check('idea_reviews_scale_range', sql`${t.scale} between 1 and 5`),
+  check('idea_reviews_edge_range', sql`${t.edge} between 1 and 5`),
+  check('idea_reviews_novelty_range', sql`${t.novelty} between 1 and 5`),
+  check('idea_reviews_niche_range', sql`${t.niche} between 1 and 5`),
+]);
 
 export const gateVerdicts = pgTable('gate_verdicts', {
   id: id(),

@@ -42,6 +42,8 @@ const ROI_BAR = 3;
 const MARGIN_BAR = 60;
 const WASTED_TARGET = 0.3;
 const OWNER_VERDICT_TARGET = 3.5;
+const OWNER_LIKES_TARGET = 0.5;
+const TOP_TAGS = 3;
 const CONSUMER_SHARE_TARGET = 0.3;
 const MODEL_VARIETY_TARGET = 4;
 const EASY_START_TARGET = 0.5;
@@ -148,12 +150,13 @@ type Data = {
   audience: { total: number; consumer: number };
   modelCounts: number[];
   gut: number[];
+  likes: { rated: number; liked: number; tags: { tag: string; n: number }[] };
   entrants: { total: number; wasted: number };
   cost: number;
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], entrants: { total: 0, wasted: 0 }, cost: 0,
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] }, entrants: { total: 0, wasted: 0 }, cost: 0,
 });
 
 function extraOf(d: Data, runCount: number): Scorecard['extra'] {
@@ -165,6 +168,13 @@ function extraOf(d: Data, runCount: number): Scorecard['extra'] {
     medianRoi: median(d.caseRows.flatMap((c) => (c.roi === null || c.skip ? [] : [c.roi]))),
     newVsHistory: d.history.length ? mean(d.history) : null,
   };
+}
+
+/** The most used tags, most first, ties in alphabetical order. */
+function topTags(all: string[]): { tag: string; n: number }[] {
+  const counts = new Map<string, number>();
+  for (const t of all) counts.set(t, (counts.get(t) ?? 0) + 1);
+  return [...counts].map(([tag, n]) => ({ tag, n })).sort((a, b) => b.n - a.n || (a.tag < b.tag ? -1 : 1)).slice(0, TOP_TAGS);
 }
 
 /** One query per metric family over the (non-empty) run set. */
@@ -182,7 +192,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const within = await nearestSims(db, embedded.ids, embedded.ids);
   const history = await nearestSims(db, embedded.ids, historyIds.ids);
 
-  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat]] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
     db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
@@ -219,6 +229,12 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     }).from(ideas).innerJoin(gateVerdicts, eq(gateVerdicts.ideaId, ideas.id)).where(generated),
     db.select({ sum: sql<string>`coalesce(sum(${llmCalls.costUsd}), 0)` }).from(llmCalls).where(inArray(llmCalls.runId, set)),
     db.select({ sum: sql<string>`coalesce(sum(${dataCalls.costUsd}), 0)` }).from(dataCalls).where(inArray(dataCalls.runId, set)),
+    // Owner ratings live on the idea rows, so ideas a re-run replaced are already gone with theirs.
+    db.select({
+      rated: sql<number>`count(*)::int`,
+      liked: sql<number>`(count(*) filter (where ${ideas.ownerRating} = 1))::int`,
+    }).from(ideas).where(and(generated, inArray(ideas.ownerRating, [-1, 1]))),
+    db.select({ tags: ideas.ownerTags }).from(ideas).where(and(generated, isNotNull(ideas.ownerRating), isNotNull(ideas.ownerTags))),
   ]);
 
   const caseIds = caseRows.map((c) => c.id);
@@ -262,6 +278,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       };
     }),
     gut: gutRows.map((g) => g.value),
+    likes: { rated: Number(likeRow?.rated ?? 0), liked: Number(likeRow?.liked ?? 0), tags: topTags(tagRows.flatMap((t) => t.tags ?? [])) },
     entrants: { total: Number(entrantRow?.total ?? 0), wasted: Number(entrantRow?.wasted ?? 0) },
     cost: Number(llm?.sum ?? 0) + Number(dat?.sum ?? 0),
   };
@@ -318,6 +335,12 @@ function buildMetrics(d: Data): MetricResult[] {
       : (() => {
         const v = mean(d.gut);
         return measured(v, `${v.toFixed(1)} (${d.gut.length} of ${nCases} scored)`, v >= OWNER_VERDICT_TARGET && d.gut.length === nCases);
+      })(),
+    ownerLikes: d.likes.rated === 0 ? noData('Rate some ideas to fill this in.', 'no ratings yet')
+      : (() => {
+        const base = share(d.likes.liked, d.likes.rated, (v) => v >= OWNER_LIKES_TARGET);
+        const tags = d.likes.tags.map((t) => `${t.tag} ×${t.n}`).join(', ');
+        return tags ? { ...base, display: `${base.display} · top tags: ${tags}` } : base;
       })(),
     costPerCase: nCases === 0 ? noData(NO_CASES) : (() => {
       const v = d.cost / nCases;

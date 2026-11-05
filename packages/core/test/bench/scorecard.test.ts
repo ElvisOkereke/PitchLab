@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'costPerCase'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -255,6 +255,33 @@ describe('computeScorecard: cases', () => {
     await caseWith(db, r, 1, 1);
     const sc = await computeScorecard(db, [r]);
     expect(metric(sc, 'ownerVerdict')).toMatchObject({ value: null, display: 'no scores yet', meets: null, status: 'no_data' });
+  });
+
+  it('owner likes: share of rated (non-zero) generated ideas rated 1, with top tags; no_data when none rated', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r);
+    expect(metric(await computeScorecard(db, [r]), 'ownerLikes')).toMatchObject({ value: null, meets: null, status: 'no_data' });
+    await insertIdea(db, r, { ownerRating: 1, ownerTags: ['love it', 'would build'] });
+    await insertIdea(db, r, { ownerRating: 1, ownerTags: ['love it'] });
+    await insertIdea(db, r, { ownerRating: -1, ownerTags: ['too niche', 'boring'] });
+    await insertIdea(db, r, { ownerRating: 0, ownerTags: ['boring'] }); // neutral: not in the share
+    await insertIdea(db, r, { origin: 'owner', ownerRating: -1 }); // owner idea: left out
+    const m = metric(await computeScorecard(db, [r]), 'ownerLikes');
+    expect(m.status).toBe('measured');
+    expect(m.value).toBeCloseTo(2 / 3, 6);
+    expect(m.meets).toBe(true);
+    expect(m.display).toBe('67% (2 of 3) · top tags: boring ×2, love it ×2, too niche ×1');
+  });
+
+  it('owner likes meets at exactly 0.5 and misses below', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r, { ownerRating: 1 });
+    await insertIdea(db, r, { ownerRating: -1 });
+    expect(metric(await computeScorecard(db, [r]), 'ownerLikes')).toMatchObject({ value: 0.5, meets: true, display: '50% (1 of 2)' });
+    await insertIdea(db, r, { ownerRating: -1 });
+    expect(metric(await computeScorecard(db, [r]), 'ownerLikes').meets).toBe(false);
   });
 
   it('cost per case sums llm and data costs of the set runs only', async () => {

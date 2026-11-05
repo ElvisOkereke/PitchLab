@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { sql, cosineDistance } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
 import { seedDefaults, CONSUMER_SEGMENTS } from '../../src/db/seed';
-import { cases, claims, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
+import { cases, claims, ideaReviews, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
 
 describe('db', () => {
   it('migrates, seeds idempotently, and supports vector similarity', async () => {
@@ -79,5 +79,30 @@ describe('db', () => {
     const s = { marketId: 'ca-us', source: 'hn', url: 'https://x', title: 't', quote: 'q', quoteHash: 'h' };
     await db.insert(signals).values(s);
     await expect(db.insert(signals).values(s)).rejects.toThrow();
+  });
+
+  it('migration 0012 adds the quality columns and idea_reviews, with safe defaults', async () => {
+    const db = await testDb();
+    type Col = { column_name: string; is_nullable: string; column_default: string | null };
+    const cols = async (t: string) => ((await db.execute(sql`select column_name, is_nullable, column_default from information_schema.columns where table_name = ${t}`)) as unknown as { rows: Col[] }).rows;
+    const ideaCols = await cols('ideas');
+    for (const c of ['owner_rating', 'owner_tags', 'owner_rated_at', 'edge', 'scale']) {
+      expect(ideaCols.find((x) => x.column_name === c), c).toMatchObject({ is_nullable: 'YES' });
+    }
+    expect((await cols('lenses')).find((x) => x.column_name === 'weight')).toMatchObject({ is_nullable: 'YES' });
+    const kind = (await cols('signals')).find((x) => x.column_name === 'kind');
+    expect(kind).toMatchObject({ is_nullable: 'NO' });
+    expect(kind!.column_default).toContain('pain');
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
+    const [sig] = await db.insert(signals).values({ marketId: 'ca-us', source: 'hn', url: 'https://x.test/k', title: 't', quote: 'q', quoteHash: 'hk' }).returning();
+    expect(sig!.kind).toBe('pain');
+    const [idea] = await db.insert(ideas).values({ runId: run!.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], status: 'candidate' }).returning();
+    expect(idea).toMatchObject({ ownerRating: null, ownerTags: null, ownerRatedAt: null, edge: null, scale: null });
+    const review = { ideaId: idea!.id, scale: 3, edge: 4, novelty: 2, niche: 1, reasons: {}, model: 'm', promptVersion: 'review.v1' };
+    await db.insert(ideaReviews).values(review);
+    await expect(db.insert(ideaReviews).values(review)).rejects.toThrow();
+    await expect(db.insert(ideaReviews).values({ ...review, promptVersion: 'v2', edge: 6 })).rejects.toThrow();
+    await expect(db.insert(ideaReviews).values({ ...review, promptVersion: 'v3', niche: 0 })).rejects.toThrow();
+    await db.insert(ideaReviews).values({ ...review, promptVersion: 'review.v2' });
   });
 });
