@@ -10,7 +10,11 @@ import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
 import { scrubError } from './tools/scrub';
 import { BENCHMARKS, CURRENT_BENCHMARK } from './bench/definitions';
-import { renderScorecardMarkdown } from './bench/markdown';
+import { renderScorecardMarkdown, type AuditView } from './bench/markdown';
+import { computePassAudit } from './audit/pass-audit';
+import {
+  HOLDOUT_REFUSAL, type HoldoutResult, holdoutAdd, holdoutClear, holdoutCompare, holdoutList, holdoutStoreResult, holdoutStoredResult,
+} from './audit/holdout';
 import {
   BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, previewBaseline, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
 } from './bench/passes';
@@ -552,7 +556,7 @@ async function benchReportCommand(passId: string | undefined, opts: { recompute?
         return 0;
       }
     }
-    const md = renderScorecardMarkdown(passes);
+    const md = renderScorecardMarkdown(passes, await auditViews(db, passes, passId));
     out(md);
     mkdirSync(BENCH_DIR, { recursive: true });
     const path = join(BENCH_DIR, `${new Date().toISOString().slice(0, 10)}-${slugOf(passes[0]!.label)}.md`);
@@ -560,6 +564,39 @@ async function benchReportCommand(passId: string | undefined, opts: { recompute?
     out(`Wrote ${path}`);
     return 0;
   });
+}
+
+/**
+ * The audit under each finished pass. The holdout comparison is computed (one embed call, cost line logged) only for the
+ * pass the report is about: the one named, else the newest non-baseline one. Other passes show their last stored result.
+ */
+async function auditViews(db: Db, passes: PassRow[], passId: string | undefined): Promise<Record<string, AuditView>> {
+  const examples = await holdoutList(db);
+  const target = passId ? passes.find((p) => p.id === passId) : [...passes].reverse().find((p) => p.kind !== 'baseline');
+  const views: Record<string, AuditView> = {};
+  for (const p of passes) {
+    if (p.status === 'running') continue;
+    const audit = await computePassAudit(db, p.id);
+    let holdout: HoldoutResult | null = examples.length === 0 ? null : await holdoutStoredResult(db, p.id);
+    if (p === target && examples.length > 0 && p.metrics) {
+      try {
+        const env = loadEnv();
+        const started = new Date();
+        const fresh = await holdoutCompare({ db, router: buildRouter(env, db) }, p.id);
+        if (fresh.items.length > 0) {
+          await holdoutStoreResult(db, p.id, fresh);
+          holdout = fresh;
+          const [spent] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
+            .where(and(isNull(llmCalls.runId), gte(llmCalls.createdAt, started), eq(llmCalls.promptVersion, 'holdout-embed.v1')));
+          out(`Holdout comparison for ${p.label}: 1 embedding call, cost $${Number(spent?.total ?? 0).toFixed(5)}.`);
+        }
+      } catch (err) {
+        out(`Holdout comparison skipped: ${clean(err instanceof Error ? err.message : String(err))}`);
+      }
+    }
+    views[p.id] = { audit, holdoutItems: examples.length, holdout };
+  }
+  return views;
 }
 
 // ---- Audit -------------------------------------------------------------------------------------------
@@ -594,6 +631,32 @@ async function auditReviewCommand(passId: string | undefined, opts: AuditReviewO
   }
 }
 
+async function auditHoldoutAddCommand(text: string): Promise<number> {
+  return withDb(async (db) => {
+    const r = await holdoutAdd(db, text);
+    if (!r.ok) throw new CliError(HOLDOUT_REFUSAL[r.reason], 1);
+    out(r.added ? `Added. You have ${r.items.length} holdout example(s).` : 'That example is already saved.');
+    return 0;
+  });
+}
+
+async function auditHoldoutListCommand(): Promise<number> {
+  return withDb(async (db) => {
+    const items = await holdoutList(db);
+    if (items.length === 0) out('No holdout examples yet. Add one: npm run gen -- audit holdout add "..."');
+    items.forEach((t, i) => out(`${i + 1}. ${t}`));
+    return 0;
+  });
+}
+
+async function auditHoldoutClearCommand(): Promise<number> {
+  return withDb(async (db) => {
+    await holdoutClear(db);
+    out('Cleared the holdout examples.');
+    return 0;
+  });
+}
+
 const program = buildProgram({
   run: (opts: RunOpts) => execute(null, configFrom(opts)),
   resume: async (runId: string) => {
@@ -615,6 +678,9 @@ const program = buildProgram({
   benchRun: benchRunCommand,
   benchReport: benchReportCommand,
   auditReview: auditReviewCommand,
+  auditHoldoutAdd: auditHoldoutAddCommand,
+  auditHoldoutList: auditHoldoutListCommand,
+  auditHoldoutClear: auditHoldoutClearCommand,
 });
 
 try {

@@ -3,7 +3,7 @@ import { cleanup, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsData } from '@/components/settings-view';
 
-vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})), saveHoldoutAction: vi.fn(async () => ({})) }));
 vi.mock('@/actions/library', () => ({ saveResearchSettingsAction: vi.fn(async () => ({})) }));
 vi.mock('@/actions/example', () => ({ hideExampleAction: vi.fn(async () => {}), resetExampleAction: vi.fn(async () => {}) }));
 
@@ -21,6 +21,7 @@ function data(o: Partial<SettingsData> = {}): SettingsData {
     database: true,
     example: { hidden: false },
     research: { background: false, dailyCapUsd: 5 },
+    holdout: [],
     lenses: [{ id: 'aggregator', name: 'Sell to the aggregator' }, { id: 'review-gap', name: 'Incumbent review gap' }],
     market: { id: 'ca-us', name: 'Canada + US', sectors: ['HVAC'] },
     ...o,
@@ -174,5 +175,21 @@ describe('SettingsView', () => {
   it('renders an allow-listed notice', () => {
     const { getByRole } = render(<SettingsView data={data()} notice="example_hidden" />);
     expect(getByRole('status').textContent).toContain('hidden');
+  });
+});
+
+describe('SettingsView holdout card', () => {
+  it('shows the saved examples one per line in a text box, as text', () => {
+    const { getByTestId } = render(<SettingsView data={data({ holdout: ['An AI <b>bookkeeper</b>', 'A marketplace'] })} />);
+    const f = getByTestId('holdout-form');
+    const box = f.querySelector<HTMLTextAreaElement>('textarea[name="holdout"]')!;
+    expect(box.value).toBe('An AI <b>bookkeeper</b>\nA marketplace');
+    expect(f.querySelector('b')).toBeNull();
+    expect(within(f).getByRole('button', { name: 'Save holdout examples' })).toBeTruthy();
+  });
+
+  it('starts empty with no examples', () => {
+    const { getByTestId } = render(<SettingsView data={data()} />);
+    expect(getByTestId('holdout-form').querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('');
   });
 });

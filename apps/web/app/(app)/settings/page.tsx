@@ -1,3 +1,4 @@
+import { holdoutList } from '@bcg/core/audit/holdout';
 import { listActiveLenses } from '@bcg/core/dashboard/lenses';
 import { getMarket } from '@bcg/core/dashboard/markets';
 import { QUEUE_MARKET_ID } from '@bcg/core/dashboard/runs';
@@ -14,7 +15,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   await requireOwner();
   const notice = parseSettingsNotice(await searchParams);
   const db = getDb();
-  const [values, worker, database, lenses, market, example, research] = await Promise.all([
+  const [values, worker, database, lenses, market, example, research, holdout] = await Promise.all([
     readEditableSettings(db),
     readWorkerStatus(db),
     databaseReachable(db),
@@ -22,6 +23,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     getMarket(db, QUEUE_MARKET_ID),
     exampleState(db),
     getResearchSettings(db),
+    holdoutList(db),
   ]);
-  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden }, research }} notice={notice} />;
+  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden }, research, holdout }} notice={notice} />;
 }

@@ -25,7 +25,12 @@ export type GlossaryTerm =
   | 'ruleChange'
   | 'market'
   | 'demandEvidence'
-  | 'rateIdeas';
+  | 'rateIdeas'
+  | 'ownerLikes'
+  | 'ideaReviewer'
+  | 'nicheShare'
+  | 'auditFlags'
+  | 'holdoutExamples';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -136,5 +141,25 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   rateIdeas: {
     label: 'Rating ideas',
     text: 'Rate ideas so PitchLab can tell whether changes make them better. Your ratings are never shown to the idea generator.',
+  },
+  ownerLikes: {
+    label: 'Owner likes',
+    text: 'The share of the ideas you rated that you liked. Rate ideas on the Runs page. Your ratings are never shown to the idea generator.',
+  },
+  ideaReviewer: {
+    label: 'Idea reviewer',
+    text: 'A separate model pass that scores each generated idea from 1 to 5 for scale, edge, novelty and niche, without seeing your ratings. Run it with npm run gen -- audit review --last. It costs about 1 to 2 cents an idea.',
+  },
+  nicheShare: {
+    label: 'Niche share',
+    text: 'The share of reviewed ideas that the idea reviewer called niche or small: a niche score of 4 or more, or a scale score of 2 or less. Lower is better, and the benchmark aims for 30 percent or less.',
+  },
+  auditFlags: {
+    label: 'Audit flags',
+    text: 'Plain warnings under each pass when one thing dominates: one website supplying more than 15 percent of the evidence, sellers writing more than 40 percent of it, one lens making more than 35 percent of the ideas, one gate check making more than 50 percent of the kills, or a niche share above 30 percent.',
+  },
+  holdoutExamples: {
+    label: 'Holdout examples',
+    text: 'Up to 10 ideas you would want, written in your own words on the Settings page. Each benchmark report shows how close the nearest generated idea is to each one. They are never shown to the idea generator or the reviewer.',
   },
 };

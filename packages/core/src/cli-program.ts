@@ -72,6 +72,9 @@ export type CliHandlers = {
   research(topic: string, opts: ResearchCliOpts): Promise<number>;
   researchStatus(): Promise<number>;
   auditReview(passId: string | undefined, opts: AuditReviewOpts): Promise<number>;
+  auditHoldoutAdd(text: string): Promise<number>;
+  auditHoldoutList(): Promise<number>;
+  auditHoldoutClear(): Promise<number>;
 };
 
 export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
@@ -292,6 +295,23 @@ export function buildProgram(h: CliHandlers): Command {
       if ((passId === undefined) === !opts.last) throw new CliError('Give a pass id or --last (not both).', 2);
       if (passId !== undefined && !PASS_ID_RE.test(passId)) throw new CliError(`That is not a pass id: ${passId}`, 2);
       process.exitCode = await h.auditReview(passId, opts);
+    });
+  const holdoutCmd = auditCmd.command('holdout').description('Holdout examples: ideas you would want, compared with each pass by `bench report` (never shown to the model)');
+  holdoutCmd.command('add')
+    .description('Add one example (up to 10 examples, 1,000 characters each)')
+    .argument('<text>', 'the example idea, in your own words')
+    .action(async (text: string) => {
+      process.exitCode = await h.auditHoldoutAdd(text);
+    });
+  holdoutCmd.command('list')
+    .description('Show the saved examples')
+    .action(async () => {
+      process.exitCode = await h.auditHoldoutList();
+    });
+  holdoutCmd.command('clear')
+    .description('Remove every saved example')
+    .action(async () => {
+      process.exitCode = await h.auditHoldoutClear();
     });
 
   return program;

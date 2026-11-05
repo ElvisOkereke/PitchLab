@@ -8,7 +8,7 @@ function handlers() {
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
-    auditReview: vi.fn(ok),
+    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -17,10 +17,11 @@ async function parse(args: string[]) {
   const program = buildProgram(h);
   program.exitOverride();
   program.configureOutput({ writeErr: () => {}, writeOut: () => {} });
-  for (const c of program.commands) {
+  const override = (c: typeof program) => {
     c.exitOverride();
-    for (const s of c.commands) s.exitOverride();
-  }
+    for (const s of c.commands) override(s);
+  };
+  override(program);
   await program.parseAsync(['node', 'gen', ...args]);
   return h;
 }
@@ -196,5 +197,17 @@ describe('gen research', () => {
   it('accepts a budget up to 25', async () => {
     const h = await parse(['research', 'x topic', '--budget', '25']);
     expect(h.research).toHaveBeenCalledWith('x topic', { budget: 25 });
+  });
+});
+
+describe('gen audit holdout', () => {
+  it('routes add, list and clear', async () => {
+    expect((await parse(['audit', 'holdout', 'add', 'an AI bookkeeper'])).auditHoldoutAdd).toHaveBeenCalledWith('an AI bookkeeper');
+    expect((await parse(['audit', 'holdout', 'list'])).auditHoldoutList).toHaveBeenCalled();
+    expect((await parse(['audit', 'holdout', 'clear'])).auditHoldoutClear).toHaveBeenCalled();
+  });
+
+  it('add needs text', async () => {
+    await expect(parse(['audit', 'holdout', 'add'])).rejects.toThrow();
   });
 });

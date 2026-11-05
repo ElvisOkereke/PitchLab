@@ -8,6 +8,7 @@ import { formatDateTime } from '@/lib/time';
 import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
 import { ExampleSettings } from './example-settings';
 import { HelpTip } from './help-tip';
+import { HoldoutForm } from './holdout-form';
 import { ResearchSettingsForm } from './research-settings-form';
 import { SettingsForm } from './settings-form';
 
@@ -19,6 +20,8 @@ export type SettingsData = {
   market: MarketSummary | null;
   example: { hidden: boolean };
   research: ResearchSettings;
+  /** The saved holdout examples (shown only here, to the owner). */
+  holdout: string[];
 };
 
 const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] = [
@@ -73,6 +76,17 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
           (the day ends at midnight in Toronto). It is off until you turn it on. Missions you start yourself on the Library page are not limited by it.
         </p>
         <ResearchSettingsForm background={data.research.background} dailyCapUsd={data.research.dailyCapUsd} />
+      </section>
+
+      <section aria-labelledby="holdout-title" className="card">
+        <div className="label-row">
+          <h2 id="holdout-title">Holdout examples</h2>
+          <HelpTip term="holdoutExamples" />
+        </div>
+        <p className="muted small">
+          Write up to 10 ideas you would want. The benchmark report shows how close the nearest generated idea is to each one. They are never shown to the idea generator or the reviewer.
+        </p>
+        <HoldoutForm items={data.holdout} />
       </section>
 
       <ExampleSettings hidden={data.example.hidden} />

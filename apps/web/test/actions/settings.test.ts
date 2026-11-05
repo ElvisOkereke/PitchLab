@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/require-owner', () => ({ requireOwnerAction: async () => {},
 vi.mock('next/cache', () => import('../helpers/next-mocks').then((m) => m.nextCacheMock));
 vi.mock('next/navigation', () => import('../helpers/next-mocks').then((m) => m.nextNavigationMock));
 
-const { saveSettingsAction } = await import('@/actions/settings');
+const { saveSettingsAction, saveHoldoutAction } = await import('@/actions/settings');
 
 function form(fields: Record<string, string>) {
   const fd = new FormData();
@@ -52,5 +52,29 @@ describe('saveSettingsAction', () => {
     expect(await saveSettingsAction({}, form({ 'sender.address': 'x'.repeat(501) })))
       .toEqual({ error: 'Mailing address: At most 500 characters.', values: { 'sender.address': 'x'.repeat(501) } });
     expect(await snapshotDb(state.db)).toEqual(before);
+  });
+});
+
+describe('saveHoldoutAction', () => {
+  it('saves one example per line, trimmed and de-duplicated, and echoes what is stored', async () => {
+    const r = await saveHoldoutAction({}, form({ holdout: ' An AI bookkeeper \n\nan ai bookkeeper\nA marketplace for site inspections' }));
+    expect(r).toEqual({ ok: true, values: { holdout: 'An AI bookkeeper\nA marketplace for site inspections' } });
+    expect(await getSetting(state.db, 'audit.holdout')).toEqual(['An AI bookkeeper', 'A marketplace for site inspections']);
+    expect(request.revalidated).toEqual(expect.arrayContaining(['/settings', '/progress']));
+  });
+
+  it('an empty box clears the list', async () => {
+    await setSetting(state.db, 'audit.holdout', ['x']);
+    expect(await saveHoldoutAction({}, form({ holdout: '' }))).toMatchObject({ ok: true });
+    expect(await getSetting(state.db, 'audit.holdout')).toEqual([]);
+  });
+
+  it('refuses more than 10 examples or one over 1,000 characters, saving nothing and keeping what was typed', async () => {
+    await setSetting(state.db, 'audit.holdout', ['keep me']);
+    const eleven = Array.from({ length: 11 }, (_, i) => `idea ${i}`).join('\n');
+    expect(await saveHoldoutAction({}, form({ holdout: eleven }))).toEqual({ error: 'You can keep at most 10 examples. Remove one first.', values: { holdout: eleven } });
+    const long = 'x'.repeat(1001);
+    expect(await saveHoldoutAction({}, form({ holdout: long }))).toEqual({ error: 'Each example can be at most 1000 characters.', values: { holdout: long } });
+    expect(await getSetting(state.db, 'audit.holdout')).toEqual(['keep me']);
   });
 });

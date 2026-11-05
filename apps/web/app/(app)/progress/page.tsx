@@ -3,6 +3,8 @@ import { listBenchmarkPasses, passCases, passProgress } from '@bcg/core/bench/pa
 import { AutoRefresh } from '@/components/auto-refresh';
 import { HelpTip } from '@/components/help-tip';
 import { ProgressView } from '@/components/progress-view';
+import { loadAuditViews } from '@/lib/audit-query';
+import { progressColumns } from '@/lib/progress-columns';
 import { requireOwner } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
 
@@ -17,6 +19,7 @@ export default async function ProgressPage() {
   const progress = runningPass ? await passProgress(db, runningPass.id) : null;
   const finished = passes.find((p) => p.kind === 'pass' && p.status !== 'running') ?? null;
   const cases = finished ? await passCases(db, finished.id) : null;
+  const audits = await loadAuditViews(db, progressColumns(passes));
   const running =
     runningPass && progress
       ? { label: runningPass.label, done: progress.succeeded + progress.failed, total: runningPass.runIds.length }
@@ -34,6 +37,7 @@ export default async function ProgressPage() {
         scoreCases={finished && cases ? { label: finished.label, cases } : null}
         costNote={BENCHMARKS[CURRENT_BENCHMARK].costNote}
         runCount={BENCHMARKS[CURRENT_BENCHMARK].seeds.length}
+        audits={audits}
       />
       {running ? <AutoRefresh everyMs={REFRESH_MS} /> : null}
     </main>

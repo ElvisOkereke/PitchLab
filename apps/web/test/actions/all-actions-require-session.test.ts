@@ -100,6 +100,9 @@ const SPECS: Record<string, Spec> = {
   'settings.ts#saveSettingsAction': {
     seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
   },
+  'settings.ts#saveHoldoutAction': {
+    seed: async () => ({ holdout: 'An AI bookkeeper for small clinics' }),
+  },
   'library.ts#queueMissionAction': {
     seed: async () => ({ topic: 'late invoices', kinds: 'problem' }),
   },

@@ -2,10 +2,14 @@ import { METRIC_DEFS } from '@bcg/core/bench/definitions';
 import type { PassRow } from '@bcg/core/bench/passes';
 import type { MetricResult } from '@bcg/core/bench/scorecard';
 import Link from 'next/link';
+import type { PassAuditView } from '@/lib/audit-query';
+import { progressColumns } from '@/lib/progress-columns';
+import { HelpTip } from './help-tip';
+import { PassAuditSection } from './pass-audit-view';
 import { RecomputeForm } from './recompute-form';
 import { RunBenchmarkForm } from './run-benchmark-form';
 
-const MAX_PASS_COLUMNS = 5;
+const METRIC_HELP: Partial<Record<(typeof METRIC_DEFS)[number]['id'], 'ownerLikes' | 'nicheShare'>> = { ownerLikes: 'ownerLikes', nicheShare: 'nicheShare' };
 
 export type RunningPass = { label: string; done: number; total: number };
 export type ScoreCases = { label: string; cases: { slug: string; title: string; gut: number | null }[] };
@@ -38,17 +42,18 @@ export function ProgressView({
   scoreCases,
   costNote,
   runCount,
+  audits = {},
 }: {
   passes: PassRow[];
   running: RunningPass | null;
   scoreCases: ScoreCases | null;
   costNote: string;
   runCount: number;
+  /** Each shown pass's audit, by pass id (loaded by the page; this view reads no data). */
+  audits?: Record<string, PassAuditView>;
 }) {
-  // The list is newest first and the oldest baseline is the canonical one (baseline-0), as in `gen bench report`.
-  const baseline = passes.filter((p) => p.kind === 'baseline').at(-1) ?? null;
-  const recent = passes.filter((p) => p.kind !== 'baseline' && p.status !== 'running').slice(0, MAX_PASS_COLUMNS).reverse();
-  const columns = baseline ? [baseline, ...recent] : recent;
+  const columns = progressColumns(passes);
+  const baseline = columns.find((p) => p.kind === 'baseline') ?? null;
   return (
     <>
       {baseline ? null : <p className="notice card">No baseline yet. Run: npm run gen -- bench baseline</p>}
@@ -84,6 +89,7 @@ export function ProgressView({
               <tr key={d.id} data-metric={d.id}>
                 <th scope="row">
                   {d.label}
+                  {METRIC_HELP[d.id] ? <HelpTip term={METRIC_HELP[d.id]!} /> : null}
                   <div className="muted small">Target: {d.target}</div>
                 </th>
                 {columns.length === 0 ? <td className="muted">no data</td> : null}
@@ -111,6 +117,9 @@ export function ProgressView({
             ))}
         </section>
       ) : null}
+      {columns.filter((p) => audits[p.id]).map((p) => (
+        <PassAuditSection key={p.id} label={p.label} view={audits[p.id]!} />
+      ))}
       <p className="muted small">Small sample: differences under about 0.05 similarity or one case may be noise.</p>
       {scoreCases ? (
         <section aria-labelledby="bench-score-title" className="card">

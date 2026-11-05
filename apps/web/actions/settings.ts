@@ -1,5 +1,6 @@
 'use server';
 
+import { HOLDOUT_REFUSAL, holdoutSet } from '@bcg/core/audit/holdout';
 import { EDITABLE_SETTING_KEYS, SettingsInputSchema, saveSettings, type EditableSettingKey } from '@bcg/core/dashboard/settings';
 import { revalidatePath } from 'next/cache';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
@@ -27,4 +28,20 @@ export async function saveSettingsAction(_prev: FormState, fd: FormData): Promis
   await saveSettings(getDb(), parsed.data);
   revalidatePath('/settings');
   return { ok: true, values };
+}
+
+/**
+ * Replaces the holdout examples with the lines of the text box (blank lines and repeats dropped). Refused, with nothing
+ * saved, when there are more than 10 or one is over 1,000 characters. An empty box clears the list.
+ */
+export async function saveHoldoutAction(_prev: FormState, fd: FormData): Promise<FormState> {
+  await requireOwnerAction();
+  const raw = formToObject(fd);
+  const values = pickValues(raw, ['holdout']);
+  const text = typeof raw.holdout === 'string' ? raw.holdout : '';
+  const r = await holdoutSet(getDb(), text.split(/\r?\n/));
+  if (!r.ok) return { error: HOLDOUT_REFUSAL[r.reason], values };
+  revalidatePath('/settings');
+  revalidatePath('/progress');
+  return { ok: true, values: { holdout: r.items.join('\n') } };
 }

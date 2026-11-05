@@ -1,6 +1,7 @@
 import type { PassRow } from '@bcg/core/bench/passes';
 import type { MetricResult, Scorecard } from '@bcg/core/bench/scorecard';
 import { METRIC_DEFS } from '@bcg/core/bench/definitions';
+import type { PassAuditView } from '@/lib/audit-query';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,6 +19,10 @@ const card = (over: Record<string, Partial<MetricResult>> = {}): Scorecard =>
 const pass = (o: Partial<PassRow>): PassRow => ({
   id: 'p', version: 'bench-v1', label: 'bench-v1 #1', kind: 'pass', status: 'complete', runIds: [], metrics: card(),
   sourcePassId: null, createdAt: new Date('2026-10-20T12:00:00Z'), completedAt: new Date('2026-10-20T13:00:00Z'), ...o,
+});
+const emptyAudit = (): PassAuditView => ({
+  audit: { signals: { total: 0, byVoice: {}, bySource: {}, topDomains: [] }, lenses: [], gateKills: {}, dropReasons: {}, demandShare: null, nicheShare: null, flags: [] },
+  holdoutItems: 0, holdout: null,
 });
 const base = { costNote: COST, runCount: 5, running: null, scoreCases: null };
 
@@ -128,5 +133,64 @@ describe('ProgressView', () => {
     );
     expect(container.querySelector('img')).toBeNull();
     expect(container.textContent).toContain(evil);
+  });
+
+  describe('audit under each pass', () => {
+    it('an empty audit says no data and has no NaN, no flags and no holdout', () => {
+      const { container } = render(<ProgressView {...base} passes={[pass({ id: 'a1' })]} audits={{ a1: emptyAudit() }} />);
+      const t = container.querySelector('[data-testid="pass-audit"]')!.textContent!;
+      expect(t).toContain('Evidence: no data');
+      expect(t).toContain('Lens yield: no data');
+      expect(t).toContain('Gate kills by check: no data');
+      expect(t).toContain('Niche share (idea reviewer): no data');
+      expect(t).toContain('None set. Add some on the Settings page.');
+      expect(t).not.toMatch(/NaN|Infinity|undefined/);
+      expect(container.querySelector('[data-testid="audit-flags"]')).toBeNull();
+    });
+
+    it('renders every field, the flags and the stored holdout comparison as text', () => {
+      const v = emptyAudit();
+      v.audit = {
+        signals: { total: 20, byVoice: { operator: 15, vendor: 5 }, bySource: { reddit: 20 }, topDomains: [{ domain: 'wordpress.org', share: 0.18 }] },
+        lenses: [{ lensId: 'aggregator', ideas: 8, screenedIn: 5, advanced: 2, cases: 2 }],
+        gateKills: { control: 3 }, dropReasons: { 'too vague': 4 }, demandShare: 0.5, nicheShare: 0.25,
+        flags: ['wordpress.org supplied 18% of the evidence (limit 15%)'],
+      };
+      v.holdoutItems = 1;
+      v.holdout = { items: [{ text: 'my <i>idea</i>', bestIdeaTitle: '<b>Best</b>', similarity: 0.612 }], median: 0.612, computedAt: '2026-11-04T00:00:00Z' };
+      const { container } = render(<ProgressView {...base} passes={[pass({ id: 'a1', label: 'bench-v3 #1' })]} audits={{ a1: v }} />);
+      const t = container.querySelector('[data-testid="pass-audit"]')!.textContent!;
+      expect(t).toContain('Audit of bench-v3 #1');
+      expect(t).toContain('Evidence: 20 signals');
+      expect(t).toContain('Voices: operator 15, vendor 5');
+      expect(t).toContain('Top domains: wordpress.org 18%');
+      expect(t).toContain('aggregator: 8 ideas, 5 reached the gate, 2 advanced, 2 cases');
+      expect(t).toContain('Gate kills by check: control 3');
+      expect(t).toContain('Ideas dropped by ideate: too vague 4');
+      expect(t).toContain('Ideas resting on a trend, rule change or market: 50%');
+      expect(t).toContain('Niche share (idea reviewer): 25%');
+      expect(container.querySelector('[data-testid="audit-flags"]')!.textContent).toBe('wordpress.org supplied 18% of the evidence (limit 15%)');
+      expect(t).toContain('Median similarity: 0.61');
+      expect(t).toContain('my <i>idea</i>: closest idea <b>Best</b> (0.61)');
+      expect(container.querySelector('[data-testid="pass-audit"] b, [data-testid="pass-audit"] i')).toBeNull();
+    });
+
+    it('says when examples exist but the pass has no stored comparison', () => {
+      const v = emptyAudit();
+      v.holdoutItems = 3;
+      const { container } = render(<ProgressView {...base} passes={[pass({ id: 'a1' })]} audits={{ a1: v }} />);
+      expect(container.querySelector('[data-testid="pass-audit"]')!.textContent).toContain('3 set. No comparison for this pass yet');
+    });
+
+    it('shows no audit section for a pass without one (an old or running pass)', () => {
+      const { container } = render(<ProgressView {...base} passes={[pass({ id: 'a1' })]} />);
+      expect(container.querySelector('[data-testid="pass-audit"]')).toBeNull();
+    });
+
+    it('puts a help tip on the owner likes and niche share rows', () => {
+      const { container } = render(<ProgressView {...base} passes={[]} />);
+      expect(container.querySelector('tr[data-metric="ownerLikes"] details.help-tip')).not.toBeNull();
+      expect(container.querySelector('tr[data-metric="nicheShare"] details.help-tip')).not.toBeNull();
+    });
   });
 });
