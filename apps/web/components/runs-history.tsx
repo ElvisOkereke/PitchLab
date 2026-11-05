@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { requeueRunAction } from '@/actions/runs';
 import { HelpTip } from './help-tip';
 import { IdeaRating } from './idea-rating';
+import { KeepOpenDetails } from './keep-open-details';
 import { runCost, seedSummary } from '@/lib/run-format';
 import { runsHref } from '@/lib/runs-query';
 import { formatDateTime } from '@/lib/time';
@@ -73,8 +74,8 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                     </details>
                   </td>
                   <td data-label="Ideas">
-                    <details>
-                      <summary>{r.ideas.length} ideas</summary>
+                    {/* Stays open across rating submits (each one refreshes the page). */}
+                    <KeepOpenDetails storageKey={`run-ideas.${r.id}`} summary={`${r.ideas.length} ideas`}>
                       <HelpTip term="rateIdeas" />
                       <ul className="plain">
                         {r.ideas.map((i) => (
@@ -84,7 +85,7 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                           </li>
                         ))}
                       </ul>
-                    </details>
+                    </KeepOpenDetails>
                   </td>
                 </tr>
               ))}

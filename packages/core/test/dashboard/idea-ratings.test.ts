@@ -55,7 +55,15 @@ describe('rateIdea', () => {
 
   it('rating an idea that does not exist changes nothing and does not throw', async () => {
     const { db, get } = await setup();
-    await rateIdea(db, { ideaId: '00000000-0000-4000-8000-000000000000', rating: 1, tags: [] });
+    expect(await rateIdea(db, { ideaId: '00000000-0000-4000-8000-000000000000', rating: 1, tags: [] })).toBe(false);
     expect((await get()).ownerRating).toBeNull();
+  });
+
+  it('refuses a non-generated (owner) idea: returns false and writes nothing; a generated idea returns true', async () => {
+    const { db, idea } = await setup();
+    const owner = await insertIdea(db, idea.runId, { origin: 'owner', title: 'Mine' });
+    expect(await rateIdea(db, { ideaId: owner.id, rating: 1, tags: ['love it'] })).toBe(false);
+    expect((await db.select().from(ideas).where(eq(ideas.id, owner.id)))[0]).toMatchObject({ ownerRating: null, ownerTags: null, ownerRatedAt: null });
+    expect(await rateIdea(db, { ideaId: idea.id, rating: 1, tags: [] })).toBe(true);
   });
 });

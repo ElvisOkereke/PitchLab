@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { count, eq } from 'drizzle-orm';
 import { createTestDb } from '../../src/db/test-db';
 import {
-  cases, dataCalls, ideas, llmCalls, outreachEvents, prospects, runs, scores, suppressions,
+  cases, dataCalls, ideaReviews, ideas, llmCalls, outreachEvents, prospects, runs, scores, suppressions,
 } from '../../src/db/schema';
 import { CaseSectionsSchema } from '../../src/case/schema';
 import { LandingCopySchema, PackSectionsSchema } from '../../src/validation/schema';
@@ -57,6 +57,21 @@ describe('example case', () => {
     expect((await db.select({ n: count() }).from(scores).where(eq(scores.by, 'owner')))[0]!.n).toBe(0);
     expect((await db.select({ n: count() }).from(outreachEvents))[0]!.n).toBe(0);
     expect(await exampleState(db)).toEqual({ hidden: false, slug: EXAMPLE_SLUG });
+  });
+
+  it('reset and hide delete reviews of the example idea first', async () => {
+    const db = await createTestDb();
+    await ensureExample(db);
+    const [idea] = await db.select().from(ideas);
+    const review = { ideaId: idea!.id, scale: 3, edge: 3, novelty: 3, niche: 3, reasons: { scale: 'a', edge: 'b', novelty: 'c', niche: 'd' }, model: 'm', promptVersion: 'idea-review.v1' };
+    await db.insert(ideaReviews).values(review);
+    await resetExample(db);
+    expect(await db.select().from(ideaReviews)).toHaveLength(0);
+    const [again] = await db.select().from(ideas);
+    await db.insert(ideaReviews).values({ ...review, ideaId: again!.id });
+    await hideExample(db);
+    expect(await db.select().from(ideaReviews)).toHaveLength(0);
+    expect(await db.select().from(ideas)).toHaveLength(0);
   });
 
   it('reset after hide brings it back', async () => {

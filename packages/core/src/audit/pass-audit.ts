@@ -7,6 +7,8 @@ import { IDEA_REVIEW_VERSION } from '../bench/definitions';
 
 /** A flag is raised when a share (in percent) is strictly above its limit. */
 export const FLAG_LIMITS = { topDomain: 15, vendorVoice: 40, lens: 35, gateCheck: 50, niche: 30 } as const;
+/** A flag is skipped when its sample is below this size: a share of a handful of items says little. */
+export const FLAG_MIN_SAMPLE = { signals: 10, ideas: 5, kills: 5, reviews: 5 } as const;
 /** Most signals read for one pass (a benchmark pass collects a few hundred). */
 export const AUDIT_SIGNALS_MAX = 50_000;
 const TOP_DOMAINS = 5;
@@ -51,7 +53,10 @@ const bump = (m: Record<string, number>, key: string, by = 1) => {
   m[key] = (m[key] ?? 0) + by;
 };
 
-/** The audit of one benchmark pass. A pass with nothing to measure returns zero counts, null shares and no flags. */
+/**
+ * The audit of one benchmark pass. A pass with nothing to measure returns zero counts, null shares and no flags. A flag
+ * whose sample is tiny (FLAG_MIN_SAMPLE) is skipped; the counts and shares are still reported.
+ */
 export async function computePassAudit(db: Db, passId: string): Promise<PassAudit> {
   const empty = (): PassAudit => ({
     signals: { total: 0, byVoice: {}, bySource: {}, topDomains: [] }, lenses: [], gateKills: {}, dropReasons: {}, demandShare: null, nicheShare: null, flags: [],
@@ -107,11 +112,14 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
   const total = sigRows.length;
   const domains = [...byDomain.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const topDomains = domains.slice(0, TOP_DOMAINS).map(([domain, k]) => ({ domain, share: k / total }));
-  if (domains[0] && over(domains[0][1], total, FLAG_LIMITS.topDomain)) {
-    flags.push(`${domains[0][0]} supplied ${pctText(domains[0][1], total)} of the evidence (limit ${FLAG_LIMITS.topDomain}%)`);
+  const enoughSignals = total >= FLAG_MIN_SAMPLE.signals;
+  // An `unknown` domain is many unparseable urls, not one site, so it never raises the top-domain flag.
+  const topKnown = domains.find(([d]) => d !== 'unknown');
+  if (enoughSignals && topKnown && over(topKnown[1], total, FLAG_LIMITS.topDomain)) {
+    flags.push(`${topKnown[0]} supplied ${pctText(topKnown[1], total)} of the evidence (limit ${FLAG_LIMITS.topDomain}%)`);
   }
   const vendor = byVoice.vendor ?? 0;
-  if (over(vendor, total, FLAG_LIMITS.vendorVoice)) {
+  if (enoughSignals && over(vendor, total, FLAG_LIMITS.vendorVoice)) {
     flags.push(`Sellers wrote ${pctText(vendor, total)} of the evidence (limit ${FLAG_LIMITS.vendorVoice}%)`);
   }
 
@@ -119,7 +127,7 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
   const lenses = lensRows.map((r) => ({ lensId: r.lensId!, ideas: Number(r.n), screenedIn: Number(r.screenedIn), advanced: Number(r.advanced), cases: Number(r.cases) }));
   const ideaTotal = lenses.reduce((t, l) => t + l.ideas, 0);
   const topLens = [...lenses].sort((a, b) => b.ideas - a.ideas || a.lensId.localeCompare(b.lensId))[0];
-  if (topLens && over(topLens.ideas, ideaTotal, FLAG_LIMITS.lens)) {
+  if (topLens && ideaTotal >= FLAG_MIN_SAMPLE.ideas && over(topLens.ideas, ideaTotal, FLAG_LIMITS.lens)) {
     flags.push(`The ${topLens.lensId} lens produced ${pctText(topLens.ideas, ideaTotal)} of the ideas (limit ${FLAG_LIMITS.lens}%)`);
   }
 
@@ -128,7 +136,7 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
   for (const r of killRows) gateKills[r.check] = Number(r.killed);
   const killed = Number(killedRow?.n ?? 0);
   const topCheck = Object.entries(gateKills).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-  if (topCheck && over(topCheck[1], killed, FLAG_LIMITS.gateCheck)) {
+  if (topCheck && killed >= FLAG_MIN_SAMPLE.kills && over(topCheck[1], killed, FLAG_LIMITS.gateCheck)) {
     flags.push(`The ${topCheck[0]} check failed ${pctText(topCheck[1], killed)} of the ideas the gate rejected (limit ${FLAG_LIMITS.gateCheck}%)`);
   }
 
@@ -146,7 +154,7 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
   const reviewed = Number(reviewRow?.n ?? 0);
   const niche = Number(reviewRow?.niche ?? 0);
   const nicheShare = reviewed === 0 ? null : niche / reviewed;
-  if (over(niche, reviewed, FLAG_LIMITS.niche)) {
+  if (reviewed >= FLAG_MIN_SAMPLE.reviews && over(niche, reviewed, FLAG_LIMITS.niche)) {
     flags.push(`The idea reviewer called ${pctText(niche, reviewed)} of the ideas niche or small (limit ${FLAG_LIMITS.niche}%)`);
   }
 

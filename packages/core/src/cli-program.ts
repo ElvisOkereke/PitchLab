@@ -289,7 +289,7 @@ export function buildProgram(h: CliHandlers): Command {
   auditCmd.command('review')
     .description("Review a pass's generated ideas for scale, edge, novelty and niche (costs model calls, about 1–2 cents an idea; only ideas without a review are sent)")
     .argument('[passId]', 'a pass id')
-    .option('--last', 'the newest benchmark pass')
+    .option('--last', 'the newest finished benchmark pass')
     .option('--dry-run', 'show how many ideas would be reviewed and the estimated cost, without calling the model')
     .action(async (passId: string | undefined, opts: AuditReviewOpts) => {
       if ((passId === undefined) === !opts.last) throw new CliError('Give a pass id or --last (not both).', 2);

@@ -63,16 +63,13 @@ export type HarvestAudience = 'business' | 'both';
 export type HarvestAngle = 'pain' | 'opportunity';
 
 /**
- * The angle of each of `n` research calls: round(n x OPPORTUNITY_SHARE) are opportunity calls, at least 1 when n >= 2.
- * Which calls they are is by position (spread evenly over the calls not in `pinPain`), so a run always splits the same way (R20).
+ * How many opportunity research calls a seed with `sectorCalls` sector research calls adds ON TOP of its pain calls:
+ * round(sectorCalls x OPPORTUNITY_SHARE), at least 1 when sectorCalls >= 2, none below that. Every sector keeps its
+ * pain call (controller ruling, 2026-11-04); the opportunity calls aim at the first k sectors in order, so a run always
+ * makes the same calls (R20).
  */
-export function splitAngles(n: number, pinPain: number[] = []): HarvestAngle[] {
-  const eligible = Array.from({ length: n }, (_, i) => i).filter((i) => !pinPain.includes(i));
-  const m = eligible.length;
-  const k = n >= 2 ? Math.min(m, Math.max(1, Math.round(n * OPPORTUNITY_SHARE))) : 0;
-  const out: HarvestAngle[] = Array.from({ length: n }, () => 'pain');
-  eligible.forEach((idx, j) => { if (Math.floor(((j + 1) * k) / m) > Math.floor((j * k) / m)) out[idx] = 'opportunity'; });
-  return out;
+export function opportunityCallCount(sectorCalls: number): number {
+  return sectorCalls >= 2 ? Math.max(1, Math.round(sectorCalls * OPPORTUNITY_SHARE)) : 0;
 }
 
 /** The variables of harvest-research.v7. The pain angle renders word for word as v6. */
@@ -261,7 +258,7 @@ export async function harvest(
   // Build phrase queries and the research calls (one focus each) from the seed. Open seeds and lens seeds with a
   // consumer lens also look for individuals' own pain (the run's consumer lenses and segments need that evidence).
   let phraseQueries: string[] = [];
-  let research: { focus: string; opportunityFocus?: string; maxSearches: number; audience: HarvestAudience }[];
+  let research: { focus: string; maxSearches: number; audience: HarvestAudience; angle: HarvestAngle }[];
   let runAudience: HarvestAudience = 'business';
   let useTechForums = cfg.seedType !== 'idea';
   let libraryHints: string[] = [];
@@ -273,23 +270,32 @@ export async function harvest(
     phraseQueries = sectors.flatMap((s, i) => phrases[i]!.map((p) => `${s} ${p}`));
     // One research call per sector (at most 8), so non-tech sectors are researched directly.
     const perSector = cfg.researchSearchesPerSector ?? 3;
-    research = sectors.slice(0, MAX_RESEARCH_SECTORS).map((s, i) => ({
-      // Sector names come from the CLI (or market config): untrusted, so capped, single-line and wrapped.
-      focus: `Pain in this sector: ${wrapUntrusted('sector', clean(s, 80))}. Typical owner complaints include: ${phrases[i]!.slice(0, 3).join(', ')}.`,
-      opportunityFocus: `Growth, spending and what is working in this sector: ${wrapUntrusted('sector', clean(s, 80))}.`,
+    // Sector names come from the CLI (or market config): untrusted, so capped, single-line and wrapped.
+    const researched = sectors.slice(0, MAX_RESEARCH_SECTORS).map((s) => wrapUntrusted('sector', clean(s, 80)));
+    research = researched.map((sector, i) => ({
+      focus: `Pain in this sector: ${sector}. Typical owner complaints include: ${phrases[i]!.slice(0, 3).join(', ')}.`,
       maxSearches: perSector,
       audience: 'business' as const,
+      angle: 'pain' as const,
     }));
     if (cfg.seedType === 'open') {
-      // One extra call for the run's consumer segments (the ones ideate shows and the library query uses).
+      // One extra call for the run's consumer segments (the ones ideate shows and the library query uses). It stays
+      // a pain call: consumer lenses need that evidence.
       runAudience = 'both';
       research.push({
         focus: `Pain that individuals in these consumer groups describe in their own words: ${pickConsumerSegments(run.id).join('; ')}.`,
-        opportunityFocus: `Growth, spending and what is working for these consumer groups: ${pickConsumerSegments(run.id).join('; ')}.`,
         maxSearches: perSector,
         audience: 'both',
+        angle: 'pain',
       });
     }
+    // Opportunity calls are added on top of the pain calls, aimed at the first k sectors in order (R20).
+    research.push(...researched.slice(0, opportunityCallCount(researched.length)).map((sector) => ({
+      focus: `Growth, spending and what is working in this sector: ${sector}.`,
+      maxSearches: perSector,
+      audience: 'business' as const,
+      angle: 'opportunity' as const,
+    })));
     useTechForums = sectors.some((s) => SOFTWARE_ADJACENT.has(s));
     if (!useTechForums) log('harvest: no software-adjacent sector, skipping tech-forum sources');
   } else if (cfg.seedType === 'lens') {
@@ -298,7 +304,7 @@ export async function harvest(
     libraryHints = hints;
     phraseQueries = hints.flatMap((h) => pick(market.sectors, 4, random).map((s) => `${s} ${h}`));
     if (rows.some((l) => l.audience === 'consumer' || l.audience === 'any')) runAudience = 'both';
-    research = [{ focus: `Pain relevant to: ${hints.join(' ')}`, maxSearches: cfg.maxSearchesPerCall, audience: runAudience }];
+    research = [{ focus: `Pain relevant to: ${hints.join(' ')}`, maxSearches: cfg.maxSearchesPerCall, audience: runAudience, angle: 'pain' }];
   } else {
     const idea = clean(cfg.ideaText ?? '', 2000);
     research = [{
@@ -306,6 +312,7 @@ export async function harvest(
 ${wrapUntrusted('idea', idea)}`,
       maxSearches: 2 * cfg.maxSearchesPerCall,
       audience: 'business',
+      angle: 'pain',
     }];
   }
 
@@ -317,10 +324,8 @@ ${wrapUntrusted('idea', idea)}`,
   const libraryIds = await librarySignals({ db, router, log }, run.id, cfg.marketId, market.countries, clean(libraryQuery, 1000) || OPEN_LIBRARY_QUERY);
 
   const techForumsOn = (await getSetting(db, 'harvest.techForums')) === true;
-  // The open seed's consumer-segment call (always last) stays a pain call: consumer lenses need that evidence.
-  const angles = splitAngles(research.length, cfg.seedType === 'open' ? [research.length - 1] : []);
-  const opportunityCalls = angles.filter((x) => x === 'opportunity').length;
-  const painCalls = angles.length - opportunityCalls;
+  const opportunityCalls = research.filter((r) => r.angle === 'opportunity').length;
+  const painCalls = research.length - opportunityCalls;
   const items: RawItem[] = [];
   /** The angle that found each web-research item, by object identity (free-source items are pain). */
   const itemAngle = new Map<RawItem, HarvestAngle>();
@@ -352,21 +357,16 @@ ${wrapUntrusted('idea', idea)}`,
   // (b) LLM web research: calls run concurrently (the router limits concurrency); any failure fails the stage.
   const researchPrompt = loadPrompt('harvest-research');
   const bannedDomains = BANNED_DOMAINS.join(', ');
-  const results = await Promise.all(research.map(({ focus, opportunityFocus, maxSearches, audience }, i) => {
-    const angle = angles[i]!;
-    return router.research(
-      'harvest',
-      {
-        system: researchSystem(audience, angle),
-        prompt: researchPrompt.render({
-          countries, focus: angle === 'opportunity' ? (opportunityFocus ?? focus) : focus, bannedDomains, ...harvestAudienceVars(audience, angle),
-        }),
-        maxSearches,
-      },
-      { runId: run.id, promptVersion: researchPrompt.version },
-    );
-  }));
-  // Processed in sector order, so item order is deterministic.
+  const results = await Promise.all(research.map(({ focus, maxSearches, audience, angle }) => router.research(
+    'harvest',
+    {
+      system: researchSystem(audience, angle),
+      prompt: researchPrompt.render({ countries, focus, bannedDomains, ...harvestAudienceVars(audience, angle) }),
+      maxSearches,
+    },
+    { runId: run.id, promptVersion: researchPrompt.version },
+  )));
+  // Processed in call order (pain calls in sector order, then opportunity calls), so item order is deterministic.
   for (const [ri, result] of results.entries()) {
     for (const s of result.sources) {
       const text = decodeEntities(s.citedText ?? '');
@@ -374,7 +374,7 @@ ${wrapUntrusted('idea', idea)}`,
       // Free sources decode entities in cleanText; web-search citations get the same decoding here.
       const item = sanitizeItem({ source: 'web', url: s.url, title: decodeEntities(s.title ?? s.url), text, publishedAt: null });
       items.push(item);
-      itemAngle.set(item, angles[ri]!);
+      itemAngle.set(item, research[ri]!.angle);
     }
   }
 

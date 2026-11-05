@@ -41,6 +41,12 @@ describe('db', () => {
     let rows = await db.select().from(lenses);
     for (const id of ids) expect(rows.find((l) => l.id === id)).toMatchObject({ audience: 'any' });
     expect(rows.find((l) => l.id === 'picks-and-shovels')?.promptHint).toMatch(/changing/);
+    // The regulation check kills work that legally needs a licensed professional, so these lenses steer away from it.
+    for (const id of ['ai-replaces-labour', 'ten-x-incumbent']) {
+      expect(rows.find((l) => l.id === id)?.promptHint).toMatch(/licensed professional/);
+      expect(rows.find((l) => l.id === id)?.promptHint).toMatch(/legal, medical, tax or financial advice, engineering sign-off/);
+    }
+    expect(rows.find((l) => l.id === 'marketplace-network')?.promptHint).toMatch(/software runs the matching, trust and operations/i);
     expect(rows.find((l) => l.id === 'review-gap')?.weight).toBe(0.5);
     expect(rows.find((l) => l.id === 'platform-shockwave')?.weight).toBe(0.5);
     // Existing database: weights null, ambition lenses missing.
@@ -145,5 +151,13 @@ describe('seed sectors', () => {
     const [m] = await db.select().from(markets);
     expect(m!.sectors.slice(0, 2)).toEqual(['my own sector', 'HVAC']);
     for (const x of NEW) expect(m!.sectors.filter((s) => s === x)).toHaveLength(1);
+  });
+  it('never re-add a default sector the owner removed (only the bench-v3 sectors are appended)', async () => {
+    const db = await testDb();
+    await seedDefaults(db);
+    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] });
+    await seedDefaults(db);
+    const [m] = await db.select().from(markets);
+    expect(m!.sectors).toEqual(['my own sector', 'HVAC', ...NEW]);
   });
 });

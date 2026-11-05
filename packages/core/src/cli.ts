@@ -609,7 +609,6 @@ async function auditReviewCommand(passId: string | undefined, opts: AuditReviewO
   try {
     const id = passId ?? await newestPassId(db);
     if (!id) throw new CliError('No benchmark passes yet. Queue one first: npm run gen -- bench run', 1);
-    const started = new Date();
     let res;
     try {
       res = await reviewPassIdeas({ db, router: buildRouter(env, db), log: out }, id, { dryRun: opts.dryRun });
@@ -621,9 +620,8 @@ async function auditReviewCommand(passId: string | undefined, opts: AuditReviewO
       out('Dry run: no model calls were made and nothing was saved.');
       return 0;
     }
-    const [spent] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
-      .where(and(eq(llmCalls.stage, 'review'), isNull(llmCalls.runId), gte(llmCalls.createdAt, started)));
-    out(`Pass ${id}: reviewed ${res.reviewed}, skipped ${res.skipped}, cost $${Number(spent?.total ?? 0).toFixed(4)} (estimated $${res.estimatedUsd.toFixed(2)}).`);
+    out(`Pass ${id}: reviewed ${res.reviewed}, skipped ${res.skipped}, cost $${res.spentUsd.toFixed(4)} (estimated $${res.estimatedUsd.toFixed(2)}).`);
+    if (res.stoppedForBudget) out('Stopped early: the spend passed twice the estimate. Run the command again to review the rest.');
     if (res.reviewed > 0) out(`See the reviewer metrics: npm run gen -- bench report ${id} --recompute`);
     return 0;
   } finally {

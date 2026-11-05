@@ -18,3 +18,20 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
 - **Audit deltas:** to be filled.
 - **Owner notes:** to be filled.
 - **Next:** to be filled.
+- **Notes on reading it:**
+  - The demand-evidence metric counts only ideas citing a library **trend, rule change or market** entry. Pricing
+    entries and opportunity signals, which ideate v12 also accepts as demand sources, are not counted, so it
+    understates demand evidence for bench-v3 ideas.
+  - bench-v2 ideas have no **Edge** or **Scale** lines (ideate v12 added them), so the reviewer sees less about each
+    one. That may favour bench-v3 on reviewer edge (and scale) for reasons of format, not only quality.
+
+## 2026-11-04: harvest angle split (controller ruling)
+
+- **Change:** every sector research call in open and sector seeds stays a **pain** call, as before this round.
+  Opportunity calls are **added** on top: round(0.4 × sector calls), at least 1 when there are 2 or more sector calls,
+  aimed at the first sectors in order, so a re-run makes the same calls (R20). The open seed's consumer-segment call
+  stays a pain call; idea and lens seeds make one pain call, as before. Examples: 2 sectors give 2 pain calls and 1
+  opportunity call; an open seed (6 sectors and the consumer call) gives 7 pain calls and 2 opportunity calls.
+- **Why:** the first version split the existing calls, which took pain evidence away from 40% of the sectors. The
+  evidence rule still needs complaints, so pain coverage stays whole and opportunity is extra.
+- **Cost:** about 2 or 3 more research calls per open or sector run.

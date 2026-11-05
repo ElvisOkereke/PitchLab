@@ -1,7 +1,7 @@
 import { OWNER_IDEA_TAGS } from '@bcg/core/audit/owner-tags';
 import type { RunListRow } from '@bcg/core/dashboard/runs';
 import { defaultRunConfig } from '@bcg/core/pipeline/types';
-import { cleanup, render, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GLOSSARY } from '@/lib/glossary';
 
@@ -49,6 +49,36 @@ describe('idea rating controls', () => {
     expect(within(f).getByRole('button', { name: 'too niche' }).getAttribute('aria-pressed')).toBe('false');
     expect(f.querySelector('input[name="rating"]')?.getAttribute('value')).toBe('1');
     expect([...f.querySelectorAll('input[name="tags"]')].map((i) => i.getAttribute('value'))).toEqual(['love it', 'boring']);
+  });
+
+  it('keeps the ideas list open across a re-render or remount after a rating submit, per run, and forgets it when closed', () => {
+    try { sessionStorage.clear(); } catch { /* storage unavailable */ }
+    const ideasDetails = (c: HTMLElement) => c.querySelector('[data-label="Ideas"] details') as HTMLDetailsElement;
+    const first = render(<RunsHistory rows={[run([idea()])]} total={1} page={1} pageSize={20} />);
+    const d = ideasDetails(first.container);
+    expect(d.open).toBe(false);
+    d.open = true;
+    fireEvent(d, new Event('toggle'));
+    // A re-render with the saved rating (what revalidation does) keeps it open.
+    first.rerender(<RunsHistory rows={[run([idea({ ownerRating: 1 })])]} total={1} page={1} pageSize={20} />);
+    expect(ideasDetails(first.container).open).toBe(true);
+    // A remount (a full refresh) restores it.
+    cleanup();
+    const second = render(<RunsHistory rows={[run([idea({ ownerRating: 1 })])]} total={1} page={1} pageSize={20} />);
+    const d2 = ideasDetails(second.container);
+    expect(d2.open).toBe(true);
+    // Another run's list stays closed.
+    cleanup();
+    const other = { ...run([idea()]), id: '77777777-7777-4777-8777-777777777777' };
+    expect(ideasDetails(render(<RunsHistory rows={[other]} total={1} page={1} pageSize={20} />).container).open).toBe(false);
+    cleanup();
+    // Closing it forgets it.
+    const third = render(<RunsHistory rows={[run([idea()])]} total={1} page={1} pageSize={20} />);
+    const d3 = ideasDetails(third.container);
+    d3.open = false;
+    fireEvent(d3, new Event('toggle'));
+    cleanup();
+    expect(ideasDetails(render(<RunsHistory rows={[run([idea()])]} total={1} page={1} pageSize={20} />).container).open).toBe(false);
   });
 
   it('has the help tip text from the owner', () => {

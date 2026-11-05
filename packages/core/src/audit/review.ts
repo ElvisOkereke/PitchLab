@@ -1,9 +1,9 @@
 // Idea reviewer (gen audit review): a model stage outside the run pipeline scores a benchmark pass's generated ideas for
 // scale, edge, novelty and niche. It never sees owner ratings, tags or holdout items; ideas are wrapped as untrusted.
-import { and, asc, desc, eq, inArray, notExists } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists, sum } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { benchmarkPasses, ideaReviews, ideas, runs } from '../db/schema';
+import { benchmarkPasses, ideaReviews, ideas, llmCalls, runs } from '../db/schema';
 import { IDEA_REVIEW_VERSION } from '../bench/definitions';
 import { costOf } from '../config/prices';
 import { loadPrompt } from '../llm/prompts';
@@ -16,6 +16,10 @@ export const REVIEW_BATCH_SIZE = 10;
 /** Most ideas one review pass takes (a benchmark pass has about 60–72); the rest wait for the next run. */
 export const REVIEW_IDEAS_MAX = 500;
 const REASON_MAX = 300;
+/** Output tokens a review call may use: ten ideas of reasons and JSON, with room for a reasoning model's thinking. */
+export const REVIEW_MAX_TOKENS = 16000;
+/** The soft budget: a run stops after a batch once its review spend passes this multiple of the estimate. */
+export const REVIEW_BUDGET_MULTIPLE = 2;
 
 /**
  * Cost estimate per call: the prompt at about 4 characters a token, plus about 800 output tokens per idea (four short
@@ -37,7 +41,15 @@ export const ReviewOutputSchema = z.object({
 type Entry = z.infer<typeof ReviewOutputSchema>['reviews'][number];
 
 export type ReviewDeps = { db: Db; router: ModelRouter; log: (m: string) => void };
-export type ReviewResult = { reviewed: number; skipped: number; estimatedUsd: number };
+export type ReviewResult = {
+  reviewed: number;
+  skipped: number;
+  estimatedUsd: number;
+  /** Review spend logged since this run started (llm_calls on the `review` stage outside any run). */
+  spentUsd: number;
+  /** True when the soft budget stopped the run before its last batch. */
+  stoppedForBudget: boolean;
+};
 
 /** Why a pass cannot be reviewed. */
 export class ReviewRefusal extends Error {
@@ -50,13 +62,23 @@ export class ReviewRefusal extends Error {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const inRange = (n: number) => Number.isInteger(n) && n >= 1 && n <= 5;
 
-/** The newest benchmark pass (kind `pass`, not a baseline or recompute), or null. */
+/**
+ * The pass `--last` means: the newest finished benchmark pass (kind `pass`, not a baseline or recompute, status not
+ * `running`); only when none has finished, the newest pass (which the reviewer then refuses as still running); or null.
+ */
 export async function newestPassId(db: Db): Promise<string | null> {
-  const [row] = await db.select({ id: benchmarkPasses.id }).from(benchmarkPasses)
+  const rows = await db.select({ id: benchmarkPasses.id, status: benchmarkPasses.status }).from(benchmarkPasses)
     .where(eq(benchmarkPasses.kind, 'pass'))
     .orderBy(desc(benchmarkPasses.createdAt), desc(benchmarkPasses.id))
-    .limit(1);
-  return row?.id ?? null;
+    .limit(50);
+  return (rows.find((r) => r.status !== 'running') ?? rows[0])?.id ?? null;
+}
+
+/** Total review spend logged so far (llm_calls on the `review` stage outside any run). */
+async function reviewSpendUsd(db: Db): Promise<number> {
+  const [row] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
+    .where(and(eq(llmCalls.stage, 'review'), isNull(llmCalls.runId)));
+  return Number(row?.total ?? 0);
 }
 
 /** Estimated cost of reviewing `ideaCount` ideas on `model`, sent as these rendered prompts (one call each). */
@@ -72,7 +94,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  * Reviews the pass's generated ideas that have no review under the current prompt version, 10 per call on the
  * `review` stage. Valid reviews are stored as each batch returns; unknown ids, repeats, out-of-range scores and ideas
  * the model left out are skipped and counted, so a re-run reviews only what is missing (R20). A batch whose output stays
- * invalid after the router's re-asks is skipped; any other error stops the run with earlier batches kept.
+ * invalid after the router's re-asks is skipped; any other error stops the run with earlier batches kept. A soft
+ * budget stops the run after a batch once its spend passes twice the estimate (earlier batches kept; a re-run goes on).
  * `dryRun` estimates the cost and makes no call.
  */
 export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { dryRun?: boolean } = {}): Promise<ReviewResult> {
@@ -117,16 +140,28 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
   }));
   const estimatedUsd = estimateReviewUsd(model, prompts, todo.length);
   log(`${plural(todo.length, 'idea')} to review in ${plural(batches.length, 'call')} on ${model}, estimated $${estimatedUsd.toFixed(2)}.`);
-  if (opts.dryRun || todo.length === 0) return { reviewed: 0, skipped: 0, estimatedUsd };
+  if (opts.dryRun || todo.length === 0) return { reviewed: 0, skipped: 0, estimatedUsd, spentUsd: 0, stoppedForBudget: false };
 
+  // Spend is measured as the logged total minus the total at the start, so no clock is compared.
+  const spentBefore = await reviewSpendUsd(db);
+  let spentUsd = 0;
+  let stoppedForBudget = false;
   let reviewed = 0;
   let skipped = 0;
   let invalid = 0;
   for (const [i, batch] of batches.entries()) {
+    if (i > 0) {
+      spentUsd = (await reviewSpendUsd(db)) - spentBefore;
+      if (spentUsd > REVIEW_BUDGET_MULTIPLE * estimatedUsd) {
+        log(`Stopped after call ${i} of ${batches.length}: spent $${spentUsd.toFixed(2)}, more than twice the estimate ($${estimatedUsd.toFixed(2)}). ${plural(reviewed, 'idea')} reviewed so far; run the command again to go on.`);
+        stoppedForBudget = true;
+        break;
+      }
+    }
     let entries: Entry[];
     try {
       const out = await router.structured('review', {
-        prompt: prompts[i]!, schema: ReviewOutputSchema, schemaName: 'idea_reviews',
+        prompt: prompts[i]!, schema: ReviewOutputSchema, schemaName: 'idea_reviews', maxTokens: REVIEW_MAX_TOKENS,
       }, { runId: null, promptVersion: prompt.version });
       entries = out.reviews;
     } catch (err) {
@@ -160,7 +195,8 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
     reviewed += stored.length;
     skipped += batch.length - stored.length;
   }
+  if (!stoppedForBudget) spentUsd = (await reviewSpendUsd(db)) - spentBefore;
   if (invalid > 0) log(`Dropped ${plural(invalid, 'invalid review')} (unknown or repeated ids, or scores outside 1–5).`);
   if (skipped > 0) log(`${plural(skipped, 'idea')} got no valid review; run the command again to retry them.`);
-  return { reviewed, skipped, estimatedUsd };
+  return { reviewed, skipped, estimatedUsd, spentUsd, stoppedForBudget };
 }

@@ -73,6 +73,16 @@ describe('rateIdeaAction', () => {
     expect(await snapshotDb(state.db)).toEqual(before);
   });
 
+  it('refuses an owner idea with a message and writes nothing', async () => {
+    const idea = await seedGatedOutIdea(state.db);
+    await state.db.update(ideas).set({ origin: 'owner' }).where(eq(ideas.id, idea.id));
+    const before = await snapshotDb(state.db);
+    const r = await rateIdeaAction({}, form({ ideaId: idea.id, rating: '', op: 'up' }));
+    expect(r.ok).toBeUndefined();
+    expect(r.error).toMatch(/only generated ideas/i);
+    expect(await snapshotDb(state.db)).toEqual(before);
+  });
+
   it('is refused without a session and writes nothing', async () => {
     const idea = await seedGatedOutIdea(state.db);
     const before = await snapshotDb(state.db);

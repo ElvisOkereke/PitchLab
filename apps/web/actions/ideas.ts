@@ -20,7 +20,9 @@ export async function rateIdeaAction(_prev: FormState, fd: FormData): Promise<Fo
   const ref = IdeaRefSchema.safeParse(raw);
   const next = nextIdeaRating(raw);
   if (!ref.success || !next) return { error: 'Could not save that rating. Refresh and try again.' };
-  await rateIdea(getDb(), { ideaId: ref.data.ideaId, ...next });
+  if (!(await rateIdea(getDb(), { ideaId: ref.data.ideaId, ...next }))) {
+    return { error: 'You can rate only generated ideas. Refresh and try again.' };
+  }
   revalidatePath('/runs');
   return { ok: true };
 }

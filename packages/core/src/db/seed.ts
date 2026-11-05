@@ -18,6 +18,9 @@ export const CA_US = {
   ],
 };
 
+/** The sectors bench-v3 names. Existing databases get only these appended when missing (see seedDefaults). */
+export const BENCH_V3_SECTORS = ['logistics and freight', 'construction and trades', 'healthcare clinics', 'education and tutoring'];
+
 export const LENSES = [
   {
     id: 'silent-failure',
@@ -125,14 +128,14 @@ export const AMBITION_LENSES = [
     name: 'AI replaces expensive labour',
     audience: ANY,
     pattern: 'Expensive, repeated human work done across many companies or people, done by software at a fraction of the cost',
-    promptHint: "Find work in the signals that people are paid to do by hand again and again across many buyers, and propose software that does most of it end to end at a fraction of the cost. Name today's option (the staff, agency or tool people use now), what it costs, and the concrete advantage in cost, speed or accuracy.",
+    promptHint: "Find work in the signals that people are paid to do by hand again and again across many buyers, and propose software that does most of it end to end at a fraction of the cost. Name today's option (the staff, agency or tool people use now), what it costs, and the concrete advantage in cost, speed or accuracy. Skip work that legally needs a licensed professional (legal, medical, tax or financial advice, engineering sign-off): software cannot replace the licence.",
   },
   {
     id: 'ten-x-incumbent',
     name: '10x on an incumbent',
     audience: ANY,
     pattern: 'Something people already buy in volume, made 10x cheaper, faster or easier for a segment the incumbent serves badly',
-    promptHint: "Find a product or service that many people already pay for, and a segment it serves badly (too expensive, too slow, too hard). Propose a version that is about ten times better on one of those for that segment. Name today's option, who it fails, and the concrete advantage.",
+    promptHint: "Find a product or service that many people already pay for, and a segment it serves badly (too expensive, too slow, too hard). Propose a version that is about ten times better on one of those for that segment. Name today's option, who it fails, and the concrete advantage. Skip services that legally need a licensed professional (legal, medical, tax or financial advice, engineering sign-off): software cannot replace the licence.",
   },
   {
     id: 'new-capability',
@@ -146,7 +149,7 @@ export const AMBITION_LENSES = [
     name: 'Marketplace or network',
     audience: ANY,
     pattern: 'Connect two sides where trust or matching is broken, so the value grows with each side that joins',
-    promptHint: "Find a place in the signals where buyers and sellers (or two other sides) struggle to find, trust or price each other, and propose a marketplace or network that fixes the matching. Name how they connect today, which side is hardest to win first, and why each new member makes it better for the rest.",
+    promptHint: "Find a place in the signals where buyers and sellers (or two other sides) struggle to find, trust or price each other, and propose a marketplace or network that fixes the matching. Software runs the matching, trust and operations, not a team doing it by hand. Name how they connect today, which side is hardest to win first, and why each new member makes it better for the rest.",
   },
   {
     id: 'data-flywheel',
@@ -178,8 +181,9 @@ export const CONSUMER_SEGMENTS = [
 export async function seedDefaults(db: Db): Promise<void> {
   await db.insert(markets).values(CA_US).onConflictDoNothing({ target: markets.id });
   await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES]).onConflictDoNothing({ target: lenses.id });
-  // Existing databases: append any sector the market lacks (bench-v3 names some); never remove or reorder.
-  for (const sector of CA_US.sectors) {
+  // Existing databases: append a bench-v3 sector the market lacks; never remove or reorder. Other defaults are not
+  // re-added, so a default sector the owner removed stays removed.
+  for (const sector of BENCH_V3_SECTORS) {
     await db.update(markets).set({ sectors: sql`array_append(${markets.sectors}, ${sector})` })
       .where(and(eq(markets.id, CA_US.id), sql`not (${sector} = any(${markets.sectors}))`));
   }

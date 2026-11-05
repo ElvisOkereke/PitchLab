@@ -148,4 +148,17 @@ describe('holdout isolation guard', () => {
     const review = readFileSync(join(root, 'src/audit/review.ts'), 'utf8');
     expect(review).not.toMatch(/audit\.holdout|from '[^']*holdout'|holdout(List|Compare|Set|Add)/i);
   });
+
+  it('no research, case, library, calc, config or worker file mentions it either (only holdout.ts, the CLI and the report may)', () => {
+    const allowed = (f: string) => /[\\/]src[\\/](audit[\\/]holdout\.ts|cli[^\\/]*\.ts|bench[\\/]markdown\.ts)$/.test(f);
+    const scanned = [
+      ...['src/research', 'src/case', 'src/library', 'src/calc', 'src/config'].flatMap((d) => files(join(root, d))),
+      join(root, 'src/worker.ts'),
+    ].filter((f) => !allowed(f));
+    expect(scanned.some((f) => f.endsWith('worker.ts'))).toBe(true);
+    expect(scanned.some((f) => /[\\/]config[\\/]models\.ts$/.test(f))).toBe(true);
+    expect(scanned.length).toBeGreaterThan(20);
+    for (const f of scanned) expect(readFileSync(f, 'utf8'), f).not.toMatch(/holdout/i);
+    expect(allowed(join(root, 'src/audit/holdout.ts')) && allowed(join(root, 'src/cli-program.ts')) && allowed(join(root, 'src/bench/markdown.ts'))).toBe(true);
+  });
 });

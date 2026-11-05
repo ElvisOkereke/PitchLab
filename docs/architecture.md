@@ -221,21 +221,29 @@ Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design
 - **Reviewer stage:** `idea-review.v1` scores each generated idea 1–5 for `scale`, `edge`, `novelty` and `niche`, with
   reasons, ten ideas per call, on the model stage `review` (default: the `score` stage's model), stored in
   `idea_reviews`. Valid reviews are stored, the rest skipped with a count, and a re-run reviews only what is missing.
-  `gen audit review` runs it. Liked is `edge >= 4 && scale >= 3`; disliked is `edge <= 2 || scale <= 2`; the niche
+  `gen audit review <passId>` or `--last` (the newest finished pass) runs it. Each call may use up to 16,000 output
+  tokens, and a soft budget stops the run after a batch once its spend passes twice the estimate. Liked is `edge >= 4 && scale >= 3`; disliked is `edge <= 2 || scale <= 2`; the niche
   share counts `niche >= 4 || scale <= 2`. Agreement with the owner shows from 10 rated ideas.
 - **Pass audit and flags:** top domain over 15%, vendor voice over 40%, one lens over 35% of ideas, one gate check over
-  50% of kills, niche share over 30%. A pass with no signals or gate entrants renders "no data" lines and no flags.
+  50% of kills, niche share over 30%. A pass with no signals or gate entrants renders "no data" lines and no flags. A
+  flag is skipped when its sample is tiny (under 10 signals, or under 5 ideas, kills or reviews), and the top-domain
+  flag ignores an `unknown` domain (unparseable urls).
 - **Holdout:** the setting `audit.holdout` holds up to 10 items of up to 1,000 characters, compared by cosine
-  similarity with the library embedding model. No prompt code reads it; a guard test enforces this.
-- **Opportunity harvest:** `harvest-research.v7` splits a run's research calls between pain and opportunity
-  (`opportunityShare` 0.4; `signals.kind` is `pain` or `opportunity`). The setting `harvest.techForums` (default off)
+  similarity with the library embedding model. No prompt code reads it; a guard test scans the pipeline, prompts,
+  research, case, library, calc, config and worker code (only `audit/holdout.ts`, the CLI and the bench report may
+  mention it).
+- **Opportunity harvest:** `harvest-research.v7` keeps every sector's pain call and adds opportunity calls on top:
+  round(0.4 x sector calls), at least 1 when there are 2 or more, aimed at the first sectors in order (`opportunityShare`
+  0.4; `signals.kind` is `pain` or `opportunity`). The open seed's consumer-segment call stays a pain call; idea and lens
+  seeds make one pain call. The setting `harvest.techForums` (default off)
   gates the WordPress and GitHub collectors; Hacker News and Stack Exchange are unchanged.
 - **Ambition lenses and sampling:** six lenses (`ai-replaces-labour`, `ten-x-incumbent`, `new-capability`,
   `marketplace-network`, `data-flywheel`, `picks-and-shovels`). Open and sector runs take at most 6 lenses with at least
-  2 ambition and at least 2 consumer; `review-gap` and `platform-shockwave` have weight 0.5 in weighted sampling.
+  2 ambition and at least 2 consumer; `review-gap` and `platform-shockwave` have weight 0.5 in weighted sampling. A
+  lens weight of 0 means "almost never", not "never": it is clamped to a tiny positive weight.
 - **ideate v12:** each idea adds `edge` (`kind`, `claim`, `versus`, `whyNow`) and `scale` (`buyers`, `basis`, optional
-  `source`). The evidence rule has two routes: 3 operator or neutral complaint signals from 3 domains, or 1 operator
-  or neutral signal plus 1 demand source (a cited library trend, market, rule change or pricing entry, or an
+  `source`). The evidence rule has two routes: 3 operator or neutral complaint signals from 3 domains, or at least 1
+  operator or neutral pain (complaint) signal plus 1 demand source (a cited library trend, market, rule change or pricing entry, or an
   opportunity signal from another domain). An unshown source, or the same domain as the only signal, does not count.
 - **gate v5:** `generic` passes a concrete, checkable edge against named incumbents; the `evidence` code rule matches
   ideate's two routes.

@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import {
-  cases, claims, gateVerdicts, ideas, landingEvents, landingPages, outreachDrafts, outreachEvents, prospects, runs, scores,
+  cases, claims, gateVerdicts, ideaReviews, ideas, landingEvents, landingPages, outreachDrafts, outreachEvents, prospects, runs, scores,
   settings, stageEvents, suppressions, validationJobs, validationPacks,
 } from '../db/schema';
 import { EXAMPLE_SLUG, exampleFixture } from './fixture';
@@ -67,6 +67,7 @@ async function deleteExample(tx: Tx): Promise<void> {
   }
   if (ideaIds.length) {
     await tx.delete(gateVerdicts).where(inArray(gateVerdicts.ideaId, ideaIds));
+    await tx.delete(ideaReviews).where(inArray(ideaReviews.ideaId, ideaIds));
     await tx.delete(ideas).where(inArray(ideas.id, ideaIds));
   }
   if (runIds.length) await tx.delete(runs).where(inArray(runs.id, runIds));

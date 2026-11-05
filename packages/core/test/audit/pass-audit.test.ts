@@ -214,12 +214,48 @@ describe('computePassAudit', () => {
     it('a pass with signals but no ideas or gate entrants raises only evidence flags and never divides by zero', async () => {
       const db = await testDb();
       const { passId, runIds } = await newPass(db);
-      await sigs(db, runIds[0]!, many('a.example', 3));
+      await sigs(db, runIds[0]!, many('a.example', 10));
       const a = await computePassAudit(db, passId);
       expect(a.flags).toEqual(['a.example supplied 100% of the evidence (limit 15%)']);
       expect(a.lenses).toEqual([]);
       expect(a.gateKills).toEqual({});
       expect(a.nicheShare).toBeNull();
+    });
+
+    it('skip a flag when its sample is tiny: under 10 signals, or under 5 ideas, kills or reviews', async () => {
+      const db = await testDb();
+      const { passId, runIds } = await newPass(db);
+      // 9 signals, all one vendor domain.
+      await sigs(db, runIds[0]!, many('a.example', 9, 'vendor'));
+      // 4 ideas, all one lens, all killed by one check, all reviewed niche.
+      for (let i = 0; i < 4; i++) {
+        const idea = await insertIdea(db, runIds[0]!, { lensId: 'aggregator', status: 'gated_out' });
+        await db.insert(gateVerdicts).values({ ideaId: idea.id, check: 'control', pass: false, reasoning: 'r', model: 'm', promptVersion: 'p' });
+        await db.insert(ideaReviews).values({ ideaId: idea.id, scale: 1, edge: 3, novelty: 3, niche: 5, reasons: {}, model: 'm', promptVersion: IDEA_REVIEW_VERSION });
+      }
+      const a = await computePassAudit(db, passId);
+      expect(a.flags).toEqual([]);
+      // The counts and shares are still reported.
+      expect(a.signals.total).toBe(9);
+      expect(a.nicheShare).toBe(1);
+      // One more of each reaches the minimum and every flag fires.
+      await sigs(db, runIds[0]!, many('a.example', 1, 'vendor'));
+      const idea = await insertIdea(db, runIds[0]!, { lensId: 'aggregator', status: 'gated_out' });
+      await db.insert(gateVerdicts).values({ ideaId: idea.id, check: 'control', pass: false, reasoning: 'r', model: 'm', promptVersion: 'p' });
+      await db.insert(ideaReviews).values({ ideaId: idea.id, scale: 1, edge: 3, novelty: 3, niche: 5, reasons: {}, model: 'm', promptVersion: IDEA_REVIEW_VERSION });
+      expect((await computePassAudit(db, passId)).flags).toHaveLength(5);
+    });
+
+    it('the top-domain flag ignores signals whose domain is unknown', async () => {
+      const db = await testDb();
+      const { passId, runIds } = await newPass(db);
+      for (let i = 0; i < 30; i++) {
+        await db.insert(signals).values({ runId: runIds[0]!, marketId: 'ca-us', source: 'web', url: `not a url ${i}`, title: 't', quote: 'q', quoteHash: `bad${i}`, voice: 'operator' });
+      }
+      await sigs(db, runIds[0]!, [...many('b.example', 16), ...Array.from({ length: 54 }, (_, i) => ({ host: `u${i}.example` }))]);
+      const a = await computePassAudit(db, passId);
+      expect(a.signals.topDomains[0]).toEqual({ domain: 'unknown', share: 0.3 });
+      expect(a.flags).toEqual(['b.example supplied 16% of the evidence (limit 15%)']);
     });
   });
 });

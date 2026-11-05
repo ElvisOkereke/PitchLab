@@ -208,6 +208,43 @@ describe('reviewPassIdeas', () => {
   it('the output schema accepts out-of-range scores so they can be skipped one by one', () => {
     expect(ReviewOutputSchema.safeParse({ reviews: [review('x', { scale: 9 })] }).success).toBe(true);
   });
+
+  it('asks for up to 16000 output tokens per call (ten ideas of reasons, plus thinking)', async () => {
+    const db = await testDb();
+    const { passId } = await passWith(db, [3]);
+    const seen: (number | undefined)[] = [];
+    const base = echoRouter();
+    const router: ModelRouter = { ...base, structured: (stage, req, ctx) => { seen.push(req.maxTokens); return base.structured(stage, req, ctx); } };
+    await reviewPassIdeas({ db, router, ...quiet }, passId);
+    expect(seen).toEqual([16000]);
+  });
+
+  it('stops after a batch once the review spend since the start passes twice the estimate, keeping what it stored', async () => {
+    const db = await testDb();
+    const { passId } = await passWith(db, [30]);
+    // Spend logged before the start does not count against this run.
+    await db.insert(llmCalls).values({ runId: null, stage: 'review', provider: 'x', model: 'm', inputTokens: 0, outputTokens: 0, searchRequests: 0, costUsd: '999', latencyMs: 1, promptVersion: 'idea-review.v1', ok: true });
+    const base = echoRouter();
+    const router: ModelRouter = {
+      ...base,
+      async structured(stage, req, ctx) {
+        // Each call costs $5, far above the estimate for 10 ideas.
+        await db.insert(llmCalls).values({ runId: null, stage: 'review', provider: 'x', model: 'm', inputTokens: 0, outputTokens: 0, searchRequests: 0, costUsd: '5', latencyMs: 1, promptVersion: 'idea-review.v1', ok: true });
+        return base.structured(stage, req, ctx);
+      },
+    };
+    const logs: string[] = [];
+    const res = await reviewPassIdeas({ db, router, log: (m) => logs.push(m) }, passId);
+    expect(base.prompts).toHaveLength(1);
+    expect(res).toMatchObject({ reviewed: 10, stoppedForBudget: true, spentUsd: 5 });
+    expect(await db.select().from(ideaReviews)).toHaveLength(10);
+    expect(logs.join('\n')).toMatch(/Stopped after call 1 of 3: spent \$5\.00, more than twice the estimate.*10 ideas reviewed so far/s);
+    // Within budget it runs every batch.
+    const cheap = echoRouter();
+    const again = await reviewPassIdeas({ db, router: cheap, ...quiet }, passId);
+    expect(cheap.prompts).toHaveLength(2);
+    expect(again).toMatchObject({ reviewed: 20, stoppedForBudget: false });
+  });
 });
 
 describe('newestPassId', () => {
@@ -222,5 +259,15 @@ describe('newestPassId', () => {
     expect(await newestPassId(db)).toBe(newer!.id);
     await db.delete(benchmarkPasses).where(eq(benchmarkPasses.id, newer!.id));
     expect(await newestPassId(db)).toBe(older!.id);
+  });
+
+  it('prefers the newest finished pass over a newer one still running; a running pass only when nothing has finished', async () => {
+    const db = await testDb();
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 1, 0, 0, s));
+    const [running] = await db.insert(benchmarkPasses).values({ version: 'bench-v3', label: 'r', kind: 'pass', status: 'running', runIds: [], createdAt: at(1) }).returning();
+    expect(await newestPassId(db)).toBe(running!.id);
+    const [done] = await db.insert(benchmarkPasses).values({ version: 'bench-v3', label: 'a', kind: 'pass', status: 'incomplete', runIds: [], createdAt: at(2) }).returning();
+    await db.insert(benchmarkPasses).values({ version: 'bench-v3', label: 'b', kind: 'pass', status: 'running', runIds: [], createdAt: at(3) });
+    expect(await newestPassId(db)).toBe(done!.id);
   });
 });

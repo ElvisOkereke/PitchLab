@@ -152,39 +152,51 @@ follow its progress.
   saved, so `gen resume <runId>` restarts a failed run at the failed stage. A stage with nothing left to pass on skips
   the rest.
   - **harvest:** library signals first (up to 15 matching entries, or 7 once the library holds 50 or more eligible
-    ones), then live research: one web research call per sector (up to 8, 3 searches each), plus one call on the run's
-    consumer segments for open seeds, plus the free tech forums (Hacker News, Stack Exchange, GitHub, WordPress.org)
-    when a software-adjacent sector or a lens seed is used. The model extracts pain quotes and tags each one's voice;
-    a quote is kept only if it appears in the fetched text.
-  - **ideate** (prompt v10): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** lenses;
-    lens seeds use exactly the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
+    ones), then live research: one pain research call per sector (up to 8, 3 searches each), plus one pain call on the
+    run's consumer segments for open seeds, plus opportunity calls (growth, spending and what is working) on top: 40%
+    of the sector calls, rounded, at least 1 when there are 2 or more, aimed at the first sectors. Idea and lens seeds
+    make one pain call. The free tech forums (Hacker News and Stack Exchange; GitHub and WordPress.org only when the
+    setting `harvest.techForums` is on) are used when a software-adjacent sector or a lens seed is used. The model
+    extracts pain or opportunity quotes and tags each one's voice; a quote is kept only if it appears in the fetched
+    text.
+  - **ideate** (prompt v12): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** and at
+    least **2 ambition** lenses (`review-gap` and `platform-shockwave` are drawn at half weight); lens seeds use exactly
+    the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
     startups (up to 8) and **pricing** entries (up to 15), what is **changing** (up to 10 trends and rule changes, rule
     changes with an effective date within 18 months first) and **market size** entries (up to 6), plus past gate kills
     and ideas that already have cases. An idea cites a change or market in `libraryItemIds` only when it depends on it.
     Each idea names its audience, one of 11 business models, revenue mechanics, value to the user per year, a price
-    hint, barriers to start and to copy (1 to 5) and the incumbents it claims to beat. The run must reach at least
+    hint, barriers to start and to copy (1 to 5) and the incumbents it claims to beat. It also states its **edge**
+    (kind: AI, cost, speed, accuracy, data, network, new capability or distribution; the claim, what it beats and why
+    now) and its **scale** (how many buyers, and why). An idea is stored only when its evidence passes one of two
+    routes: 3 operator or neutral complaint signals from 3 domains, or 1 such complaint plus 1 **demand source** (a
+    cited library trend, market, rule change or pricing entry it was shown, or an opportunity signal from another
+    domain than the complaint). The run must reach at least
     **30% consumer** ideas and **4 business models**; if it falls short on the mix, or on the idea count, ideate asks once more
     (mix gaps plus a count top-up, up to 6 extra ideas), never in a loop. Calls ask for 3 ideas at a time, and drops are
     logged with a reason (field path and zod code, never model content). A value or price whose source is not a library entry or signal shown to the model loses the source
     and its basis is labelled **"Assumption:"**.
   - **dedupe:** embeds each idea and marks copies (similarity 0.88 or more) of an idea from any earlier run or one
     already kept in this run. Owner ideas are always kept.
-  - **screen** (prompt v4): the model scores 7 criteria; code adds two scores it cannot override, the **money case**
+  - **screen** (prompt v5): the model scores 7 criteria, plus **edge** and **scale** (1 to 5) when the idea states
+    them; code adds two scores it cannot override, the **money case**
     (from the value multiple: 10× or more scores 5, 5× 4, 3× 3, 1.5× 2, less 1; unknown 2; ads and affiliate, where
     the user pays nothing, a neutral 3) and the **barrier** score (easy to start and hard to copy score high). The total
-    is the mean of the 7 criteria, novelty again, money case and barrier. The top ideas advance, skipping any that has
+    is a weighted mean of the 7 criteria, money case, barrier, edge and scale: every value weighs 1 except speed (0.5).
+    An old idea with no edge or scale counts as 2 on each. The top ideas advance, skipping any that has
     too little evidence for the gate (the gate's own evidence rule, applied early), a third idea with the same business
     model (cap of 2 per model), a near-twin of an advancing idea, a copy of an idea that has a case, or one close to a
     past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant.
-  - **gate** (prompt v3): competitor research, then a different model judges five checks, harshly: **generic**
-    (established competitors or library startups already provide the function; a claimed gap that is only positioning
-    does not count), **regulation** (needs a licence), **control** (depends on unofficial APIs, a partner or one
+  - **gate** (prompt v5): competitor research, then a different model judges five checks, harshly: **generic**
+    (established competitors or library startups already provide the function and the idea has no concrete, checkable
+    edge against named incumbents; a claimed gap that is only positioning does not count), **regulation** (needs a licence), **control** (depends on unofficial APIs, a partner or one
     platform), **autonomy** and **reachability** (buyers, or individuals through communities, search, app stores,
     content or partners, can be reached at scale). **Autonomy rule:** fail only when delivery is mostly human labour;
     pass when software-led with light setup or review, as a guide under about 2 hours per customer per month.
-    **Evidence** is a code rule: at least 3 independent operator or neutral sources on distinct domains (up to 2
-    threads per community site; vendor and untagged sources never count). Any failure kills a generated idea.
+    **Evidence** is a code rule with ideate's two routes: at least 3 independent operator or neutral sources on
+    distinct domains (up to 2 threads per community site; vendor and untagged sources never count), or 1 operator or
+    neutral complaint plus 1 demand source. Any failure kills a generated idea.
   - **case** (case-write v4): research, then write summary, evidence, numbers inputs, competitors and pitch. The model
     gives only inputs, each with a source or a stated assumption; code does all arithmetic with a formula per business
     model (for example subscription, take rate × GMV, impressions × CPM, referrals × commission, conversion × paid
@@ -255,8 +267,9 @@ follow its progress.
 
 - **Rate ideas.** On **Runs** (history), give each generated idea a thumbs up or down and optional tags (too niche, no
   edge, not scalable, boring, love it, would build and so on). Rate about 10 ideas per pass.
-- **Idea review.** `gen audit review` has a second model score each idea 1–5 for scale, edge, novelty and niche, with
-  reasons. Once 10 or more ideas are rated, the scorecard shows how often it agrees with you.
+- **Idea review.** `gen audit review --last` (or with a pass id) has a second model score each idea 1–5 for scale,
+  edge, novelty and niche, with reasons. Press **Recompute** on the pass afterwards to see the reviews and your
+  ratings, since a pass snapshot is frozen. Once 10 or more ideas are rated, the scorecard shows how often it agrees with you.
 - **Audit on Progress.** Under each finished pass, an **Audit** section shows where ideas came from (domains, vendor
   voice, lenses, what the gate killed) and flags a pass when one source or lens dominates or too many ideas are niche.
 - **Holdout examples.** Write up to 10 ideas you would want in **Settings** (or `gen audit holdout add "..."`). The

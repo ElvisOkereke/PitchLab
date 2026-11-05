@@ -343,7 +343,11 @@ export function selectLenses<L extends { id: string; active: boolean; audience: 
 export const AMBITION_LENS_IDS: readonly string[] = AMBITION_LENSES.map((l) => l.id);
 export const MIN_AMBITION_LENSES = 2;
 
-/** Seeded weighted draw of up to `n` items without replacement; a null weight reads as 1. */
+/**
+ * Seeded weighted draw of up to `n` items without replacement; a null weight reads as 1. A weight of 0 (or below) is
+ * clamped to a tiny positive value, so it means "almost never", not "never": such a lens is still drawn when too few
+ * others are left to fill a required slot.
+ */
 function weightedPick<L extends { weight?: number | null }>(items: L[], n: number, rng: () => number): L[] {
   const left = [...items];
   const out: L[] = [];
