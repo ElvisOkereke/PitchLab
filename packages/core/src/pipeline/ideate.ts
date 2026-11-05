@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
 import { ideaReviews, ideas, lenses, markets, signals } from '../db/schema';
-import { CONSUMER_SEGMENTS } from '../db/seed';
+import { AMBITION_LENSES, CONSUMER_SEGMENTS } from '../db/seed';
 import { ideationContext, renderIdeationContext } from '../library/context';
 import { loadPrompt } from '../llm/prompts';
 import { StructuredOutputError, type CallCtx } from '../llm/types';
@@ -292,11 +292,12 @@ const byId = <L extends { id: string }>(a: L, b: L) => (a.id < b.id ? -1 : a.id 
 
 /**
  * The lenses a run uses. Lens seeds (any config with `lensIds`): exactly those active lenses, in the order given.
- * Otherwise at most MAX_LENSES_PER_RUN active lenses: MIN_CONSUMER_LENSES consumer lenses when available, the rest from
+ * Otherwise at most MAX_LENSES_PER_RUN active lenses: MIN_CONSUMER_LENSES consumer and MIN_AMBITION_LENSES ambition
+ * lenses when available (an ambition lens is never also counted as consumer), the rest drawn by `weight ?? 1` from
  * business and `any` lenses (topped up with more consumer lenses if those run out). Sorted by id before the seeded
- * shuffle, so the choice depends only on `rng`, not on database row order.
+ * draws, so the choice depends only on `rng`, not on database row order.
  */
-export function selectLenses<L extends { id: string; active: boolean; audience: string }>(
+export function selectLenses<L extends { id: string; active: boolean; audience: string; weight?: number | null }>(
   all: L[], cfg: Pick<RunConfig, 'seedType' | 'lensIds'>, rng: () => number,
 ): L[] {
   const active = all.filter((l) => l.active).sort(byId);
@@ -304,12 +305,34 @@ export function selectLenses<L extends { id: string; active: boolean; audience: 
     const found = new Map(active.map((l) => [l.id, l]));
     return [...new Set(cfg.lensIds)].map((id) => found.get(id)).filter((l): l is L => !!l);
   }
-  const consumer = shuffled(active.filter((l) => l.audience === 'consumer'), rng);
-  const rest = shuffled(active.filter((l) => l.audience !== 'consumer'), rng);
-  const nConsumer = Math.min(MIN_CONSUMER_LENSES, consumer.length, MAX_LENSES_PER_RUN);
-  const picked = [...consumer.slice(0, nConsumer), ...rest.slice(0, MAX_LENSES_PER_RUN - nConsumer)];
-  picked.push(...consumer.slice(nConsumer, nConsumer + MAX_LENSES_PER_RUN - picked.length));
+  const consumer = active.filter((l) => l.audience === 'consumer');
+  const rest = active.filter((l) => l.audience !== 'consumer');
+  const ambition = rest.filter((l) => AMBITION_LENS_IDS.includes(l.id));
+  const pickedAmbition = weightedPick(ambition, MIN_AMBITION_LENSES, rng);
+  const pickedConsumer = weightedPick(consumer, MIN_CONSUMER_LENSES, rng);
+  const picked = [...pickedConsumer, ...pickedAmbition];
+  const taken = new Set(picked);
+  picked.push(...weightedPick(rest.filter((l) => !taken.has(l)), MAX_LENSES_PER_RUN - picked.length, rng));
+  const taken2 = new Set(picked);
+  picked.push(...weightedPick(consumer.filter((l) => !taken2.has(l)), MAX_LENSES_PER_RUN - picked.length, rng));
   return shuffled(picked, rng);
+}
+
+export const AMBITION_LENS_IDS: readonly string[] = AMBITION_LENSES.map((l) => l.id);
+export const MIN_AMBITION_LENSES = 2;
+
+/** Seeded weighted draw of up to `n` items without replacement; a null weight reads as 1. */
+function weightedPick<L extends { weight?: number | null }>(items: L[], n: number, rng: () => number): L[] {
+  const left = [...items];
+  const out: L[] = [];
+  while (out.length < n && left.length) {
+    const w = left.map((l) => Math.max(l.weight ?? 1, 1e-6));
+    let r = rng() * w.reduce((a, b) => a + b, 0);
+    let i = 0;
+    while (i < left.length - 1 && r >= w[i]!) r -= w[i++]!;
+    out.push(...left.splice(i, 1));
+  }
+  return out;
 }
 
 /** The run's consumer segments (seeded by run id): ideate shows them and harvest queries the library with them. */

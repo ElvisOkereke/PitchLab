@@ -9,7 +9,7 @@ import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 import {
   checkMix, checkToCopy, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, MOAT_KEYWORDS, normalizeIdea, pickConsumerSegments, pickReaskLens,
-  seededRandom, selectLenses, splitCounts,
+  AMBITION_LENS_IDS, seededRandom, selectLenses, splitCounts,
 } from '../../src/pipeline/ideate';
 import type { ModelRouter } from '../../src/llm/types';
 import { defaultRunConfig, type RunConfig } from '../../src/pipeline/types';
@@ -1117,6 +1117,59 @@ describe('selectLenses', () => {
   it('lens seeds use exactly the chosen active lenses, in the order given, with no cap', () => {
     const lensIds = ['b3', 'c1', 'b0', 'b1', 'b2', 'b4', 'b5', 'c-off'];
     expect(ids(selectLenses(pool, { seedType: 'lens', lensIds }, seededRandom('x')))).toEqual(['b3', 'c1', 'b0', 'b1', 'b2', 'b4', 'b5']);
+  });
+
+  describe('ambition lenses and weights', () => {
+    type W = { id: string; audience: string; active: boolean; weight?: number | null };
+    const A = (id: string): W => ({ id, audience: 'any', active: true });
+    const big: W[] = [
+      ...Array.from({ length: 8 }, (_, i) => ({ ...L(`b${i}`, 'business') }) as W),
+      ...Array.from({ length: 6 }, (_, i) => ({ ...L(`c${i}`, 'consumer') }) as W),
+      ...AMBITION_LENS_IDS.map(A),
+    ];
+
+    it('exports the six ambition lens ids', () => {
+      expect([...AMBITION_LENS_IDS].sort()).toEqual(
+        ['ai-replaces-labour', 'data-flywheel', 'marketplace-network', 'new-capability', 'picks-and-shovels', 'ten-x-incumbent'],
+      );
+    });
+
+    it('open and sector runs get at least 2 ambition and 2 consumer lenses among 6', () => {
+      for (let i = 0; i < 60; i++) {
+        const got = selectLenses(big, { seedType: i % 2 ? 'open' : 'sector' }, seededRandom(`m${i}`));
+        expect(got).toHaveLength(6);
+        expect(got.filter((l) => l.audience === 'consumer').length).toBeGreaterThanOrEqual(2);
+        expect(got.filter((l) => AMBITION_LENS_IDS.includes(l.id)).length).toBeGreaterThanOrEqual(2);
+      }
+    });
+
+    it('an ambition lens does not count as consumer, and fewer than 2 available are all used', () => {
+      const few = [...big.filter((l) => !AMBITION_LENS_IDS.includes(l.id)), A('ten-x-incumbent')];
+      const got = selectLenses(few, { seedType: 'open' }, seededRandom('f'));
+      expect(got.map((l) => l.id)).toContain('ten-x-incumbent');
+      expect(got.filter((l) => l.audience === 'consumer').length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('weights change how often a lens is picked', () => {
+      const pool2: W[] = [...Array.from({ length: 10 }, (_, i) => ({ id: `b${i}`, audience: 'business', active: true }) as W)];
+      pool2[0]!.weight = 0.5;
+      const counts = { b0: 0, b1: 0 };
+      for (let i = 0; i < 600; i++) {
+        const got = selectLenses(pool2, { seedType: 'open' }, seededRandom(`w${i}`)).map((l) => l.id);
+        if (got.includes('b0')) counts.b0++;
+        if (got.includes('b1')) counts.b1++;
+      }
+      expect(counts.b0).toBeLessThan(counts.b1 * 0.9);
+      expect(counts.b0).toBeGreaterThan(0);
+    });
+
+    it('is deterministic per run id, and lens seeds stay exact', () => {
+      const w = big.map((l) => (l.id === 'b0' ? { ...l, weight: 0.5 } : l));
+      const f = (s: string) => selectLenses(w, { seedType: 'open' }, seededRandom(s)).map((l) => l.id).join(',');
+      expect(f('same')).toBe(f('same'));
+      const lensIds = ['b1', 'ai-replaces-labour'];
+      expect(selectLenses(w, { seedType: 'lens', lensIds }, seededRandom('x')).map((l) => l.id)).toEqual(lensIds);
+    });
   });
 });
 

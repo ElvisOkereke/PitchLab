@@ -1,4 +1,5 @@
 import type { Db } from './client';
+import { and, eq, isNull } from 'drizzle-orm';
 import { lenses, markets } from './schema';
 
 export const CA_US = {
@@ -114,6 +115,57 @@ export const CONSUMER_LENSES = [
   },
 ];
 
+const ANY = 'any' as const;
+
+/** Lenses that push toward scale and an edge, not just a fix for a complaint. Open and sector runs always include at least two. */
+export const AMBITION_LENSES = [
+  {
+    id: 'ai-replaces-labour',
+    name: 'AI replaces expensive labour',
+    audience: ANY,
+    pattern: 'Expensive, repeated human work done across many companies or people, done by software at a fraction of the cost',
+    promptHint: "Find work in the signals that people are paid to do by hand again and again across many buyers, and propose software that does most of it end to end at a fraction of the cost. Name today's option (the staff, agency or tool people use now), what it costs, and the concrete advantage in cost, speed or accuracy.",
+  },
+  {
+    id: 'ten-x-incumbent',
+    name: '10x on an incumbent',
+    audience: ANY,
+    pattern: 'Something people already buy in volume, made 10x cheaper, faster or easier for a segment the incumbent serves badly',
+    promptHint: "Find a product or service that many people already pay for, and a segment it serves badly (too expensive, too slow, too hard). Propose a version that is about ten times better on one of those for that segment. Name today's option, who it fails, and the concrete advantage.",
+  },
+  {
+    id: 'new-capability',
+    name: 'New capability',
+    audience: ANY,
+    pattern: 'Something that was not feasible two years ago because of recent model, data or hardware advances',
+    promptHint: "Think of a job that software could not do well until recently, because of better models, new data access or cheaper hardware, and that the signals show people still doing by hand or going without. Name today's option, the advance that makes this possible now, and the concrete advantage.",
+  },
+  {
+    id: 'marketplace-network',
+    name: 'Marketplace or network',
+    audience: ANY,
+    pattern: 'Connect two sides where trust or matching is broken, so the value grows with each side that joins',
+    promptHint: "Find a place in the signals where buyers and sellers (or two other sides) struggle to find, trust or price each other, and propose a marketplace or network that fixes the matching. Name how they connect today, which side is hardest to win first, and why each new member makes it better for the rest.",
+  },
+  {
+    id: 'data-flywheel',
+    name: 'Data flywheel',
+    audience: ANY,
+    pattern: 'A product whose everyday use produces data that makes it better and is hard for others to copy',
+    promptHint: "Propose a product that is useful on day one and whose usage generates data (outcomes, prices, patterns) that improves the product for every user and that a late entrant could not easily collect. Name today's option, what data builds up, and how that becomes the concrete advantage.",
+  },
+  {
+    id: 'picks-and-shovels',
+    name: 'Picks and shovels',
+    audience: ANY,
+    pattern: 'Tools for the many people riding a rising trend, who all need the same thing to take part',
+    promptHint: "Look at the rising trends in <changing> and find what the many people or companies joining them all need and lack: tooling, compliance, data, payments or setup. Propose a product for them. Name today's option for that need, the trend it rides, and the concrete advantage.",
+  },
+];
+
+/** Sampling weight for the fix-it lenses, so the ambition lenses get more of the six slots. */
+export const LENS_WEIGHTS: Record<string, number> = { 'review-gap': 0.5, 'platform-shockwave': 0.5 };
+
 export const CONSUMER_SEGMENTS = [
   'new parents', 'students', 'renters', 'first-time homebuyers', 'retirees',
   'freelancers', 'gig workers', 'content creators', 'immigrants and newcomers', 'pet owners',
@@ -124,5 +176,9 @@ export const CONSUMER_SEGMENTS = [
 /** Idempotent; never overwrites rows (lenses are editable in Settings). */
 export async function seedDefaults(db: Db): Promise<void> {
   await db.insert(markets).values(CA_US).onConflictDoNothing({ target: markets.id });
-  await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES]).onConflictDoNothing({ target: lenses.id });
+  await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES]).onConflictDoNothing({ target: lenses.id });
+  // Existing databases: set a weight only where none is set, so this stays idempotent.
+  for (const [id, weight] of Object.entries(LENS_WEIGHTS)) {
+    await db.update(lenses).set({ weight }).where(and(eq(lenses.id, id), isNull(lenses.weight)));
+  }
 }

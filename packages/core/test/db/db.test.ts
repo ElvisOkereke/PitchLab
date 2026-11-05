@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { sql, cosineDistance } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
 import { seedDefaults, CONSUMER_SEGMENTS } from '../../src/db/seed';
+import { eq } from 'drizzle-orm';
 import { cases, claims, ideaReviews, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
 
 describe('db', () => {
   it('migrates, seeds idempotently, and supports vector similarity', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    expect(await db.select().from(lenses)).toHaveLength(14);
+    expect(await db.select().from(lenses)).toHaveLength(20);
     expect((await db.select().from(markets))[0].currency).toBe('USD');
     const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
     const v = Array(1536).fill(0);
@@ -31,6 +32,26 @@ describe('db', () => {
     expect(new Set(CONSUMER_SEGMENTS).size).toBe(CONSUMER_SEGMENTS.length);
     for (const l of consumer) expect(l.promptHint).toMatch(/individual/);
     expect(consumer.find((l) => l.id === 'consumer-ai-chore')?.promptHint).toMatch(/attention/);
+  });
+
+  it('seeds the six ambition lenses and sets the two weights, on a fresh and an existing database', async () => {
+    const db = await testDb();
+    await seedDefaults(db);
+    const ids = ['ai-replaces-labour', 'ten-x-incumbent', 'new-capability', 'marketplace-network', 'data-flywheel', 'picks-and-shovels'];
+    let rows = await db.select().from(lenses);
+    for (const id of ids) expect(rows.find((l) => l.id === id)).toMatchObject({ audience: 'any' });
+    expect(rows.find((l) => l.id === 'picks-and-shovels')?.promptHint).toMatch(/changing/);
+    expect(rows.find((l) => l.id === 'review-gap')?.weight).toBe(0.5);
+    expect(rows.find((l) => l.id === 'platform-shockwave')?.weight).toBe(0.5);
+    // Existing database: weights null, ambition lenses missing.
+    await db.update(lenses).set({ weight: null }).where(eq(lenses.id, 'review-gap'));
+    await db.update(lenses).set({ weight: 2 }).where(eq(lenses.id, 'platform-shockwave'));
+    await db.delete(lenses).where(eq(lenses.id, 'data-flywheel'));
+    await seedDefaults(db);
+    rows = await db.select().from(lenses);
+    expect(rows).toHaveLength(20);
+    expect(rows.find((l) => l.id === 'review-gap')?.weight).toBe(0.5);
+    expect(rows.find((l) => l.id === 'platform-shockwave')?.weight).toBe(2);
   });
 
   it('stores the new idea money and barrier fields', async () => {
