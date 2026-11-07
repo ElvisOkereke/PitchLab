@@ -130,3 +130,25 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
   - cases with no estimate, and the cost of the estimator run;
   - owner keeps and reviewer agreement (idea-review.v2) on the same cases.
 - **Next:** decide whether to keep the $1M line, then run bench-v3 #2.
+
+## 2026-11-07: scale backtest against the owner's Board decisions
+
+- **Change:** scale and value round merged (computeScale with caps, a $1M revenue-ceiling gate check, earn-over-save
+  upside, ownerKeeps, reviewer v2). The scale estimator filled 51 decided ideas ($0.67).
+- **Result:** the rule (ceiling ≥ $1M and upside ≥ 3) agrees on 28 of 42 decided cases with an estimate (67%), but:
+  - it would kill 6 of the owner's 8 kept cases;
+  - it would keep 14 of the 34 killed ones.
+- **Alternatives tested:** lower lines ($500k, $250k, $100k), no upside, and a split line for individuals and
+  businesses. None does better than 52%, and "kill everything" scores 81% only because 81% of cases were killed.
+- **Why:**
+  - **Kept cases score low.** Their ceilings are mostly under $250k. Some are one-off products (Hygiene Chair Check,
+    $499 once, about 180 buyers a year; Zap-to-Code, $499 once). Some serve groups of individuals the owner had
+    called too narrow (Units Left, Repair Clock).
+  - **Killed cases score high.** Several clear $1M on paper: Detention Clock $7.0M, Parent Money Watch $6.5M.
+  - **Estimates rest on assumptions.** Most populations are assumptions, and pricing choices (one-off against monthly)
+    swing the ceiling by about 10x.
+- **Reading it:** the estimate as built does not yet capture the owner's judgement. The owner's keep and kill
+  decisions also predate the stated rule.
+- **Recommendation:**
+  - make the gate's scale check advisory, so scale ranks but doesn't kill, until the owner says which side is right;
+  - then tune with their answers.
