@@ -16,8 +16,8 @@ const render = (gap = '') =>
   });
 
 describe('ideate prompt', () => {
-  it('is v12 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v12');
+  it('is v13 and carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v13');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -37,11 +37,43 @@ describe('ideate prompt', () => {
     expect(text).toMatch(/concrete, checkable advantage/);
     expect(text).toMatch(/why it is possible now/);
   });
-  it('asks for scale: who and how many buyers, the basis, and a source or an assumption', () => {
+  // ideate.v13 (scale and value round, owner decisions 1 and 2, 2026-11-07)
+  it('asks for a scale estimate in four steps with the buyer unit, the caps, and a source or an assumption', () => {
     const text = render();
-    for (const f of ['scale', 'buyers', 'basis']) expect(text).toContain(`\`${f}\``);
-    expect(text).toMatch(/`scale\.source`/);
-    expect(text).toMatch(/starting with "Assumption:"/);
+    for (const f of ['scaleEstimate', 'buyerUnit', 'population', 'count', 'shareWithProblem', 'shareWillingToPay', 'shareReachable', 'pct', 'basis']) {
+      expect(text).toContain(`\`${f}\``);
+    }
+    expect(text).toMatch(/`businesses`.*`individuals`/);
+    // The estimator's caps, in the same words (so ideate and the estimator agree).
+    expect(text).toContain('Unless you have a source, a share above 60 will be cut to 60.');
+    expect(text).toContain('Unless you have a source, individuals are cut to 3 percent and businesses to 15 percent.');
+    expect(text).toContain('A share above 20 will be cut to 20. This step never has a source.');
+    expect(text).toContain('Count paying buyers, not people who merely have the problem.');
+    expect(text).toMatch(/prefer <markets>/);
+    expect(text).toMatch(/public statistics/);
+    expect(text).toMatch(/begin the basis with "Assumption:"/);
+    expect(text).toMatch(/plain digits/);
+    // The free-text scale is no longer asked for.
+    expect(text).not.toMatch(/`scale\.source`/);
+    expect(text).not.toContain('- `scale`: how far the idea can grow.');
+  });
+  it('warns that a narrow consumer group rarely clears $1M a year at consumer prices', () => {
+    const text = render();
+    expect(text).toContain(
+      'A narrow group of individuals (parents in one specific situation, patients of one procedure, frequent users of one app) rarely clears $1M a year at consumer prices unless the price or the paying share is unusually strong.',
+    );
+    expect(text).toMatch(/business buyers with a revenue reason usually pay more/i);
+    expect(text).toMatch(/\$1M a year/);
+  });
+  it('prefers ideas that increase the user\'s revenue over ideas that save money (earn first)', () => {
+    const text = render();
+    expect(text).toMatch(/Earn first/);
+    expect(text).toContain('Look for the revenue angle first: "help them win or earn more" before "cut a cost".');
+    expect(text).toMatch(/`earn`, then `time` and `risk`, then `save`/);
+    expect(text).toMatch(/A savings idea is still allowed, but the saving must be large for the buyer/);
+  });
+  it('keeps v12', () => {
+    expect(existsSync(join(__dirname, '../../prompts/ideate.v12.md'))).toBe(true);
   });
   it('allows one operator or neutral signal plus a demand source as an alternative to three sites', () => {
     const evidence = render().split('\n').find((l) => l.startsWith('- Evidence:'))!;

@@ -60,6 +60,35 @@ describe('ideaBlock', () => {
     }
   });
 
+  // ideate.v13: downstream prompts see the realistic paying buyers and the revenue ceiling worked out in code.
+  it('appends the paying-buyers line with thousands separators when there is a scale result', () => {
+    const scaleEstimate = {
+      buyerUnit: 'businesses',
+      population: { count: 2_000_000, basis: 'b' }, shareWithProblem: { pct: 50, basis: 'b' },
+      shareWillingToPay: { pct: 10, basis: 'b' }, shareReachable: { pct: 12.5, basis: 'b' },
+    };
+    const scaleResult = { payingBuyers: 12_500.4, annualPrice: 1200, revenueCeiling: 15_000_480, band: 4, capped: [], allAssumed: true };
+    expect(ideaBlock({ ...base, scaleEstimate, scaleResult })).toBe(
+      `${BASE_TEXT}\nRealistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,480/yr`,
+    );
+    expect(ideaBlock({ ...base, scaleEstimate: { ...scaleEstimate, buyerUnit: 'individuals' }, scaleResult: { ...scaleResult, annualPrice: null, revenueCeiling: null } })).toBe(
+      `${BASE_TEXT}\nRealistic paying buyers: 12,500 (individuals); revenue ceiling: unknown price`,
+    );
+    // The scale line (older free text) stays when both are present, before the paying-buyers line.
+    const both = ideaBlock({ ...base, scale: { buyers: 'b', basis: 'Assumption: x' }, scaleEstimate, scaleResult });
+    expect(both.split('\n').slice(-2)).toEqual([
+      "Scale (the idea's own unverified claim): b. Basis: Assumption: x",
+      'Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,480/yr',
+    ]);
+  });
+
+  it('omits the paying-buyers line for older ideas and for a garbage result', () => {
+    expect(ideaBlock({ ...base, scaleEstimate: null, scaleResult: null })).toBe(BASE_TEXT);
+    for (const junk of [{ a: 1 }, 'lots', 42, [], { payingBuyers: 'many', revenueCeiling: 1 }, { payingBuyers: Number.NaN, revenueCeiling: null }]) {
+      expect(ideaBlock({ ...base, scaleResult: junk as never })).toBe(BASE_TEXT);
+    }
+  });
+
   it('keeps at most 8 names', () => {
     const text = ideaBlock({ ...base, knownIncumbents: Array.from({ length: 9 }, (_, i) => `Inc${i}`), functionalGap: null });
     expect(text).toBe(`${BASE_TEXT}\n${INC}${Array.from({ length: 8 }, (_, i) => `Inc${i}`).join('; ')}`);

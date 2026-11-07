@@ -52,6 +52,22 @@ describe('getCaseView', () => {
     expect(await getCaseView(db, 'junk-idea')).toMatchObject({ edge: null, scale: null });
   });
 
+  it("carries the idea's scale estimate and result (ideate.v13) when valid, and null for older ideas or garbage jsonb", async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const scaleEstimate = {
+      buyerUnit: 'businesses', population: { count: 200_000, basis: 'Census', source: 'https://x.test/a' },
+      shareWithProblem: { pct: 50, basis: 'Assumption: half' }, shareWillingToPay: { pct: 10, basis: 'Assumption: some' },
+      shareReachable: { pct: 20, basis: 'Through accountants' },
+    };
+    const scaleResult = { payingBuyers: 2000, annualPrice: 1200, revenueCeiling: 2_400_000, band: 3, capped: [], allAssumed: false };
+    await insertCase(db, (await insertIdea(db, run.id, { scaleEstimate, scaleResult })).id, { slug: 'est-idea' });
+    await insertCase(db, (await insertIdea(db, run.id)).id, { slug: 'no-est-idea' });
+    await insertCase(db, (await insertIdea(db, run.id, { scaleEstimate: { buyerUnit: 'robots' }, scaleResult: { payingBuyers: 'many' } })).id, { slug: 'junk-est-idea' });
+    expect(await getCaseView(db, 'est-idea')).toMatchObject({ scaleEstimate, scaleResult });
+    expect(await getCaseView(db, 'no-est-idea')).toMatchObject({ scaleEstimate: null, scaleResult: null });
+    expect(await getCaseView(db, 'junk-est-idea')).toMatchObject({ scaleEstimate: null, scaleResult: null });
+  });
+
   it('keeps only the latest 20 stage events, newest first, and a null lens for owner ideas', async () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea' }));
     const idea = await insertIdea(db, run.id, { origin: 'owner' });

@@ -6,7 +6,7 @@ import { gateVerdicts, ideaReviews, ideas, lenses, signals } from '../../src/db/
 import { computeScorecard } from '../../src/bench/scorecard';
 import { rateIdea } from '../../src/dashboard/idea-ratings';
 import { upsertKnowledgeItem } from '../../src/library/store';
-import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
+import { BUSINESS_MODELS, computeScale } from '../../src/pipeline/business-models';
 import {
   checkMix, checkToCopy, hasDemandEvidence, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, MOAT_KEYWORDS, normalizeIdea, pickConsumerSegments, pickReaskLens,
   AMBITION_LENS_IDS, seededRandom, selectLenses, splitCounts,
@@ -29,10 +29,19 @@ const EDGE = {
   whyNow: 'Reading messy statements with a model became cheap enough in 2025',
 };
 const SCALE = { buyers: 'About 40,000 property managers in the US', basis: 'Assumption: one in five of 200,000 firms' };
-/** The ideate.v8 money and barrier fields (and the v12 edge and scale), valid by default. */
+/** The ideate.v13 scale estimate, valid by default (all assumptions, within the caps). */
+const ESTIMATE = {
+  buyerUnit: 'individuals',
+  population: { count: 1_000_000, basis: 'Assumption: renters in large US cities' },
+  shareWithProblem: { pct: 50, basis: 'Assumption: half pay fees they could avoid' },
+  shareWillingToPay: { pct: 2, basis: 'Assumption: a small share pays for an app' },
+  shareReachable: { pct: 10, basis: 'Reachable through renter forums in 3 years' },
+};
+/** The ideate.v8 money and barrier fields (and the v12 edge and scale, the v13 estimate), valid by default. */
 const money = (o: Record<string, unknown> = {}) => ({
   edge: EDGE,
   scale: SCALE,
+  scaleEstimate: ESTIMATE,
   audience: 'consumer',
   businessModel: 'subscription',
   revenueMechanics: 'Renters pay a monthly fee',
@@ -1309,18 +1318,20 @@ describe('ideate v12 edge and scale', () => {
     expect(get('Unsourced').scale).toEqual({ buyers: 'Renters', basis: 'Assumption: Half of all renters' });
   });
 
-  it('drops a generated idea with no edge, an unknown edge kind or no scale, with the reason', async () => {
-    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 3 });
+  it('drops a generated idea with no edge, an unknown edge kind or no scale estimate, with the reason (v13: free-text scale is optional)', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
     const t = await setup(config, { structured: { ideate: [{ ideas: [
       mk(1, [], { title: 'No edge', edge: undefined }).ideas[0],
       mk(1, [], { title: 'Odd kind', edge: { ...EDGE, kind: 'magic' } }).ideas[0],
-      mk(1, [], { title: 'No scale', scale: undefined }).ideas[0],
-    ] }, { ideas: [] }, { ideas: [] }] } });
+      mk(1, [], { title: 'No estimate', scaleEstimate: undefined }).ideas[0],
+    ] }, { ideas: [mk(1, [], { title: 'No scale', scale: undefined }).ideas[0]] }, { ideas: [] }, { ideas: [] }] } });
     await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
     const out = await ideate(t.deps, t.run, { signalIds: [] });
     expect(out.dropped).toBe(3);
-    expect(out.dropReasons).toEqual({ 'edge:invalid_type(undefined)': 1, 'edge.kind:invalid_value': 1, 'scale:invalid_type(undefined)': 1 });
-    expect(await t.db.select().from(ideas)).toHaveLength(0);
+    expect(out.dropReasons).toEqual({ 'edge:invalid_type(undefined)': 1, 'edge.kind:invalid_value': 1, 'scaleEstimate:invalid_type(undefined)': 1 });
+    const stored = await t.db.select().from(ideas);
+    expect(stored.map((i) => i.title)).toEqual(['No scale']);
+    expect(stored[0]!.scale).toBeNull();
   });
 
   it('owner ideas leave edge and scale optional', async () => {
@@ -1331,6 +1342,123 @@ describe('ideate v12 edge and scale', () => {
     await ideate(t.deps, t.run, { signalIds: [] });
     // Owner ideas cite nothing we can check: the scale basis is kept as a stated assumption.
     expect((await t.db.select().from(ideas))[0]).toMatchObject({ edge: EDGE, scale: SCALE });
+  });
+});
+
+// ---- ideate.v13: the scale estimate ----
+
+describe('ideate v13 scale estimate', () => {
+  type Est = { buyerUnit: string; population: Record<string, unknown>; shareWithProblem: Record<string, unknown>; shareWillingToPay: Record<string, unknown>; shareReachable: Record<string, unknown> };
+  const norm = (scaleEstimate: unknown) => (normalizeIdea({ scaleEstimate }) as { scaleEstimate: Est }).scaleEstimate;
+
+  it('normalizeIdea reads count and percent number text, cuts bases and sources to 300 and reads buyer unit spellings', () => {
+    const n = norm({
+      buyerUnit: ' Business ',
+      population: { count: '1,200', basis: 'p'.repeat(400), source: 's'.repeat(400) },
+      shareWithProblem: { pct: '40%', basis: 'w'.repeat(320), source: null },
+      shareWillingToPay: { pct: 'about 5', basis: 'b' },
+      shareReachable: { pct: '10 %', basis: 'r'.repeat(301) },
+    });
+    expect(n).toEqual({
+      buyerUnit: 'businesses',
+      population: { count: 1200, basis: 'p'.repeat(300), source: 's'.repeat(300) },
+      shareWithProblem: { pct: 40, basis: 'w'.repeat(300) },
+      shareWillingToPay: { pct: 5, basis: 'b' },
+      shareReachable: { pct: 10, basis: 'r'.repeat(300) },
+    });
+    expect(norm({ ...ESTIMATE, buyerUnit: 'Individual' }).buyerUnit).toBe('individuals');
+    expect(norm({ ...ESTIMATE, buyerUnit: 'consumers' }).buyerUnit).toBe('individuals');
+    // An unknown unit is left as it is, so validation drops the idea.
+    expect(norm({ ...ESTIMATE, buyerUnit: 'robots' }).buyerUnit).toBe('robots');
+  });
+
+  it('reads magnitude words in a population count only; shares and money fields still refuse them', () => {
+    const count = (v: unknown) => norm({ ...ESTIMATE, population: { count: v, basis: 'b' } }).population.count;
+    expect(count('about 2 million')).toBe(2_000_000);
+    expect(count('2.5 million')).toBe(2_500_000);
+    expect(count('1.1 million')).toBe(1_100_000);
+    expect(count('40k')).toBe(40_000);
+    expect(count('3 thousand')).toBe(3_000);
+    expect(count('1.2bn')).toBe(1_200_000_000);
+    expect(count('7M')).toBe(7_000_000);
+    expect(count('2 billion.')).toBe(2_000_000_000);
+    expect(count('12,500')).toBe(12_500);
+    // Anything else stays text and drops the idea with a reason.
+    for (const bad of ['millions', 'N/A', '2-3 million', '-2 million', '2 million renters', 'a million', '2 000', '2 million million']) {
+      expect(count(bad)).toBe(bad);
+    }
+    expect(norm({ ...ESTIMATE, shareWithProblem: { pct: '5k', basis: 'b' } }).shareWithProblem.pct).toBe('5k');
+    const price = (normalizeIdea({ priceHint: { amount: '2 million', unit: 'year', basis: 'b' } }) as { priceHint: { amount: unknown } }).priceHint.amount;
+    expect(price).toBe('2 million');
+  });
+
+  it('stores the estimate and its computed result; an unshown source becomes an assumption and its share is capped', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 2 });
+    const sourced = {
+      buyerUnit: 'businesses',
+      population: { count: '2 million', basis: 'Signal a counts them', source: 'https://x.test/a' },
+      shareWithProblem: { pct: 80, basis: 'Signal a says most do', source: 'https://x.test/a' },
+      shareWillingToPay: { pct: '30%', basis: 'A survey', source: 'made-up-survey' },
+      shareReachable: { pct: 50, basis: 'Through accountants' },
+    };
+    const price = { amount: 100, unit: 'month', basis: 'Assumption: b' };
+    const t = await setup(config, { structured: { ideate: [{ ideas: [
+      mk(1, [], { title: 'Sourced', scaleEstimate: sourced, priceHint: price }).ideas[0],
+      mk(1, [], { title: 'Per claim', priceHint: { amount: 40, unit: 'per claim', basis: 'Assumption: b' } }).ideas[0],
+    ] }] } });
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const out = await ideate(t.deps, t.run, { signalIds: t.rows.map((r) => r.id) });
+    expect(out.dropped).toBe(0);
+    const stored = await t.db.select().from(ideas);
+    const get = (title: string) => stored.find((i) => i.title === title)!;
+    const est = {
+      buyerUnit: 'businesses' as const,
+      population: { count: 2_000_000, basis: 'Signal a counts them', source: 'https://x.test/a' },
+      shareWithProblem: { pct: 80, basis: 'Signal a says most do', source: 'https://x.test/a' },
+      shareWillingToPay: { pct: 30, basis: 'Assumption: A survey' },
+      shareReachable: { pct: 50, basis: 'Through accountants' },
+    };
+    expect(get('Sourced').scaleEstimate).toEqual(est);
+    // 2,000,000 × 80% (sourced) × 15% (capped: its source was not shown) × 20% (capped) = 48,000 paying buyers × $1,200 a year.
+    expect(get('Sourced').scaleResult).toEqual(computeScale(est, price));
+    expect(get('Sourced').scaleResult).toMatchObject({ payingBuyers: 48_000, annualPrice: 1200, revenueCeiling: 57_600_000, band: 5, allAssumed: false });
+    expect([...(get('Sourced').scaleResult as { capped: string[] }).capped].sort()).toEqual(['shareReachable', 'shareWillingToPay']);
+    // A price that cannot be made yearly: no revenue ceiling, band 2.
+    expect(get('Per claim').scaleEstimate).toEqual(ESTIMATE);
+    expect(get('Per claim').scaleResult).toMatchObject({ payingBuyers: 1000, annualPrice: null, revenueCeiling: null, band: 2, allAssumed: true });
+  });
+
+  it('drops an estimate with a count that is not a number or an out-of-range share, with the reason', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 2 });
+    const t = await setup(config, { structured: { ideate: [{ ideas: [
+      mk(1, [], { title: 'Words', scaleEstimate: { ...ESTIMATE, population: { count: 'lots', basis: 'b' } } }).ideas[0],
+      mk(1, [], { title: 'Range', scaleEstimate: { ...ESTIMATE, shareReachable: { pct: 120, basis: 'b' } } }).ideas[0],
+    ] }, { ideas: [] }, { ideas: [] }] } });
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(out.dropReasons).toEqual({ 'scaleEstimate.population.count:invalid_type(string)': 1, 'scaleEstimate.shareReachable.pct:too_big': 1 });
+  });
+
+  it("a re-run replaces the stored estimate with the new run's (R20)", async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const t = await setup(config, { structured: { ideate: [
+      mk(1, []),
+      mk(1, [], { scaleEstimate: { ...ESTIMATE, population: { count: 50_000, basis: 'Assumption: few' } } }),
+    ] } });
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    const stored = await t.db.select().from(ideas);
+    expect(stored).toHaveLength(1);
+    expect((stored[0]!.scaleEstimate as { population: { count: number } }).population.count).toBe(50_000);
+    expect(stored[0]!.scaleResult).toMatchObject({ payingBuyers: 50 });
+  });
+
+  it('owner ideas store no estimate', async () => {
+    const owner = { title: 'Owner', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', ...tags };
+    const t = await setup(cfg({ seedType: 'idea', ideaText: 'An owner idea' }), { structured: { ideate: [owner] } });
+    await ideate(t.deps, t.run, { signalIds: [] });
+    expect((await t.db.select().from(ideas))[0]).toMatchObject({ scaleEstimate: null, scaleResult: null });
   });
 });
 

@@ -110,6 +110,16 @@ export type ScaleResult = {
   allAssumed: boolean;
 };
 
+/** A stored ScaleResult as read back from jsonb (for display and prompt text); anything else fails. */
+export const ScaleResultSchema = z.object({
+  payingBuyers: z.number().finite().min(0),
+  annualPrice: z.number().finite().nullable(),
+  revenueCeiling: z.number().finite().min(0).nullable(),
+  band: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  capped: z.array(z.string()),
+  allAssumed: z.boolean(),
+});
+
 const clampPct = (n: number) => (Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0);
 const hasSource = (s?: string) => typeof s === 'string' && s.trim() !== '';
 

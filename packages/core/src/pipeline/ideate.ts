@@ -10,8 +10,8 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { errorMessage } from '../tools/scrub';
 import { loadAlreadySold } from './already-sold';
 import {
-  AUDIENCES, BarriersSchema, BUSINESS_MODELS, EDGE_KINDS, EdgeSchema, PriceHintSchema, ScaleSchema, ValueToUserSchema,
-  type Barriers, type BusinessModel, type IdeaAudience,
+  AUDIENCES, BarriersSchema, BUSINESS_MODELS, computeScale, EDGE_KINDS, EdgeSchema, PriceHintSchema, ScaleEstimateSchema, ScaleSchema,
+  ValueToUserSchema, type Barriers, type BusinessModel, type IdeaAudience, type ScaleEstimate,
 } from './business-models';
 import { meetsEvidenceRule } from './evidence';
 import type { RunConfig, StageDeps } from './types';
@@ -86,9 +86,11 @@ const lensIdeaSchema = z.object({
   signalUrls: z.array(z.string()),
   ...moneyFields,
   libraryItemIds: z.array(LIBRARY_ID).max(10),
-  // ideate.v12: required on generated ideas (an idea without them drops with a reason).
+  // ideate.v12: required on generated ideas (an idea without it drops with a reason).
   edge: EdgeSchema,
-  scale: ScaleSchema,
+  // ideate.v13: the free-text scale is optional (older ideas keep theirs); the scale estimate is required instead.
+  scale: ScaleSchema.optional(),
+  scaleEstimate: ScaleEstimateSchema,
 });
 type LensIdea = z.infer<typeof lensIdeaSchema>;
 /** Plain object copy, or null. */
@@ -131,6 +133,41 @@ const CURRENCY_REST = new RegExp(String.raw`^${CURRENCY}?\.?$`, 'i');
 /** After a barrier score: anything that is not a number or magnitude (`"4/5"`, `"3 - moderate"`). */
 const SCORE_REST = /^/;
 
+/** After a population count: nothing or a period. */
+const COUNT_REST = /^\.?$/;
+/** After a share: nothing, a percent sign, or a period. */
+const PCT_REST = /^%?\.?$/;
+const MAGNITUDES: Record<string, number> = { thousand: 1e3, k: 1e3, million: 1e6, m: 1e6, billion: 1e9, bn: 1e9 };
+
+/**
+ * A population count as the model wrote it (ideate.v13): plain number text as `leadingNumber` reads it, or a number
+ * followed by one magnitude word (`"about 2 million"` → 2,000,000, `"40k"`, `"1.2bn"`), since a head count in millions
+ * is unambiguous. Money fields never take this path. Anything else is returned unchanged and drops the idea with a reason.
+ */
+function populationCount(v: unknown): unknown {
+  if (typeof v !== 'string') return v;
+  const s = v.trim().replace(/\s+/g, ' ');
+  if (s.length > NUMBER_TEXT_MAX) return v;
+  const m = /^(.*?\d) ?(thousand|million|billion|bn|k|m)\.?$/i.exec(s);
+  if (!m) return leadingNumber(v, COUNT_REST);
+  const n = leadingNumber(m[1], /^$/);
+  return typeof n === 'number' ? Math.round(n * MAGNITUDES[m[2]!.toLowerCase()]!) : v;
+}
+
+/** Spellings of the scale estimate's buyer unit. */
+const BUYER_UNITS: Record<string, ScaleEstimate['buyerUnit']> = {
+  businesses: 'businesses', business: 'businesses', companies: 'businesses', company: 'businesses', firms: 'businesses', b2b: 'businesses',
+  individuals: 'individuals', individual: 'individuals', consumers: 'individuals', consumer: 'individuals', people: 'individuals', persons: 'individuals',
+};
+const buyerUnit = (v: unknown) => (typeof v === 'string' ? BUYER_UNITS[v.trim().toLowerCase()] ?? v : v);
+/** Each step of the scale estimate: its key, its number field and how that number text is read. */
+const ESTIMATE_STEPS: [string, string, (v: unknown) => unknown][] = [
+  ['population', 'count', populationCount],
+  ['shareWithProblem', 'pct', (v) => leadingNumber(v, PCT_REST)],
+  ['shareWillingToPay', 'pct', (v) => leadingNumber(v, PCT_REST)],
+  ['shareReachable', 'pct', (v) => leadingNumber(v, PCT_REST)],
+];
+
 /** A 1–5 barrier score: a number (or number text) rounded and clamped; anything else unchanged. */
 function score(v: unknown): unknown {
   const n = leadingNumber(v, SCORE_REST);
@@ -165,7 +202,10 @@ function enumValue(v: unknown, allowed: readonly string[]): unknown {
  *   (only a label; unknown, missing or not text) becomes `other`;
  * - cited library ids are unwrapped, filtered to well-formed uuids and capped at 10;
  * - edge and scale text (ideate.v12) is cut to its limits (claim 300, versus 200, whyNow 300; buyers 200, basis 300,
- *   source 300), and the edge kind goes through the same enum matching (`"New capability"` → `new_capability`).
+ *   source 300), and the edge kind goes through the same enum matching (`"New capability"` → `new_capability`);
+ * - the scale estimate (ideate.v13): each basis and source is cut to 300 and a null source removed; shares read number
+ *   text like the price (`"40%"` → 40); the population count also reads one magnitude word (`"2 million"`), which money
+ *   fields never do; the buyer unit reads common spellings (`"business"` → `businesses`, `"consumers"` → `individuals`).
  * Still strict: an unknown business model, audience, value kind or edge kind is left as is and drops the idea (no relabelling).
  */
 export function normalizeIdea(raw: unknown): unknown {
@@ -212,6 +252,20 @@ export function normalizeIdea(raw: unknown): unknown {
   if (scale) {
     cut(scale, 'buyers', 200); cut(scale, 'basis', 300); cut(scale, 'source', 300);
     idea.scale = scale;
+  }
+  const estimate = asRecord(idea.scaleEstimate);
+  if (estimate) {
+    set(estimate, 'buyerUnit', buyerUnit);
+    for (const [key, field, read] of ESTIMATE_STEPS) {
+      const step = asRecord(estimate[key]);
+      if (!step) continue;
+      cut(step, 'basis', 300); cut(step, 'source', 300);
+      // A null source is read as no source (the basis is then labelled an assumption when stored).
+      if (step.source === null) delete step.source;
+      set(step, field, read);
+      estimate[key] = step;
+    }
+    idea.scaleEstimate = estimate;
   }
   if (Array.isArray(idea.libraryItemIds)) {
     // One malformed id (a name, a url, a number) is dropped on its own instead of failing the whole idea.
@@ -460,6 +514,20 @@ function ground<T extends Grounded>(v: T, basisMax: number, known: Known, prefix
   const { source: _drop, ...rest } = v;
   const basis = /^\s*assumption\b/i.test(rest.basis) ? rest.basis : `Assumption: ${rest.basis}`.slice(0, basisMax);
   return { ...rest, basis } as T;
+}
+
+/**
+ * The scale estimate with each sourced step grounded like a value or price: a source is kept only when it was shown to
+ * this call (a library entry or a run signal url); otherwise it is dropped and the basis becomes an assumption. The
+ * reachable share never has a source and is kept as written.
+ */
+function groundEstimate(e: ScaleEstimate, known: Known, prefixes: [string, string][]): ScaleEstimate {
+  return {
+    ...e,
+    population: ground(e.population, 300, known, prefixes),
+    shareWithProblem: ground(e.shareWithProblem, 300, known, prefixes),
+    shareWillingToPay: ground(e.shareWillingToPay, 300, known, prefixes),
+  };
 }
 
 type LibraryBlocks = {
@@ -750,10 +818,13 @@ export async function ideate(
       dropReasons[EVIDENCE_DROP] = (dropReasons[EVIDENCE_DROP] ?? 0) + 1;
       return false;
     });
-    return evidenced.map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, scale, ...f }) => {
+    return evidenced.map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, scale, scaleEstimate, ...f }) => {
       const cited = new Set(urls);
       const checked = checkToCopy(barriers);
       if (checked.lowered) toCopyLowered++;
+      const price = ground(priceHint, 300, known, library.prefixes);
+      // Sources are grounded before the result is computed, so a share whose source was not shown is capped.
+      const estimate = groundEstimate(scaleEstimate, known, library.prefixes);
       return {
         runId: run.id,
         lensId: lens.id,
@@ -761,8 +832,10 @@ export async function ideate(
         ...f,
         barriers: checked.barriers,
         valueToUser: ground(valueToUser, 400, known, library.prefixes),
-        priceHint: ground(priceHint, 300, known, library.prefixes),
-        scale: ground(scale, 300, known, library.prefixes),
+        priceHint: price,
+        scale: scale ? ground(scale, 300, known, library.prefixes) : null,
+        scaleEstimate: estimate,
+        scaleResult: computeScale(estimate, price),
         // Only library entries this lens was shown; invented ids are not stored.
         libraryItemIds: [...new Set(libraryItemIds.filter((id) => library.ids.has(id)))],
         signalIds: passed.filter((s) => cited.has(s.url)).map((s) => s.id),

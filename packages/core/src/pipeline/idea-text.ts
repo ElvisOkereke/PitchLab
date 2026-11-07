@@ -1,10 +1,26 @@
 import { z } from 'zod';
 import type { ideas } from '../db/schema';
 import { capField } from '../llm/untrusted';
-import { EdgeSchema } from './business-models';
+import { EdgeSchema, ScaleEstimateSchema, ScaleResultSchema } from './business-models';
 
 type IdeaFields = Pick<typeof ideas.$inferSelect, 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution'> &
-  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale'>>;
+  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'scaleEstimate' | 'scaleResult'>>;
+
+const whole = (n: number) => Math.round(n).toLocaleString('en-US');
+
+/**
+ * "Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr" from a stored scale result (ideate.v13),
+ * or "revenue ceiling: unknown price" when the price could not be made yearly; '' when the result is missing or invalid.
+ * The unit comes from the estimate and is left out when the estimate is invalid.
+ */
+function payingBuyersLine(rawResult: unknown, rawEstimate: unknown): string {
+  const result = ScaleResultSchema.safeParse(rawResult);
+  if (!result.success) return '';
+  const r = result.data;
+  const unit = ScaleEstimateSchema.shape.buyerUnit.safeParse((rawEstimate as { buyerUnit?: unknown } | null)?.buyerUnit);
+  const ceiling = r.revenueCeiling === null ? 'unknown price' : `$${whole(r.revenueCeiling)}/yr`;
+  return capField(`Realistic paying buyers: ${whole(r.payingBuyers)}${unit.success ? ` (${unit.data})` : ''}; revenue ceiling: ${ceiling}`, 200);
+}
 
 const MAX_INCUMBENTS = 8;
 const CLAIM = "(the idea's own unverified claim)";
@@ -34,8 +50,9 @@ function incumbentNames(raw: unknown): string[] {
  * ideate.v7 also get the incumbents (joined with "; ") and the functional gap (capped at 600), each labelled as the
  * idea's own unverified claim; a line is omitted when its value is null, empty or invalid (owner and older ideas), never
  * synthesised. Ideas from ideate.v12 also get an edge line (kind, claim, today's option, why now) and a scale line
- * (buyers, basis, source), validated from jsonb and capped, under the same rules. Feeds screen, gate, deep-case and the
- * idea reviewer. Wrap before use.
+ * (buyers, basis, source), validated from jsonb and capped, under the same rules. Ideas with a scale result (ideate.v13
+ * or the scale estimator) also get the realistic paying buyers and revenue ceiling worked out in code. Feeds screen,
+ * gate, deep-case and the idea reviewer. Wrap before use.
  */
 export function ideaBlock(idea: IdeaFields): string {
   const lines = [
@@ -59,6 +76,8 @@ export function ideaBlock(idea: IdeaFields): string {
     const s = scale.data;
     lines.push(`Scale ${CLAIM}: ${capField(s.buyers, 200)}. Basis: ${capField(s.basis, 300)}${s.source ? `. Source: ${capField(s.source, 300)}` : ''}`);
   }
+  const paying = payingBuyersLine(idea.scaleResult, idea.scaleEstimate);
+  if (paying) lines.push(paying);
   return lines.join('\n');
 }
 

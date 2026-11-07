@@ -2,7 +2,9 @@ import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { benchmarkPasses, cases, claims, gateCheck, gateVerdicts, ideas, lenses, runs, scores, stageEvents } from '../db/schema';
 import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
-import { EdgeSchema, ScaleSchema, type Edge, type Scale } from '../pipeline/business-models';
+import {
+  EdgeSchema, ScaleEstimateSchema, ScaleResultSchema, ScaleSchema, type Edge, type Scale, type ScaleEstimate, type ScaleResult,
+} from '../pipeline/business-models';
 
 export type CaseRow = typeof cases.$inferSelect;
 export type ClaimRow = typeof claims.$inferSelect;
@@ -22,6 +24,9 @@ export type CaseView = {
   /** The idea's edge and scale (ideate.v12; model claims), or null for older ideas and invalid jsonb. Optional for older callers. */
   edge?: Edge | null;
   scale?: Scale | null;
+  /** The idea's scale estimate (ideate.v13 or the scale estimator) and its result worked out in code; null when absent or invalid. */
+  scaleEstimate?: ScaleEstimate | null;
+  scaleResult?: ScaleResult | null;
   /** The run and benchmark pass the case came from; null for the example (its run is hidden). Optional for older callers. */
   origin?: RunOrigin | null;
 };
@@ -38,6 +43,7 @@ const CHECK_ORDER = new Map<string, number>(gateCheck.enumValues.map((c, i) => [
 export async function getCaseView(db: Db, slug: string): Promise<CaseView | null> {
   if (typeof slug !== 'string' || !CASE_SLUG.test(slug)) return null;
   const [row] = await db.select({ case: cases, lensName: lenses.name, edge: ideas.edge, scale: ideas.scale,
+    scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
     runId: runs.id, runCreatedAt: runs.createdAt, runIsExample: runs.isExample, seed: runSeedSql, passLabel: benchmarkPasses.label })
     .from(cases)
     .innerJoin(ideas, eq(ideas.id, cases.ideaId))
@@ -60,9 +66,12 @@ export async function getCaseView(db: Db, slug: string): Promise<CaseView | null
     Number(a.pass) - Number(b.pass) || (CHECK_ORDER.get(a.check)! - CHECK_ORDER.get(b.check)!));
   const edge = EdgeSchema.safeParse(row.edge);
   const scale = ScaleSchema.safeParse(row.scale);
+  const scaleEstimate = ScaleEstimateSchema.safeParse(row.scaleEstimate);
+  const scaleResult = ScaleResultSchema.safeParse(row.scaleResult);
   return {
     case: kase, claims: claimRows, scores: scoreRows, gate, events, lensName: row.lensName ?? null,
     edge: edge.success ? edge.data : null, scale: scale.success ? scale.data : null,
+    scaleEstimate: scaleEstimate.success ? scaleEstimate.data : null, scaleResult: scaleResult.success ? scaleResult.data : null,
     origin: toRunOrigin({ runId: row.runId, createdAt: row.runCreatedAt, seed: row.seed, passLabel: row.passLabel, isExample: row.runIsExample }),
   };
 }
