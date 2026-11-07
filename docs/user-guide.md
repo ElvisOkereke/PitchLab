@@ -42,6 +42,8 @@ It already has one.
 
 ## 1. Welcome and setup
 
+Forgot your password? Run `npm run reset-password` in the repo folder, then restart the web app.
+
 ### Start the worker
 
 - **What:** In a terminal in the PitchLab folder, run `npm run worker` and leave it open. In the dashboard open

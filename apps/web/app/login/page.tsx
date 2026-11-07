@@ -10,6 +10,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
     <main className="login">
       <h1>PitchLab</h1>
       <LoginForm next={safeNext(next)} />
+      <p className="muted">Forgot it? Run npm run reset-password on the computer that runs PitchLab.</p>
     </main>
   );
 }

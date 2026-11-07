@@ -327,6 +327,10 @@ Fill in `.env` (every variable is described in `.env.example` and in the [setup 
 - `SESSION_SECRET`: paste the output of
   `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
 
+Forgot your password? Run `npm run reset-password` in the repo folder, then restart the web app. It asks for a new
+password (12 or more characters), updates `OWNER_PASSWORD_HASH` in `.env`, signs every device out by replacing
+`SESSION_SECRET` (add `-- --keep-sessions` to keep them signed in), and keeps the old file as `.env.bak`.
+
 Updating PitchLab: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database is migrated,
 then start the web app again (releases add migrations; the newest is 0010). A web app on an older database shows errors on every page.
 

@@ -10,6 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "hash-password": "tsx --conditions=react-server scripts/hash-password.ts",
+    "reset-password": "tsx --conditions=react-server scripts/reset-password.ts",
     "acceptance": "node scripts/acceptance.mjs",
     "check-bundle": "node scripts/check-bundle.mjs"
   },
