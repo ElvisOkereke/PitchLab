@@ -93,3 +93,29 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
   - aim opportunity research at neutral sources (statistics offices, news, job boards) to cut vendor share;
   - ask ideation for the widest buyer the edge serves (scale), not the narrowest one with evidence;
   - calibrate the reviewer's edge rubric against owner ratings (`idea-review.v2`).
+
+## 2026-11-07: owner board decisions (first owner verdicts)
+
+- **What the owner did:** sorted cases on the Board, not with idea ratings. 44 killed, 10 moved to Validating, 1 to
+  Pilot ("Hygiene Chair Check"). Idea ratings: none yet.
+- **Kept per pass:**
+  - bench-v3 #1: 5 of 12;
+  - bench-v2 #6: 4 of 12;
+  - bench-v2 #4: 2 of 6;
+  - bench-v2 #1–#3, owner ideas and older runs: 0 kept.
+
+  The owner said "the most recent ideas are much better", which matches.
+- **Kept by lens:** ambition and consumer lenses keep about 1 in 2 to 1 in 4. silent-failure, money-leak, review-gap,
+  aggregator, compliance-demand, manual-to-productised and owner ideas: 0 kept.
+- **Reviewer against the owner:** agreement was 12 of 33 cases (36%). The reviewer runs the wrong way on scale and niche:
+  - kept cases average scale 2.6 and niche 4.3;
+  - killed cases average scale 3.6 and niche 3.1;
+  - edge does not separate them (3.8 against 3.7).
+
+  The owner killed broad consumer "check your bills" ideas (perk overlap, delivery markup, hospital bill audits,
+  allowed-amount check) that the reviewer scored scale 5. The owner kept focused tools for a concrete buyer with a
+  workflow and an AI or automation edge (Vendor Loop, Zap-to-Code, Units Left, Show-Up Score, Hygiene Chair Check).
+- **Next:**
+  - make the scorecard read Board decisions as owner verdicts ("owner keeps");
+  - recalibrate the reviewer against them (`idea-review.v2`) before trusting its scale and niche scores;
+  - ask the owner what the kept cases share, in their words.
