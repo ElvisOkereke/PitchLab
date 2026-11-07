@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import type { CaseSections } from '../../src/case/schema';
-import { dataCalls, gateVerdicts, ideaReviews, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
+import { cases, dataCalls, gateVerdicts, ideaReviews, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
 import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from '../../src/bench/definitions';
 import { computeScorecard, type MetricResult, type Scorecard } from '../../src/bench/scorecard';
 import { ensureExample } from '../../src/example/example';
@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -282,6 +282,42 @@ describe('computeScorecard: cases', () => {
     expect(metric(await computeScorecard(db, [r]), 'ownerLikes')).toMatchObject({ value: 0.5, meets: true, display: '50% (1 of 2)' });
     await insertIdea(db, r, { ownerRating: -1 });
     expect(metric(await computeScorecard(db, [r]), 'ownerLikes').meets).toBe(false);
+  });
+
+  it('owner keeps: kept (validating, pilot, live) of decided cases (stage not new); current stage counts; no_data when none decided', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const stageCase = async (stage: 'new' | 'validating' | 'pilot' | 'live' | 'killed', runId = r) =>
+      insertCase(db, (await insertIdea(db, runId)).id, { stage });
+    await stageCase('new');
+    expect(metric(await computeScorecard(db, [r]), 'ownerKeeps')).toMatchObject({ value: null, meets: null, status: 'no_data' });
+    await stageCase('validating');
+    const moved = await stageCase('killed');
+    await stageCase('killed');
+    const m = metric(await computeScorecard(db, [r]), 'ownerKeeps');
+    expect(m).toMatchObject({ status: 'measured', display: 'kept 1 of 3 decided', meets: false });
+    expect(m.value).toBeCloseTo(1 / 3, 6);
+    // moved back from killed to validating on the Board: the current stage counts as kept
+    await db.update(cases).set({ stage: 'validating' }).where(eq(cases.id, moved.id));
+    const back = metric(await computeScorecard(db, [r]), 'ownerKeeps');
+    expect(back).toMatchObject({ display: 'kept 2 of 3 decided', meets: true });
+    expect(back.value).toBeCloseTo(2 / 3, 6);
+    await stageCase('pilot');
+    await stageCase('live');
+    expect(metric(await computeScorecard(db, [r]), 'ownerKeeps').display).toBe('kept 4 of 5 decided');
+    // a case in another run, and the example case, are left out
+    const other = await newRun(db);
+    await stageCase('killed', other);
+    await insertCase(db, (await insertIdea(db, r)).id, { stage: 'killed', isExample: true, slug: 'ex-flag' });
+    expect(metric(await computeScorecard(db, [r]), 'ownerKeeps').display).toBe('kept 4 of 5 decided');
+  });
+
+  it('owner keeps meets at exactly 0.5', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertCase(db, (await insertIdea(db, r)).id, { stage: 'live' });
+    await insertCase(db, (await insertIdea(db, r)).id, { stage: 'killed' });
+    expect(metric(await computeScorecard(db, [r]), 'ownerKeeps')).toMatchObject({ value: 0.5, meets: true, display: 'kept 1 of 2 decided' });
   });
 
   it('cost per case sums llm and data costs of the set runs only', async () => {
@@ -561,5 +597,38 @@ describe('computeScorecard: reviewer metrics', () => {
     // Eleventh: disagreeing, so 7 of 11 misses.
     await reviewed(db, r, { scale: 4, edge: 4 }, { ownerRating: -1 });
     expect(metric(await computeScorecard(db, [r]), 'reviewerAgreement')).toMatchObject({ meets: false, display: '64% (7 of 11)' });
+  });
+});
+
+describe('computeScorecard: reviewer agreement from Board decisions', () => {
+  it('counts decided cases (kept = liked, killed = disliked); an owner rating of 1 or -1 wins', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const decided = async (stage: 'validating' | 'killed' | 'new', rv: { scale: number; edge: number }, idea: Partial<Parameters<typeof insertIdea>[2]> = {}) => {
+      const row = await reviewed(db, r, rv, idea);
+      await insertCase(db, row.id, { stage });
+      return row;
+    };
+    for (let i = 0; i < 5; i++) await decided('validating', { scale: 4, edge: 4 });
+    for (let i = 0; i < 3; i++) await decided('killed', { scale: 2, edge: 4 });
+    // Rating wins: rated -1 but kept (reviewer likes it) is a miss; rated 1 but killed (reviewer likes it) agrees.
+    await decided('validating', { scale: 4, edge: 4 }, { ownerRating: -1 });
+    await decided('killed', { scale: 4, edge: 4 }, { ownerRating: 1 });
+    // Undecided and unrated: left out. A neutral 0 on a decided case lets the case speak (killed, reviewer dislikes: agrees).
+    await decided('new', { scale: 4, edge: 4 });
+    await decided('killed', { scale: 1, edge: 1 }, { ownerRating: 0 });
+    // 5+3+1+1 judged... plus the -1 miss: 11 judged, 10 agree.
+    expect(metric(await computeScorecard(db, [r]), 'reviewerAgreement')).toMatchObject({ status: 'measured', display: '91% (10 of 11)', meets: true });
+  });
+
+  it('needs 10 judged ideas even when all come from the Board', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    for (let i = 0; i < 9; i++) await insertCase(db, (await reviewed(db, r, { scale: 4, edge: 4 })).id, { stage: 'live' });
+    const m = metric(await computeScorecard(db, [r]), 'reviewerAgreement');
+    expect(m).toMatchObject({ status: 'no_data', value: null });
+    expect(m.note).toMatch(/9 of 10/);
+    await insertCase(db, (await reviewed(db, r, { scale: 4, edge: 4 })).id, { stage: 'live' });
+    expect(metric(await computeScorecard(db, [r]), 'reviewerAgreement')).toMatchObject({ display: '100% (10 of 10)' });
   });
 });

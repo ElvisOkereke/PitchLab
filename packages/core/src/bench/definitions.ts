@@ -56,11 +56,11 @@ export const CURRENT_BENCHMARK = 'bench-v3' as const;
  * The idea-review prompt version whose reviews the scorecard counts. It must name the newest
  * `prompts/idea-review.v<N>.md` (a test checks); kept here because the scorecard is web-safe and cannot read prompts.
  */
-export const IDEA_REVIEW_VERSION = 'idea-review.v1';
+export const IDEA_REVIEW_VERSION = 'idea-review.v2';
 
 export type MetricId =
   | 'repetition' | 'nearDuplicates' | 'buyerVariety' | 'consumerShare' | 'modelVariety' | 'realNeed'
-  | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes'
+  | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes' | 'ownerKeeps'
   | 'medianEdge' | 'medianScale' | 'nicheShare' | 'reviewerAgreement' | 'costPerCase';
 
 export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string; phase?: 2 | 3 }[] = [
@@ -77,9 +77,10 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'easyStartHardCopy', label: 'Easy to start, hard to copy', target: 'at least 50%' },
   { id: 'ownerVerdict', label: 'Owner verdict', target: 'at least 3.5, all scored' },
   { id: 'ownerLikes', label: 'Owner likes', target: 'at least 50% of rated ideas' },
+  { id: 'ownerKeeps', label: 'Owner keeps', target: 'at least 50% of decided cases' },
   { id: 'medianEdge', label: 'Median edge (reviewer)', target: 'at least 3.5' },
   { id: 'medianScale', label: 'Median scale (reviewer)', target: 'at least 3.5' },
   { id: 'nicheShare', label: 'Niche share (reviewer)', target: 'at most 30%' },
-  { id: 'reviewerAgreement', label: 'Reviewer agreement', target: 'at least 70%, once 10 rated ideas are reviewed' },
+  { id: 'reviewerAgreement', label: 'Reviewer agreement', target: 'at least 70%, once 10 judged ideas are reviewed' },
   { id: 'costPerCase', label: 'Cost per case', target: 'tracked, no target' },
 ];

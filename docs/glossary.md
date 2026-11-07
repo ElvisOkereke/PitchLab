@@ -151,3 +151,15 @@ Plain warnings under each pass when one thing dominates: one website supplying m
 
 ### Holdout examples
 Up to 10 ideas you would want, written in your own words on the Settings page. Each benchmark report shows how close the nearest generated idea is to each one. They are never shown to the idea generator or the reviewer.
+
+### Realistic paying buyers
+How many buyers would actually pay, not everyone who has the problem. It is the size of the group, times the share with the problem, the share willing to pay and the share you can reach. A share with no source is capped, so a wild guess cannot inflate it.
+
+### Revenue ceiling
+The most the idea could earn in a year: realistic paying buyers times the yearly price. Generated ideas under $1M a year are stopped at the gate.
+
+### Upside
+Whether the idea earns money for the buyer or only saves them time, risk or money. Earning scores 5, saving time or risk 3, saving money 2. Ideas that earn rank higher.
+
+### Owner keeps
+The share of the cases you decided on the Board that you kept. A case counts as decided once it leaves New, and as kept in Validating, Pilot or Live. A case you move back from Killed counts as kept.

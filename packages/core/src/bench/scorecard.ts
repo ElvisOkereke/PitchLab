@@ -43,6 +43,9 @@ const MARGIN_BAR = 60;
 const WASTED_TARGET = 0.3;
 const OWNER_VERDICT_TARGET = 3.5;
 const OWNER_LIKES_TARGET = 0.5;
+const OWNER_KEEPS_TARGET = 0.5;
+/** Case stages that mean the owner kept the case on the Board (any stage but `new` is decided; `killed` is the other verdict). */
+const KEPT_STAGES = ['validating', 'pilot', 'live'] as const;
 const TOP_TAGS = 3;
 const CONSUMER_SHARE_TARGET = 0.3;
 const MODEL_VARIETY_TARGET = 4;
@@ -158,7 +161,7 @@ type Data = {
   /** Generated ideas with libraryItemIds set (v8 and later), and those citing a trend, rule_change or market entry. */
   demand: { total: number; yes: number };
   /** roi is valueMultiple (else roiMultiple); skip marks a user-pays-nothing case, left out of customer return. */
-  caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null }[];
+  caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null; stage: string }[];
   audience: { total: number; consumer: number };
   modelCounts: number[];
   gut: number[];
@@ -207,6 +210,14 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const within = await nearestSims(db, embedded.ids, embedded.ids);
   const history = await nearestSims(db, embedded.ids, historyIds.ids);
 
+  const caseWithStage = (stages: SQL) => sql`exists (select 1 from ${cases} where ${cases.ideaId} = ${ideas.id} and ${cases.isExample} = false and ${stages})`;
+  const keptCase = caseWithStage(inArray(cases.stage, [...KEPT_STAGES]));
+  const killedCase = caseWithStage(eq(cases.stage, 'killed'));
+  const rated = inArray(ideas.ownerRating, [-1, 1]);
+  const liked = sql`(${ideas.ownerRating} = 1 or (not coalesce(${rated}, false) and ${keptCase}))`;
+  const disliked = sql`(${ideas.ownerRating} = -1 or (not coalesce(${rated}, false) and ${killedCase}))`;
+  const judged = sql`(${liked} or ${disliked})`;
+
   const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow]] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
@@ -232,6 +243,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       vmKey: sql<boolean>`coalesce((${cases.sections} #> '{numbers,results,buyer}') ? 'valueMultiple', false)`,
       vmNote: sql<boolean>`coalesce(jsonb_typeof(${cases.sections} #> '{numbers,results,buyer,valueMultipleNote}') = 'string', false)`,
       barriers: ideas.barriers,
+      stage: cases.stage,
     })
       .from(cases)
       .innerJoin(ideas, eq(ideas.id, cases.ideaId))
@@ -258,9 +270,10 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       medianEdge: sql<number | null>`percentile_cont(0.5) within group (order by ${ideaReviews.edge})`,
       medianScale: sql<number | null>`percentile_cont(0.5) within group (order by ${ideaReviews.scale})`,
       niche: sql<number>`(count(*) filter (where ${ideaReviews.niche} >= ${NICHE_MIN} or ${ideaReviews.scale} <= ${SMALL_SCALE_MAX}))::int`,
-      rated: sql<number>`(count(*) filter (where ${inArray(ideas.ownerRating, [-1, 1])}))::int`,
-      agree: sql<number>`(count(*) filter (where (${ideas.ownerRating} = 1 and ${ideaReviews.edge} >= ${LIKED_EDGE_MIN} and ${ideaReviews.scale} >= ${LIKED_SCALE_MIN})
-        or (${ideas.ownerRating} = -1 and (${ideaReviews.edge} <= ${DISLIKED_EDGE_MAX} or ${ideaReviews.scale} <= ${DISLIKED_SCALE_MAX}))))::int`,
+      // Judged: an owner rating of 1 or -1, or else a decided case (Board stage is not `new`). The rating wins when both exist.
+      rated: sql<number>`(count(*) filter (where ${judged}))::int`,
+      agree: sql<number>`(count(*) filter (where (${liked} and ${ideaReviews.edge} >= ${LIKED_EDGE_MIN} and ${ideaReviews.scale} >= ${LIKED_SCALE_MIN})
+        or (${disliked} and (${ideaReviews.edge} <= ${DISLIKED_EDGE_MAX} or ${ideaReviews.scale} <= ${DISLIKED_SCALE_MAX}))))::int`,
     }).from(ideaReviews).innerJoin(ideas, eq(ideas.id, ideaReviews.ideaId)).where(and(generated, eq(ideaReviews.promptVersion, IDEA_REVIEW_VERSION))),
   ]);
 
@@ -302,6 +315,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
         gm: num(c.gm),
         skip,
         easyHard: b ? b.toStart <= EASY_START_MAX && b.toCopy >= HARD_COPY_MIN : null,
+        stage: c.stage,
       };
     }),
     gut: gutRows.map((g) => g.value),
@@ -375,6 +389,12 @@ function buildMetrics(d: Data): MetricResult[] {
         const v = mean(d.gut);
         return measured(v, `${v.toFixed(1)} (${d.gut.length} of ${nCases} scored)`, v >= OWNER_VERDICT_TARGET && d.gut.length === nCases);
       })(),
+    ownerKeeps: (() => {
+      const decided = d.caseRows.filter((c) => c.stage !== 'new');
+      if (decided.length === 0) return noData('Move cases on the Board to fill this in.', 'no decisions yet');
+      const kept = decided.filter((c) => (KEPT_STAGES as readonly string[]).includes(c.stage)).length;
+      return measured(kept / decided.length, `kept ${kept} of ${decided.length} decided`, kept / decided.length >= OWNER_KEEPS_TARGET);
+    })(),
     ownerLikes: d.likes.rated === 0 ? noData('Rate some ideas to fill this in.', 'no ratings yet')
       : (() => {
         const base = share(d.likes.liked, d.likes.rated, (v) => v >= OWNER_LIKES_TARGET);
@@ -386,7 +406,7 @@ function buildMetrics(d: Data): MetricResult[] {
     nicheShare: r.n === 0 ? noData(NOT_REVIEWED, 'not reviewed yet') : share(r.niche, r.n, (v) => v <= NICHE_SHARE_TARGET),
     reviewerAgreement: r.n === 0 ? noData(NOT_REVIEWED, 'not reviewed yet')
       : r.rated < AGREEMENT_MIN_RATED
-        ? noData(`${r.rated} of ${AGREEMENT_MIN_RATED} rated ideas reviewed so far; rate and review more ideas to fill this in.`, 'not enough ratings yet')
+        ? noData(`${r.rated} of ${AGREEMENT_MIN_RATED} judged ideas reviewed so far (rated, kept or killed); judge and review more ideas to fill this in.`, 'not enough ratings yet')
         : share(r.agree, r.rated, (v) => v >= AGREEMENT_TARGET),
     costPerCase: nCases === 0 ? noData(NO_CASES) : (() => {
       const v = d.cost / nCases;

@@ -9,7 +9,7 @@ import { PassAuditSection } from './pass-audit-view';
 import { RecomputeForm } from './recompute-form';
 import { RunBenchmarkForm } from './run-benchmark-form';
 
-const METRIC_HELP: Partial<Record<(typeof METRIC_DEFS)[number]['id'], 'ownerLikes' | 'nicheShare'>> = { ownerLikes: 'ownerLikes', nicheShare: 'nicheShare' };
+const METRIC_HELP: Partial<Record<(typeof METRIC_DEFS)[number]['id'], 'ownerLikes' | 'ownerKeeps' | 'nicheShare'>> = { ownerLikes: 'ownerLikes', ownerKeeps: 'ownerKeeps', nicheShare: 'nicheShare' };
 
 export type RunningPass = { label: string; done: number; total: number };
 export type ScoreCases = { label: string; cases: { slug: string; title: string; gut: number | null }[] };

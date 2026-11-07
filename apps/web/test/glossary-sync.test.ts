@@ -26,6 +26,14 @@ describe('docs/glossary.md', () => {
     expect(headings).not.toContain('### Fetch success');
   });
 
+  it('defines the scale and value terms', () => {
+    const labels = Object.values(GLOSSARY).map((g) => g.label);
+    for (const t of ['Realistic paying buyers', 'Revenue ceiling', 'Upside', 'Owner keeps']) {
+      expect(labels).toContain(t);
+      expect(headings).toContain(`### ${t}`);
+    }
+  });
+
   it('covers the pipeline and validation terms', () => {
     const terms = ['harvest', 'signal', 'voice', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'claim', 'verify', 'score', 'validation pack', 'prospect', 'draft', 'landing page', 'run', 'notional spend'];
     const lower = headings.map((h) => h.toLowerCase());

@@ -29,7 +29,7 @@ export const REVIEW_BUDGET_MULTIPLE = 2;
 const CHARS_PER_TOKEN = 4;
 const OUTPUT_TOKENS_PER_IDEA = 800;
 
-const ReasonsSchema = z.object({ scale: z.string(), edge: z.string(), novelty: z.string(), niche: z.string() });
+const ReasonsSchema = z.object({ scale: z.string(), edge: z.string(), novelty: z.string(), niche: z.string(), upside: z.string().optional() });
 const score = z.number().describe('a whole number from 1 to 5');
 /**
  * What the model returns. Scores are any number here so that one bad entry is skipped on its own instead of failing
@@ -115,6 +115,7 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
   const todo = pass.runIds.length === 0 ? [] : await db.select({
     id: ideas.id, title: ideas.title, oneLiner: ideas.oneLiner, buyer: ideas.buyer, problem: ideas.problem, solution: ideas.solution,
     knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap, edge: ideas.edge, scale: ideas.scale,
+    scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
   })
     .from(ideas)
     .innerJoin(runs, eq(runs.id, ideas.runId))
@@ -185,6 +186,7 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
         reasons: {
           scale: capField(e.reasons.scale, REASON_MAX), edge: capField(e.reasons.edge, REASON_MAX),
           novelty: capField(e.reasons.novelty, REASON_MAX), niche: capField(e.reasons.niche, REASON_MAX),
+          ...(e.reasons.upside ? { upside: capField(e.reasons.upside, REASON_MAX) } : {}),
         },
         model, promptVersion: prompt.version,
       });

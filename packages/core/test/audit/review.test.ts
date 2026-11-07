@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import { benchmarkPasses, ideaReviews, llmCalls } from '../../src/db/schema';
@@ -50,7 +52,7 @@ const quiet = { log: () => {} };
 describe('reviewPassIdeas', () => {
   it('the prompt version constant matches the newest idea-review prompt', () => {
     expect(loadPrompt('idea-review').version).toBe(IDEA_REVIEW_VERSION);
-    expect(IDEA_REVIEW_VERSION).toBe('idea-review.v1');
+    expect(IDEA_REVIEW_VERSION).toBe('idea-review.v2');
   });
 
   it('batches 10 ideas per call on the review stage and stores one review per idea', async () => {
@@ -65,7 +67,7 @@ describe('reviewPassIdeas', () => {
     expect(res.estimatedUsd).toBeGreaterThan(0);
     const rows = await db.select().from(ideaReviews);
     expect(new Set(rows.map((r) => r.ideaId))).toEqual(new Set(ideaIds));
-    expect(rows.every((r) => r.promptVersion === 'idea-review.v1' && r.model === router.modelFor('review'))).toBe(true);
+    expect(rows.every((r) => r.promptVersion === 'idea-review.v2' && r.model === router.modelFor('review'))).toBe(true);
     expect(rows[0]).toMatchObject({ scale: 4, edge: 4, novelty: 3, niche: 2, reasons });
   });
 
@@ -96,6 +98,38 @@ describe('reviewPassIdeas', () => {
     await reviewPassIdeas({ db, router, ...quiet }, p!.id);
     expect(router.prompts[0]!).toContain("Edge (the idea's own unverified claim): speed: Same-day quotes. Versus today's option: Two-week manual quotes.");
     expect(router.prompts[0]!).toContain("Scale (the idea's own unverified claim): 12,000 machine shops. Basis: Assumption: census count");
+  });
+
+  it('prompt v2 anchors scale on paying buyers and revenue ceiling, tightens edge, asks for an upside note, and keeps v1', () => {
+    const text = loadPrompt('idea-review').render({ ideas: 'X', count: '1' });
+    expect(text).toMatch(/realistic paying buyers/i);
+    expect(text).toMatch(/revenue ceiling/);
+    for (const band of ['under $250k', 'under $1M', 'under $5M', 'under $25M', '$25M a year or more']) expect(text).toContain(band);
+    expect(text).toContain('a checkable advantage over a named option that the buyer would pay for');
+    expect(text).toMatch(/"uses AI" alone is 1/);
+    expect(text).toMatch(/upside/);
+    expect(text).not.toMatch(/owner|board|holdout/i);
+    expect(existsSync(fileURLToPath(new URL('../../prompts/idea-review.v1.md', import.meta.url)))).toBe(true);
+  });
+
+  it('shows the reviewer the paying-buyers line when the idea has an estimate, and stores an upside note', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const row = await insertIdea(db, r.id, {
+      scaleEstimate: { buyerUnit: 'businesses' },
+      scaleResult: { payingBuyers: 12500, annualPrice: 1200, revenueCeiling: 15000000, band: 4, capped: [], allAssumed: false },
+    } as never);
+    const [p] = await db.insert(benchmarkPasses).values({ version: 'bench-v2', label: 'p', kind: 'pass', status: 'complete', runIds: [r.id] }).returning();
+    const router = echoRouter();
+    const echo = router.structured.bind(router);
+    router.structured = (async (stage: never, req: never, meta: never) => {
+      const out = (await echo(stage, req, meta)) as { reviews: Record<string, unknown>[] };
+      return { reviews: out.reviews.map((x) => ({ ...x, reasons: { ...(x.reasons as object), upside: 'earn: sells a new revenue line' } })) };
+    }) as never;
+    await reviewPassIdeas({ db, router, ...quiet }, p!.id);
+    expect(router.prompts[0]!).toContain('Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr');
+    const [stored] = await db.select().from(ideaReviews).where(eq(ideaReviews.ideaId, row.id));
+    expect(stored!.reasons).toMatchObject({ scale: 'big market', upside: 'earn: sells a new revenue line' });
   });
 
   it('reviews only generated ideas of the pass runs', async () => {
