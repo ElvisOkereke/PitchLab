@@ -3,7 +3,7 @@
 import { and, asc, eq, ne } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { cases, ideas } from '../db/schema';
-import { DEFAULT_MIN_REVENUE_CEILING, ValueToUserSchema, upsideScore } from '../pipeline/business-models';
+import { DEFAULT_MIN_REVENUE_CEILING, ValueToUserSchema, currentScale, upsideScore } from '../pipeline/business-models';
 
 /** The default kill line, shared with the gate (business-models); re-exported for existing imports. */
 export { DEFAULT_MIN_REVENUE_CEILING };
@@ -22,19 +22,18 @@ export type Backtest = {
   noEstimate: { title: string; stage: string }[];
 };
 
-const ceilingOf = (r: unknown): number | null => {
-  const c = (r as { revenueCeiling?: unknown } | null)?.revenueCeiling;
-  return typeof c === 'number' && Number.isFinite(c) ? c : null;
-};
-
 export async function runBacktest(db: Db, opts: { minRevenueCeiling: number }): Promise<Backtest> {
-  const rows = await db.select({ title: ideas.title, stage: cases.stage, scaleResult: ideas.scaleResult, valueToUser: ideas.valueToUser })
+  const rows = await db.select({
+    title: ideas.title, stage: cases.stage, scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
+    priceHint: ideas.priceHint, businessModel: ideas.businessModel, valueToUser: ideas.valueToUser,
+  })
     .from(cases).innerJoin(ideas, eq(ideas.id, cases.ideaId))
     .where(and(ne(cases.stage, 'new'), eq(cases.isExample, false)))
     .orderBy(asc(cases.createdAt), asc(cases.id)).limit(2000);
   const bt: Backtest = { decided: 0, agree: 0, table: { keptAbove: 0, keptBelow: 0, killedAbove: 0, killedBelow: 0 }, disagreements: [], noEstimate: [] };
   for (const r of rows) {
-    const ceiling = ceilingOf(r.scaleResult);
+    // The ceiling the gate would judge now (currentScale: recomputed from the estimate when it is valid).
+    const ceiling = currentScale(r)?.revenueCeiling ?? null;
     if (ceiling === null) { bt.noEstimate.push({ title: r.title, stage: r.stage }); continue; }
     const value = ValueToUserSchema.safeParse(r.valueToUser);
     const upside = upsideScore(value.success ? value.data.kind : null);

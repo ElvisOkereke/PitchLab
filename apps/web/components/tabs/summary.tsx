@@ -56,6 +56,7 @@ function ScaleEstimateRow({ estimate: e, result: r }: { estimate: ScaleEstimate;
           <p>Cut to the cap because it had no source: {r.capped.map((c) => STEP_LABELS[c] ?? c).join(', ')}.</p>
         ) : null}
         {r?.allAssumed ? <p>Every step is an assumption.</p> : null}
+        {r?.bandCapped ? <p>Scale band limited to 3: the population has no source.</p> : null}
       </dd>
     </div>
   );

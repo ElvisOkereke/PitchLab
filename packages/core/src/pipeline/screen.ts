@@ -4,7 +4,7 @@ import type { Db } from '../db/client';
 import { cases, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
-import { ScaleResultSchema, upsideScore, valueMultiple, type Barriers } from './business-models';
+import { ScaleResultSchema, currentScale, upsideScore, userPaysNothing, valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
 import { evaluateEvidence, type EvidenceFailure } from './evidence';
 import { demandLibraryEntries } from './gate';
@@ -29,8 +29,6 @@ export function moneyBand(multiple: number | null): number {
   return multiple >= 10 ? 5 : multiple >= 5 ? 4 : multiple >= 3 ? 3 : multiple >= 1.5 ? 2 : 1;
 }
 
-/** Business models where the user pays nothing: the idea's price hint is our revenue per user, not a price. */
-const USER_PAYS_NOTHING = new Set(['ads', 'affiliate']);
 /** The neutral money case band for those models: no multiple to reward or punish. */
 export const USER_PAYS_NOTHING_BAND = 3;
 const USER_PAYS_NOTHING_NOTE = 'user pays nothing (ad/affiliate funded)';
@@ -94,16 +92,13 @@ export function weightedScreenTotal(scores: AiScores | ScreenScoresV4 | ScreenSc
 
 /**
  * The edge criterion (screen.v5 and v6), added to the prompt only when the idea states an edge; it follows ideate.v12's
- * edge rubric. The scale criterion was asked of the model in screen.v5 only (anchors from idea-review.v1); screen.v6
- * computes scale in code and no longer uses it.
+ * edge rubric. The scale criterion was asked of the model in screen.v5 only (the text is in git history);
+ * screen.v6 computes scale in code.
  */
 export const SCREEN_EDGE_CRITERION =
   "- edge: the concrete advantage over today's option, judged from the idea's Edge line, which is its own unverified claim: check it against what you know of the market and the incumbents. " +
   '1: no edge, or the only edge is "uses AI", "better UX" or a vague claim with no named option. 3: a modest, credible improvement over a named option. ' +
   '5: a large advantage over a named option that a buyer could check (a number, or a capability that option lacks), for a reason that holds now, or a new capability. 2 and 4 sit between them.';
-export const SCREEN_SCALE_CRITERION =
-  "- scale: how many buyers there are and how much money moves, judged from the idea's Scale line and any market entry it cites, which are its own unverified claims (a basis that starts \"Assumption:\" has no source). " +
-  '1: a few hundred buyers, or one niche. 3: tens of thousands of buyers, or a mid-size market. 5: millions of buyers, or a very large market. 2 and 4 sit between them.';
 const criterionScore = AiScoresSchema.shape.pain;
 const SCHEMAS = {
   none: AiScoresSchema,
@@ -111,7 +106,8 @@ const SCHEMAS = {
 };
 
 /**
- * The screen.v6 scale score: the band of the stored scale result (ScaleResultSchema; band 2 for an unknown price), or
+ * The screen.v6 scale score: the band of the idea's current scale result (currentScale, the same one the gate judges;
+ * band 2 for an unknown price), or
  * MISSING_EDGE_OR_SCALE when there is none or it is malformed. A price of 0 says nothing about what buyers would pay,
  * so it scores like an unknown price (Review Focus 1), not band 1. `from` is the prompt's "computed from" wording.
  */
@@ -251,7 +247,7 @@ export async function screen(
   let paysNothing = 0;
   for (const [index, idea] of generated.entries()) {
     // Ads and affiliate: the user pays nothing, so there is no multiple (the price hint is our revenue per user).
-    const free = !!idea.businessModel && USER_PAYS_NOTHING.has(idea.businessModel);
+    const free = userPaysNothing(idea.businessModel);
     const multiple = !free && idea.valueToUser && idea.priceHint ? valueMultiple(idea.valueToUser, idea.priceHint) : null;
     if (free) paysNothing++;
     else if (multiple === null) noMultiple++;
@@ -265,7 +261,7 @@ export async function screen(
     // Edge: asked of the model only when the idea states one (ideaBlock shows the line), else computed. Scale (the
     // stored scale result's band) and upside (the value kind) are always computed (screen.v6).
     const askEdge = hasEdgeLine(idea.edge);
-    const scale = scaleScore(idea.scaleResult);
+    const scale = scaleScore(currentScale(idea));
     const upside = upsideOf(idea.valueToUser);
     const computed = [
       `Money case (computed from ${moneyFrom}): ${money} of 5`,

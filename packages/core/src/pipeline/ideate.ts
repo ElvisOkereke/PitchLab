@@ -142,9 +142,10 @@ const MAGNITUDES: Record<string, number> = { thousand: 1e3, k: 1e3, million: 1e6
 /**
  * A population count as the model wrote it (ideate.v13): plain number text as `leadingNumber` reads it, or a number
  * followed by one magnitude word (`"about 2 million"` → 2,000,000, `"40k"`, `"1.2bn"`), since a head count in millions
- * is unambiguous. Money fields never take this path. Anything else is returned unchanged and drops the idea with a reason.
+ * is unambiguous; the scale estimator reads its counts the same way. Money fields never take this path. Anything else
+ * is returned unchanged and drops the idea with a reason.
  */
-function populationCount(v: unknown): unknown {
+export function populationCount(v: unknown): unknown {
   if (typeof v !== 'string') return v;
   const s = v.trim().replace(/\s+/g, ' ');
   if (s.length > NUMBER_TEXT_MAX) return v;
@@ -835,7 +836,7 @@ export async function ideate(
         priceHint: price,
         scale: scale ? ground(scale, 300, known, library.prefixes) : null,
         scaleEstimate: estimate,
-        scaleResult: computeScale(estimate, price),
+        scaleResult: computeScale(estimate, price, f.businessModel),
         // Only library entries this lens was shown; invented ids are not stored.
         libraryItemIds: [...new Set(libraryItemIds.filter((id) => library.ids.has(id)))],
         signalIds: passed.filter((s) => cited.has(s.url)).map((s) => s.id),

@@ -632,13 +632,16 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
     shareReachable: { pct: 20, basis: 'via load boards' },
   };
   const price = (amount: number, unit: string) => ({ amount, unit, basis: 'b' });
-  async function scaled(origin: 'generated' | 'owner', est: Est | null, priceHint: ReturnType<typeof price> | null, minRevenueCeiling?: unknown) {
+  async function scaled(
+    origin: 'generated' | 'owner', est: Est | null, priceHint: ReturnType<typeof price> | null, minRevenueCeiling?: unknown,
+    businessModel: 'ads' | 'subscription' | null = null,
+  ) {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: origin === 'owner' ? 'idea' : 'open', minSignals: 1 }));
     if (minRevenueCeiling !== undefined) await setSetting(db, 'gate.minRevenueCeiling', minRevenueCeiling);
     const idea = await twoHostIdea(db, run.id, origin);
     await db.update(ideas).set({
-      priceHint, scaleEstimate: est, scaleResult: est ? computeScale(est, priceHint) : null,
+      priceHint, businessModel, scaleEstimate: est, scaleResult: est ? computeScale(est, priceHint, businessModel) : null,
       ...(origin === 'owner' ? { status: 'advanced' as const } : {}),
     }).where(eq(ideas.id, idea.id));
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
@@ -728,6 +731,60 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
     expect(out.advisory).toEqual([{ ideaId: idea.id, failedChecks: ['scale'] }]);
     expect(idea.status).toBe('advanced');
     expect(verdict.pass).toBe(false);
+  });
+
+  it('an ads idea: step 3 is regular users (unsourced cap 10%), and the price is our revenue per user', async () => {
+    const ad: Est = {
+      buyerUnit: 'individuals',
+      population: { count: 10_000_000, basis: 'US adults', source: 'https://census.example' },
+      shareWithProblem: { pct: 50, basis: 'Assumption' },
+      shareWillingToPay: { pct: 8, basis: 'Assumption' },
+      shareReachable: { pct: 20, basis: 'Assumption' },
+    };
+    // 10M x 50% x 8% x 20% = 80,000 regular users x $20 = $1,600,000; under subscription 3% gives $600,000
+    const ads = await scaled('generated', ad, price(20, 'year'), undefined, 'ads');
+    expect(ads.verdict.pass).toBe(true);
+    expect(ads.verdict.reasoning).toContain('8% become regular users × 20% reachable = 80,000 regular users');
+    expect(ads.verdict.reasoning).toContain('$20 a year of revenue per user');
+    expect(ads.verdict.reasoning).toContain('$1,600,000 revenue ceiling');
+    const sub = await scaled('generated', ad, price(20, 'year'), undefined, 'subscription');
+    expect(sub.verdict.pass).toBe(false);
+    expect(sub.verdict.reasoning).toContain('3% willing to pay (capped)');
+  });
+
+  it('judges on the estimate recomputed now, not a stale stored result', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    const stale = { payingBuyers: 1, annualPrice: 1, revenueCeiling: 1, band: 1, capped: [], allAssumed: true };
+    await db.update(ideas).set({ priceHint: price(100, 'month'), scaleEstimate: sourced, scaleResult: stale }).where(eq(ideas.id, idea.id));
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const v = (await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id))).find((r) => r.check === 'scale')!;
+    expect(v.pass).toBe(true);
+    expect(v.reasoning).toContain('$2,400,000 revenue ceiling');
+  });
+
+  it('says when the band is limited to 3 because the population has no source', async () => {
+    const big: Est = { ...sourced, population: { count: 100_000_000, basis: 'Assumption: firms' } };
+    const { verdict } = await scaled('generated', big, price(100, 'month')); // 2,000,000 x 50% x ... = 1,000,000 x $1,200
+    expect(verdict.pass).toBe(true);
+    expect(verdict.reasoning).toContain('band limited to 3: the population has no source');
+    const { verdict: v2 } = await scaled('generated', sourced, price(100, 'month'));
+    expect(v2.reasoning).not.toContain('band limited');
+  });
+
+  it('shows a tiny share with enough digits instead of 0%', async () => {
+    const tiny: Est = { ...sourced, shareWithProblem: { pct: 0.004, basis: 'rare', source: 'https://s.example' } };
+    const { verdict } = await scaled('generated', tiny, price(100, 'month'));
+    expect(verdict.reasoning).toContain('0.004% with the problem');
+    expect(verdict.reasoning).not.toContain(' 0% with the problem');
+  });
+
+  it('a price of 0 reads as a free product with no known ceiling', async () => {
+    const { verdict } = await scaled('generated', sourced, price(0, 'month'));
+    expect(verdict.pass).toBe(true);
+    expect(verdict.reasoning).toMatch(/price is 0/);
   });
 
   it('lists scale after evidence among the failed checks', async () => {

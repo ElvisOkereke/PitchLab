@@ -49,6 +49,8 @@ describe('ideate prompt', () => {
     expect(text).toContain('Unless you have a source, individuals are cut to 3 percent and businesses to 15 percent.');
     expect(text).toContain('A share above 20 will be cut to 20. This step never has a source.');
     expect(text).toContain('Count paying buyers, not people who merely have the problem.');
+    expect(text).toMatch(/For `ads` and `affiliate`, where the user pays nothing, this step is instead the percent of those who would become regular users/);
+    expect(text).toContain('individuals are cut to 10 percent and businesses to 30 percent');
     expect(text).toMatch(/prefer <markets>/);
     expect(text).toMatch(/public statistics/);
     expect(text).toMatch(/begin the basis with "Assumption:"/);

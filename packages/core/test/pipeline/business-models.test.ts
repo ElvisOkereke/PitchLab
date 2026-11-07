@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BUSINESS_MODELS, AUDIENCES, ValueToUserSchema, PriceHintSchema, BarriersSchema, valueMultiple,
-  ScaleEstimateSchema, computeScale, annualPrice, type ScaleEstimate,
+  ScaleEstimateSchema, computeScale, currentScale, annualPrice, type ScaleEstimate,
 } from '../../src/pipeline/business-models';
 
 const value = { kind: 'save' as const, amountPerYear: 1200, basis: 'Avoids late fees' };
@@ -162,7 +162,99 @@ describe('computeScale price handling', () => {
       expect(r).toMatchObject({ annualPrice: null, revenueCeiling: null, band: 2 });
     }
   });
-  it('a price of 0 gives ceiling 0 and band 1', () => {
-    expect(computeScale(est(), yearly(0))).toMatchObject({ annualPrice: 0, revenueCeiling: 0, band: 1 });
+  it('a price of 0 is unknown (a free product earns another way): null ceiling and band 2', () => {
+    expect(annualPrice(yearly(0))).toBe(0);
+    expect(computeScale(est(), yearly(0))).toMatchObject({ annualPrice: null, revenueCeiling: null, band: 2 });
+    expect(computeScale(est(), { amount: 0, unit: 'month', basis: 'b' })).toMatchObject({ revenueCeiling: null, band: 2 });
+  });
+});
+
+describe('computeScale for ads and affiliate (the user pays nothing)', () => {
+  // 1M individuals x 50% x 8% x 20% = 8,000 regular users x $5 a year of revenue per user = $40,000
+  const ad = (): ScaleEstimate => ({
+    buyerUnit: 'individuals',
+    population: { count: 1_000_000, basis: 'b', source: 'https://census.example' },
+    shareWithProblem: { pct: 50, basis: 'Assumption' },
+    shareWillingToPay: { pct: 8, basis: 'Assumption: become regular users' },
+    shareReachable: { pct: 20, basis: 'Assumption' },
+  });
+  it('step 3 is the share who become regular users, capped unsourced at 10% for individuals', () => {
+    for (const m of ['ads', 'affiliate']) {
+      const r = computeScale(ad(), yearly(5), m);
+      expect(r.capped).toEqual([]);
+      expect(r.payingBuyers).toBeCloseTo(8000);
+      expect(r.revenueCeiling).toBeCloseTo(40_000);
+      expect(r.band).toBe(1);
+    }
+    const capped = computeScale({ ...ad(), shareWillingToPay: { pct: 40, basis: 'Assumption' } }, yearly(5), 'ads');
+    expect(capped.capped).toEqual(['shareWillingToPay']);
+    expect(capped.payingBuyers).toBeCloseTo(1_000_000 * 0.5 * 0.1 * 0.2);
+  });
+  it('caps businesses at 30% under ads', () => {
+    const r = computeScale({ ...ad(), buyerUnit: 'businesses', shareWillingToPay: { pct: 50, basis: 'Assumption' } }, yearly(5), 'ads');
+    expect(r.payingBuyers).toBeCloseTo(1_000_000 * 0.5 * 0.3 * 0.2);
+  });
+  it('the same idea under subscription (or no model) caps at 3%', () => {
+    for (const m of ['subscription', null, undefined]) {
+      const r = computeScale(ad(), yearly(5), m);
+      expect(r.capped).toEqual(['shareWillingToPay']);
+      expect(r.payingBuyers).toBeCloseTo(3000);
+      expect(r.revenueCeiling).toBeCloseTo(15_000);
+    }
+  });
+});
+
+describe('computeScale unsourced band cap', () => {
+  const big = (popSource?: string, paySource?: string): ScaleEstimate => ({
+    buyerUnit: 'businesses',
+    population: { count: 100_000_000, basis: 'b', ...(popSource ? { source: popSource } : {}) },
+    shareWithProblem: { pct: 50, basis: 'b' },
+    shareWillingToPay: { pct: 10, basis: 'b', ...(paySource ? { source: paySource } : {}) },
+    shareReachable: { pct: 20, basis: 'b' },
+  });
+  // 100M x 50% x 10% x 20% = 1M buyers x $100 = $100M: band 5 when the population is sourced
+  it('caps the band at 3 when the population has no source, keeping the ceiling', () => {
+    const r = computeScale(big(undefined, 'lib:1'), yearly(100));
+    expect(r.allAssumed).toBe(false);
+    expect(r.revenueCeiling).toBeCloseTo(100_000_000);
+    expect(r.band).toBe(3);
+    expect(r.bandCapped).toBe(true);
+  });
+  it('caps the band at 3 when every step is an assumption', () => {
+    const r = computeScale(big(), yearly(100));
+    expect(r.allAssumed).toBe(true);
+    expect(r).toMatchObject({ band: 3, bandCapped: true });
+  });
+  it('a sourced population keeps its band; a band already at or under 3 is not flagged', () => {
+    expect(computeScale(big('https://census.example'), yearly(100))).toMatchObject({ band: 5, bandCapped: false });
+    expect(computeScale(big(), yearly(3))).toMatchObject({ revenueCeiling: 3_000_000, band: 3, bandCapped: false });
+    expect(computeScale(big(), yearly(0.1))).toMatchObject({ band: 1, bandCapped: false });
+  });
+});
+
+describe('currentScale', () => {
+  const e = (): ScaleEstimate => ({
+    buyerUnit: 'businesses',
+    population: { count: 200_000, basis: 'b', source: 's' },
+    shareWithProblem: { pct: 50, basis: 'b', source: 's' },
+    shareWillingToPay: { pct: 10, basis: 'b', source: 's' },
+    shareReachable: { pct: 20, basis: 'b' },
+  });
+  const stale = { payingBuyers: 1, annualPrice: 1, revenueCeiling: 1, band: 1, capped: [], allAssumed: true };
+  it('recomputes from a valid estimate, the price hint and the business model (ignoring a stale stored result)', () => {
+    const r = currentScale({ scaleEstimate: e(), scaleResult: stale, priceHint: { amount: 100, unit: 'month', basis: 'b' }, businessModel: 'subscription' });
+    expect(r).toMatchObject({ payingBuyers: 2000, annualPrice: 1200, revenueCeiling: 2_400_000, band: 3 });
+    const ads = { ...e(), shareWillingToPay: { pct: 25, basis: 'b' } };
+    expect(currentScale({ scaleEstimate: ads, scaleResult: null, priceHint: yearly(1), businessModel: 'ads' })!.payingBuyers).toBeCloseTo(5000);
+  });
+  it('falls back to a valid stored result when the estimate is missing or malformed, else null', () => {
+    expect(currentScale({ scaleEstimate: null, scaleResult: stale, priceHint: null, businessModel: null })).toMatchObject({ band: 1, revenueCeiling: 1 });
+    expect(currentScale({ scaleEstimate: { junk: 1 }, scaleResult: stale, priceHint: null, businessModel: null })).toMatchObject({ band: 1 });
+    expect(currentScale({ scaleEstimate: null, scaleResult: { junk: 1 }, priceHint: null, businessModel: null })).toBeNull();
+    expect(currentScale({ scaleEstimate: null, scaleResult: null, priceHint: null, businessModel: null })).toBeNull();
+  });
+  it('treats a malformed price hint as no price', () => {
+    expect(currentScale({ scaleEstimate: e(), scaleResult: null, priceHint: { amount: 'lots' }, businessModel: null }))
+      .toMatchObject({ revenueCeiling: null, band: 2 });
   });
 });

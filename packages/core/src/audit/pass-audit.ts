@@ -15,6 +15,12 @@ const TOP_DOMAINS = 5;
 const NICHE_MIN = 4;
 const SMALL_SCALE_MAX = 2;
 
+/** Gate checks whose kills are intended filtering, not a lopsided gate (see the scorecard's wasted entrants). */
+const INTENDED_KILL_CHECKS = new Set(['scale']);
+const GATE_CHECK_LABELS: Record<string, string> = { scale: 'revenue ceiling' };
+/** A gate check's name as the owner reads it ("revenue ceiling" for scale; the others read as they are). */
+export const gateCheckLabel = (check: string) => GATE_CHECK_LABELS[check] ?? check;
+
 export type PassAudit = {
   signals: { total: number; byVoice: Record<string, number>; bySource: Record<string, number>; topDomains: { domain: string; share: number }[] };
   lenses: { lensId: string; ideas: number; screenedIn: number; advanced: number; cases: number }[];
@@ -135,9 +141,12 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
   const gateKills: Record<string, number> = {};
   for (const r of killRows) gateKills[r.check] = Number(r.killed);
   const killed = Number(killedRow?.n ?? 0);
-  const topCheck = Object.entries(gateKills).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+  // A scale kill (revenue ceiling under the line) is intended filtering, as in the scorecard's wasted-entrants rule, so
+  // it never raises the one-check flag; it still counts in gateKills and in the denominator.
+  const topCheck = Object.entries(gateKills).filter(([check]) => !INTENDED_KILL_CHECKS.has(check))
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
   if (topCheck && killed >= FLAG_MIN_SAMPLE.kills && over(topCheck[1], killed, FLAG_LIMITS.gateCheck)) {
-    flags.push(`The ${topCheck[0]} check failed ${pctText(topCheck[1], killed)} of the ideas the gate rejected (limit ${FLAG_LIMITS.gateCheck}%)`);
+    flags.push(`The ${gateCheckLabel(topCheck[0])} check failed ${pctText(topCheck[1], killed)} of the ideas the gate rejected (limit ${FLAG_LIMITS.gateCheck}%)`);
   }
 
   // Ideate drop reasons, summed over the pass's runs.

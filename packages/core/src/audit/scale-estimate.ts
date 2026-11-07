@@ -12,7 +12,7 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { ideationContext } from '../library/context';
 import { ScaleEstimateSchema, computeScale, type PriceHint } from '../pipeline/business-models';
 import { ideaBlock } from '../pipeline/idea-text';
-import { leadingNumber } from '../pipeline/ideate';
+import { leadingNumber, populationCount } from '../pipeline/ideate';
 import { ReviewRefusal } from './review';
 
 /** Ideas per model call. */
@@ -58,8 +58,7 @@ export type EstimateTarget = { passId: string } | { decided: true };
 export type EstimateResult = { estimated: number; skipped: number; estimatedUsd: number; spentUsd: number; stoppedForBudget: boolean };
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-/** Plain digits only (a trailing period, or a percent sign after a share). Magnitude words ("2 million") stay text and fail validation. */
-const COUNT_REST = /^\.?$/;
+/** A share: plain digits with a percent sign or trailing period. A population count is read like ideate's (magnitude words too). */
 const PCT_REST = /^%?\.?$/;
 
 /** Total spend logged so far on the review stage outside any run (shared with the reviewer; measured as a delta). */
@@ -84,7 +83,7 @@ export function buildEstimate(e: Entry, allowed: Set<string>) {
   const src = (s: string | null | undefined) => { const k = keepSource(s, allowed); return k ? { source: k } : {}; };
   const parsed = ScaleEstimateSchema.safeParse({
     buyerUnit: e.buyerUnit.trim().toLowerCase(),
-    population: { count: leadingNumber(e.population.count, COUNT_REST), basis: capField(e.population.basis, BASIS_MAX), ...src(e.population.source) },
+    population: { count: populationCount(e.population.count), basis: capField(e.population.basis, BASIS_MAX), ...src(e.population.source) },
     shareWithProblem: { pct: pct(e.shareWithProblem.pct), basis: capField(e.shareWithProblem.basis, BASIS_MAX), ...src(e.shareWithProblem.source) },
     shareWillingToPay: { pct: pct(e.shareWillingToPay.pct), basis: capField(e.shareWillingToPay.basis, BASIS_MAX), ...src(e.shareWillingToPay.source) },
     shareReachable: { pct: pct(e.shareReachable.pct), basis: capField(e.shareReachable.basis, BASIS_MAX) },
@@ -92,12 +91,12 @@ export function buildEstimate(e: Entry, allowed: Set<string>) {
   return parsed.success ? parsed.data : null;
 }
 
-type Todo = Pick<typeof ideas.$inferSelect, 'id' | 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution' | 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'priceHint' | 'embedding' | 'signalIds'>;
+type Todo = Pick<typeof ideas.$inferSelect, 'id' | 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution' | 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'priceHint' | 'businessModel' | 'embedding' | 'signalIds'>;
 
 const cols = {
   id: ideas.id, title: ideas.title, oneLiner: ideas.oneLiner, buyer: ideas.buyer, problem: ideas.problem, solution: ideas.solution,
   knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap, edge: ideas.edge, scale: ideas.scale,
-  priceHint: ideas.priceHint, embedding: ideas.embedding, signalIds: ideas.signalIds,
+  priceHint: ideas.priceHint, businessModel: ideas.businessModel, embedding: ideas.embedding, signalIds: ideas.signalIds,
 };
 
 async function selectTodo(db: Db, target: EstimateTarget): Promise<Todo[]> {
@@ -127,7 +126,9 @@ function priceLine(p: unknown): string {
   return `${x.amount} ${capField(x.unit, 60)}`;
 }
 
-const ideasText = (batch: Todo[]) => batch.map((i) => `Id: ${i.id}\n${ideaBlock(i)}\nPrice hint: ${priceLine(i.priceHint)}`).join('\n\n');
+/** Each idea for the prompt; the business model tells the model what step 3 means (ads and affiliate: regular users). */
+const ideasText = (batch: Todo[]) => batch.map((i) =>
+  `Id: ${i.id}\n${ideaBlock(i)}${i.businessModel ? `\nBusiness model: ${i.businessModel}` : ''}\nPrice hint: ${priceLine(i.priceHint)}`).join('\n\n');
 
 /** The prompt for one batch with a placeholder library block, for the cost estimate (no embedding or query needed). */
 function approxPrompt(prompt: LoadedPrompt, batch: Todo[]): string {
@@ -239,7 +240,7 @@ export async function estimateScale(deps: EstimateDeps, target: EstimateTarget, 
       if (!idea || !estimate) { invalid += 1; continue; }
       byId.delete(e.ideaId); // a repeat of an id already taken is invalid
       const done = await db.update(ideas)
-        .set({ scaleEstimate: estimate, scaleResult: computeScale(estimate, idea.priceHint as PriceHint | null) })
+        .set({ scaleEstimate: estimate, scaleResult: computeScale(estimate, idea.priceHint as PriceHint | null, idea.businessModel) })
         .where(and(eq(ideas.id, idea.id), isNull(ideas.scaleEstimate)))
         .returning({ id: ideas.id });
       stored += done.length;

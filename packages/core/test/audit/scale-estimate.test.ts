@@ -123,13 +123,24 @@ describe('estimateScale', () => {
     ];
     const router = echoRouter((id) => make[ids.indexOf(id)]!(id));
     const res = await estimateScale({ db, router, ...quiet }, { passId });
-    expect(res.estimated).toBe(2);
-    expect(res.skipped).toBe(2);
+    expect(res.estimated).toBe(3);
+    expect(res.skipped).toBe(1);
     expect((await get(db, ids[0]!)).scaleEstimate).toMatchObject({ population: { count: 2000000 }, shareWithProblem: { pct: 40 } });
-    expect((await get(db, ids[1]!)).scaleEstimate).toBeNull();
+    // magnitude words read the same way as ideate's population count
+    expect((await get(db, ids[1]!)).scaleEstimate).toMatchObject({ population: { count: 2000000 } });
     expect((await get(db, ids[2]!)).scaleEstimate).toBeNull();
     // zero is valid: a ceiling of 0
     expect((await get(db, ids[3]!)).scaleResult).toMatchObject({ payingBuyers: 0, revenueCeiling: 0, band: 1 });
+  });
+
+  it('an ads idea: the prompt shows the business model and the stored result uses the regular-user cap', async () => {
+    const db = await testDb();
+    const { passId, ids } = await passWith(db, 1, { priceHint: { amount: 5, unit: 'year', basis: 'b' }, businessModel: 'ads' });
+    const router = echoRouter((id) => est(id, { buyerUnit: 'individuals', shareWillingToPay: share(8) }));
+    await estimateScale({ db, router, ...quiet }, { passId });
+    expect(router.prompts[0]).toContain('Business model: ads');
+    // 100,000 x 50% x 8% (under the 10% ads cap) x 10% = 400 regular users x $5
+    expect((await get(db, ids[0]!)).scaleResult).toMatchObject({ payingBuyers: 400, revenueCeiling: 2000, capped: [] });
   });
 
   it('drops a source that was not shown, so the share is capped', async () => {
@@ -181,5 +192,9 @@ describe('estimateScale', () => {
     expect(text).not.toMatch(/board|keep|kill|stage|owner|decision|pilot|validat/i);
     expect(text).toMatch(/Assumption:/);
     for (const cap of ['3 percent', '15 percent', '20', '60']) expect(text).toContain(cap);
+    // ads and affiliate: step 3 is regular users, with their own caps
+    expect(text).toMatch(/ads or affiliate[^.]*pays nothing/);
+    expect(text).toContain('become regular users');
+    expect(text).toContain('individuals are cut to 10 percent and businesses to 30 percent');
   });
 });

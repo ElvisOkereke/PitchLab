@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { benchmarkPasses, gateVerdicts, ideaReviews, knowledgeItems, runStages, signals } from '../../src/db/schema';
 import { IDEA_REVIEW_VERSION } from '../../src/bench/definitions';
-import { computePassAudit, domainOf } from '../../src/audit/pass-audit';
+import { computePassAudit, domainOf, gateCheckLabel } from '../../src/audit/pass-audit';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 
@@ -195,6 +195,25 @@ describe('computePassAudit', () => {
       };
       expect(await build(5)).toEqual([]);
       expect(await build(6)).toEqual(['The control check failed 60% of the ideas the gate rejected (limit 50%)']);
+    });
+
+    it('scale kills are intended filtering and never raise the one-check flag; other checks use readable labels', async () => {
+      const db = await testDb();
+      const build = async (top: 'scale' | 'reachability' | 'evidence', n: number) => {
+        const { passId, runIds } = await newPass(db);
+        for (let i = 0; i < 10; i++) {
+          const idea = await insertIdea(db, runIds[0]!, { status: 'gated_out' });
+          await db.insert(gateVerdicts).values({ ideaId: idea.id, check: i < n ? top : 'generic', pass: false, reasoning: 'r', model: 'm', promptVersion: 'p' });
+        }
+        return computePassAudit(db, passId);
+      };
+      const scale = await build('scale', 9);
+      expect(scale.gateKills).toEqual({ scale: 9, generic: 1 });
+      expect(scale.flags).toEqual([]);
+      expect((await build('reachability', 7)).flags).toEqual(['The reachability check failed 70% of the ideas the gate rejected (limit 50%)']);
+      expect((await build('evidence', 7)).flags).toEqual(['The evidence check failed 70% of the ideas the gate rejected (limit 50%)']);
+      expect(gateCheckLabel('scale')).toBe('revenue ceiling');
+      expect(gateCheckLabel('generic')).toBe('generic');
     });
 
     it('niche share fires above 30% but not at 30%', async () => {

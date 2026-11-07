@@ -67,6 +67,27 @@ describe('runBacktest', () => {
     expect(md).toMatch(/Kept[^\n]*\|\s*2\s*\|\s*1/);
   });
 
+  it('uses the ceiling recomputed from the estimate with the business model, like the gate', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const estimate = {
+      buyerUnit: 'individuals',
+      population: { count: 10_000_000, basis: 'b', source: 'https://census.example' },
+      shareWithProblem: { pct: 50, basis: 'Assumption' },
+      shareWillingToPay: { pct: 8, basis: 'Assumption' },
+      shareReachable: { pct: 20, basis: 'Assumption' },
+    };
+    // ads: 80,000 regular users x $20 = $1,600,000 (the stale stored result says 0)
+    const i = await insertIdea(db, r.id, {
+      title: 'adIdea', businessModel: 'ads', priceHint: { amount: 20, unit: 'year', basis: 'b' }, scaleEstimate: estimate as never,
+      scaleResult: result(0), valueToUser: value('earn') as never,
+    });
+    await insertCase(db, i.id, { stage: 'validating', slug: 'c-ad', isExample: false });
+    const bt = await runBacktest(db, { minRevenueCeiling: 1_000_000 });
+    expect(bt.table.keptAbove).toBe(1);
+    expect(bt.agree).toBe(1);
+  });
+
   it('handles an empty set', async () => {
     const db = await testDb();
     const bt = await runBacktest(db, { minRevenueCeiling: 1_000_000 });

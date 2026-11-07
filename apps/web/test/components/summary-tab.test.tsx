@@ -82,4 +82,12 @@ describe('Summary tab scale estimate', () => {
     expect(text).toContain('Every step is an assumption.');
     expect(text).not.toContain('Cut to the cap');
   });
+
+  it('says when the scale band was limited to 3 because the population has no source', () => {
+    const capped = render(<SummaryTab view={{ ...caseViewFixture(), scaleEstimate, scaleResult: { ...scaleResult, band: 3 as const, bandCapped: true } }} />);
+    expect(capped.container.textContent).toContain('Scale band limited to 3: the population has no source.');
+    capped.unmount();
+    const plain = render(<SummaryTab view={{ ...caseViewFixture(), scaleEstimate, scaleResult }} />);
+    expect(plain.container.textContent).not.toContain('band limited');
+  });
 });

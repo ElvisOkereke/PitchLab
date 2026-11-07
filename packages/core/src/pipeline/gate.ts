@@ -7,7 +7,9 @@ import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
 import { getMinRevenueCeiling } from '../validation/settings';
-import { ScaleEstimateSchema, ScaleResultSchema, computeScale, scaleShares, type PriceHint } from './business-models';
+import {
+  ScaleEstimateSchema, UNSOURCED_MAX_BAND, currentScale, scaleShares, userPaysNothing, type PriceHint, type ScaleFields,
+} from './business-models';
 import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
@@ -62,51 +64,52 @@ export const SCALE_RULE_VERSION = 'scale-rule.v1';
 const SHARE_WORDS = { shareWithProblem: 'with the problem', shareWillingToPay: 'willing to pay', shareReachable: 'reachable' } as const;
 const num = (n: number) => Math.round(n).toLocaleString('en-US');
 const usd = (n: number) => `$${num(n)}`;
-const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+/** A share in percent: two decimals, or two significant digits for a share under 0.01% (0.004%, never 0%). */
+const pct = (n: number) => `${n > 0 && n < 0.01 ? Number(n.toPrecision(2)) : Number(n.toFixed(2))}%`;
 
 /**
  * The gate's scale check (no model): a generated idea fails when its revenue ceiling (paying buyers times the yearly
- * price, computeScale on the stored estimate) is under `line`. It passes, with a note, when the idea has no estimate
- * (older idea) or the price cannot be turned into a yearly price (a unit like "per claim", a price of 0, or no price):
- * an unknown price never kills. The reasoning shows the arithmetic, the capped shares, and whether every step is an
- * assumption. Owner ideas are advisory (the caller never kills them).
+ * price, from currentScale, the same result the screen scores) is under `line`. It passes, with a note, when the idea
+ * has no estimate (older idea) or the price is unknown (a unit like "per claim", a price of 0, or no price): an unknown
+ * price never kills. The reasoning shows the arithmetic, the capped shares, whether every step is an assumption, and
+ * when the band was limited to 3. For ads and affiliate (the user pays nothing), step 3 reads "become regular users"
+ * and the price is our revenue per user. Owner ideas are advisory (the caller never kills them).
  */
 export function scaleVerdict(
-  idea: { scaleEstimate: unknown; scaleResult: unknown; priceHint: PriceHint | null }, line: number,
+  idea: ScaleFields & { priceHint: PriceHint | null }, line: number,
 ): { pass: boolean; reasoning: string } {
+  const result = currentScale(idea);
+  if (!result) return { pass: true, reasoning: 'no estimate (older idea)' };
+  const free = userPaysNothing(idea.businessModel);
   const est = ScaleEstimateSchema.safeParse(idea.scaleEstimate);
-  if (!est.success) {
+  const notes: string[] = [];
+  let buyers: string;
+  if (est.success) {
+    // currentScale recomputed from this estimate, so these are the shares it multiplied.
+    const e = est.data;
+    const shares = scaleShares(e, idea.businessModel);
+    const words: Record<string, string> = { ...SHARE_WORDS, ...(free ? { shareWillingToPay: 'become regular users' } : {}) };
+    const steps = (['shareWithProblem', 'shareWillingToPay', 'shareReachable'] as const)
+      .map((k) => `${pct(shares[k])} ${words[k]}${shares.capped.includes(k) ? ' (capped)' : ''}`);
+    buyers = `${num(e.population.count)} ${e.buyerUnit} × ${steps.join(' × ')} = ${num(result.payingBuyers)} ${free ? 'regular users' : 'paying buyers'}`;
+    if (shares.capped.length) notes.push(`Capped because no source was given: ${shares.capped.map((k) => words[k] ?? k).join(', ')}.`);
+    if (result.allAssumed) notes.push('Every step is an assumption (no source).');
+  } else {
     // A stored result without a readable estimate: judge on its ceiling, without the per-step arithmetic.
-    const stored = ScaleResultSchema.safeParse(idea.scaleResult);
-    if (!stored.success) return { pass: true, reasoning: 'no estimate (older idea)' };
-    const r = stored.data;
-    if (r.revenueCeiling === null || !r.annualPrice) {
-      return { pass: true, reasoning: `${num(r.payingBuyers)} paying buyers; price unknown, so there is no revenue ceiling (an unknown price never kills).` };
-    }
-    const sum = `${num(r.payingBuyers)} paying buyers × ${usd(r.annualPrice)} a year = ${usd(r.revenueCeiling)} revenue ceiling`;
-    const pass = r.revenueCeiling >= line;
-    return { pass, reasoning: pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.` };
+    buyers = `${num(result.payingBuyers)} paying buyers`;
   }
-  const e = est.data;
-  const shares = scaleShares(e);
-  const result = computeScale(e, idea.priceHint);
-  const steps = (['shareWithProblem', 'shareWillingToPay', 'shareReachable'] as const)
-    .map((k) => `${pct(shares[k])} ${SHARE_WORDS[k]}${shares.capped.includes(k) ? ' (capped)' : ''}`);
-  const buyers = `${num(e.population.count)} ${e.buyerUnit} × ${steps.join(' × ')} = ${num(result.payingBuyers)} paying buyers`;
-  const notes = [
-    ...(shares.capped.length
-      ? [`Capped because no source was given: ${shares.capped.map((k) => SHARE_WORDS[k as keyof typeof SHARE_WORDS] ?? k).join(', ')}.`]
-      : []),
-    ...(result.allAssumed ? ['Every step is an assumption (no source).'] : []),
-  ];
+  if (result.bandCapped) notes.push(`Scale band limited to ${UNSOURCED_MAX_BAND}: the population has no source.`);
   const tail = notes.length ? ` ${notes.join(' ')}` : '';
-  // A price of 0 gives a ceiling of 0 in computeScale, but it says nothing about what buyers would pay: unknown here.
+  // A price of 0 is unknown (a free product earns another way); an old stored result may still carry 0 with a $0 ceiling.
   if (result.revenueCeiling === null || !result.annualPrice) {
     const p = idea.priceHint;
-    const why = !p ? 'no price is given' : `the price (${p.amount} ${capField(p.unit, 60)}) cannot be turned into a yearly price`;
-    return { pass: true, reasoning: `${buyers}; price unknown: ${why}, so there is no revenue ceiling (an unknown price never kills).${tail}` };
+    const why = !est.success ? 'price unknown'
+      : !p ? 'price unknown: no price is given'
+      : p.amount === 0 ? 'the price is 0 (a free product earns another way)'
+      : `price unknown: the price (${p.amount} ${capField(p.unit, 60)}) cannot be turned into a yearly price`;
+    return { pass: true, reasoning: `${buyers}; ${why}, so there is no revenue ceiling (an unknown price never kills).${tail}` };
   }
-  const sum = `${buyers}; × ${usd(result.annualPrice)} a year = ${usd(result.revenueCeiling)} revenue ceiling`;
+  const sum = `${buyers}; × ${usd(result.annualPrice)} a year${free ? ' of revenue per user' : ''} = ${usd(result.revenueCeiling)} revenue ceiling`;
   const pass = result.revenueCeiling >= line;
   return { pass, reasoning: `${pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.`}${tail}` };
 }

@@ -669,6 +669,27 @@ describe('screen', () => {
       expect(sc.scale!.note).toMatch(/price/);
     });
 
+    it('scores the band recomputed from a valid estimate (as the gate does), not a stale stored result', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+      const estimate = {
+        buyerUnit: 'businesses',
+        population: { count: 200_000, basis: 'b', source: 'https://census.example' },
+        shareWithProblem: { pct: 50, basis: 'b', source: 'https://s.example' },
+        shareWillingToPay: { pct: 10, basis: 'b', source: 'https://s.example' },
+        shareReachable: { pct: 20, basis: 'b' },
+      };
+      // 2,000 buyers x $1,200 = $2,400,000: band 3, whatever the stored result says
+      const idea = await insertIdea(db, run.id, {
+        scaleEstimate: estimate as never, scaleResult: result(5, 40_000_000), priceHint: { amount: 100, unit: 'month', basis: 'b' },
+      });
+      const router = fakeRouter({ structured: { screen: [scores(3)] } });
+      await screen(deps(db, router), run, { ideaIds: [idea.id] });
+      const sc = (await getIdea(db, idea.id)).screenScores as Record<string, { value: number; note: string }>;
+      expect(sc.scale!.value).toBe(3);
+      expect(sc.scale!.note).toContain('$2,400,000');
+    });
+
     it('a malformed stored scale result counts as missing (scale 2); an unknown value kind is upside 3', async () => {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
