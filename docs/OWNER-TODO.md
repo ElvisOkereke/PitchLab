@@ -1,57 +1,25 @@
 # Things only you can do
 
-A running list of what is waiting on you. It is kept up to date as work lands; tick items off or tell Claude when they're done.
+A running list of what is waiting on you. Done items are removed as work lands; tell Claude when you finish something.
 
-## Set up the research library (Phase 2)
+## Keep it running
 
-- [x] **Product Hunt developer token (free).** Done 2026-10-27. Used for new products, what they charge, and how they did.
-  1. Sign in and open https://www.producthunt.com/v2/oauth/applications
-  2. Create an application. The redirect URL can be `https://localhost:3000/callback`.
-  3. Use the **Developer Token** (not the API key or secret) and add it to `.env` as `PRODUCTHUNT_TOKEN=…`.
-- [ ] After merging, restart `npm run worker`. It applies the database update, which missions and the heartbeat need. Until the worker is restarted on the new code, Settings → Connections may show YouTube as "not set" and Chromium as "not installed".
-- [ ] After adding the token, restart `npm run worker`. Settings → Connections shows Product Hunt as connected.
-- [ ] If PitchLab starts earning money, email hello@producthunt.com for commercial API permission (the developer token is for non-commercial use).
-- [ ] Turn on **Background research** in Settings when ready.
-- [ ] After a few missions, run a benchmark pass on the Progress page and compare real-need evidence with baseline-0.
+- [ ] Restart `npm run worker` (and `npm run web`) whenever Claude merges new work, so both run the latest code. Settings → Connections should then show YouTube, Product Hunt and the local browser as connected.
+- [ ] Turn on **Background research** in Settings when you want the library to keep growing on its own.
+- [ ] YouTube-only library entries are deleted 30 days after collection (the 2026-10-28 batch goes around 27 Nov). New missions or background research on the same topics bring fresh ones back.
 
-## Research reach
+## Judge the ideas (your part of the quality loop)
 
-- [x] **YouTube API key (free, optional).** Done 2026-10-28. Lets research missions read public YouTube comments.
-  1. Open the Google Cloud console and create a new project.
-  2. Enable **YouTube Data API v3** for it.
-  3. Go to Credentials, create an **API key**, and restrict it to YouTube Data API v3.
-  4. Add it to `.env` as `YOUTUBE_API_KEY=…`, restart `npm run worker`, and check that Settings → Connections shows YouTube as connected.
-  Comments are kept for 30 days and then deleted.
-- [x] **Local browser (optional).** Already installed; it rendered pages in the 2026-10-28 missions. In `packages/core` run `npx playwright-core install chromium` (about 150 to 300 MB, installed to `%LOCALAPPDATA%\ms-playwright`, usually on C:). It helps with pages that need JavaScript. Settings → Connections shows whether it is installed (once the worker has run).
-- [x] Done 2026-10-28 (Claude ran them): social share rose from about 50% to 75%, and new entries rose 26 to 47% at about the same cost. After the key and Chromium are set up, run two $5 missions and compare **Pages read** (Page fetching card) and **Social share** on the Library page with what they were before.
-
-- [ ] Restart `npm run worker` so it picks up the YouTube key (it last ran before the key was added).
-- [ ] Keep in mind: YouTube-only entries are deleted 30 days after collection (about 190 from these two missions, around 27 Nov). Background research or new missions on the same topics bring fresh ones back.
-
-## Slice B (what is changing, market size)
-
-- [x] Nothing new to sign up for: every Slice B source is free and needs no key.
-- [ ] Score the 3 bench-v2 #5 cases (pre-bid permit timing packs for multi-city contractors, login-free caregiver fraud watch, dispute deadline clock for shoppers) (Score tab, **Your gut**), then press **Recompute** on the pass.
-
-## Idea quality loop
-
-- [ ] After merging, restart `npm run worker` (it applies the database update), then run a bench-v3 pass (about $30–50).
-- [x] Baseline review of bench-v2 #4, #5 and #6: Claude runs the reviewer on these passes at merge. Nothing for you to do.
-- [ ] Rate about 10 ideas per pass on **Runs** (thumbs up or down, tags if you like). This is your part: only you can say which ideas are good.
-- [ ] After a bench-v3 pass, run `npm run gen -- audit review --last` (or `npm run gen -- audit review <passId>`) so a second model reviews its ideas.
-- [ ] After reviewing or rating, press **Recompute** under the pass on **Progress** (or run `npm run gen -- bench report <passId> --recompute`). A pass snapshot is frozen, so new ratings and reviews only show after a recompute.
-- [ ] Optional: add 2 or 3 holdout examples (ideas you would want) in Settings, or with `npm run gen -- audit holdout add "..."`.
-- [ ] Tech forums are off (`harvest.techForums`). Turn them on only if you want WordPress and GitHub evidence back; there is no switch in the app yet, so ask Claude.
+- [ ] After each benchmark pass, sort its new cases on the **Board**: keep (move to Validating or Pilot) or kill. Your Board decisions are what PitchLab measures itself against.
+- [ ] Optional: rate ideas on **Runs** (thumbs up or down, plus tags). It covers ideas that never became cases.
+- [ ] Optional: add 2 or 3 example ideas you would want in **Settings** (or `npm run gen -- audit holdout add "..."`). The generator never sees them; they only measure how close it gets.
+- [ ] Tech forums are off (`harvest.techForums`). Ask Claude if you ever want WordPress and GitHub evidence back.
 
 ## Use the app
 
 - [ ] Do not generate a validation pack for a consumer case yet. Its outreach drafts are cold emails, and CASL does not allow cold emails to individuals without consent. Consumer outreach rules come later.
-
-- [ ] Run a bench-v2 pass after merging and score the cases. It is the first pass with consumer ideas, business models, barriers and the value multiple, and the scorecard rows for them read "no data" until then.
-- [ ] Give each case a **Your gut** score (Score tab). Waiting from the 2026-10-28/29 passes: bench-v2 #2 (conversion-day evidence kit for accidental landlords, sandbox-verified WordPress fixes, dental CDT-change sweep, dental conversion-leak audit, dental temp booking), #3 (PG&E grid program picker, dental recall coverage audit, dental stack teardown) and #4 (day-one cash plan for dentists buying practices, per-child dental benefit planner, allergen drift checks for regional chains, cross-app exit panel for subscription apps, AI coding plan right-sizer, land/building split workpapers for rental tax preparers). It feeds the owner verdict on the Progress page; press **Recompute** on a pass afterwards.
 - [ ] Walk through the tour ("Take the tour") once on your computer and once on your phone, in light and dark mode. Report anything confusing.
-- [ ] Try **Hide** and **Reset** on the example case (Settings → Example case).
-- [ ] Generate a validation pack on a real case from its Validate tab.
+- [ ] Generate a validation pack on a real case (one you kept) from its Validate tab.
 
 ## Outreach (from the freight validation run)
 
@@ -60,8 +28,10 @@ A running list of what is waiting on you. It is kept up to date as work lands; t
 - [ ] Contact the freight brokers yourself (the app never sends email), then log what happened on the Validate tab.
 - [ ] Ask your friend for permission before anything about their pilot site is fetched or contacted.
 
-## Before any public release
+## If PitchLab ever earns money or goes public
 
+- [ ] Email hello@producthunt.com for commercial API permission (the developer token is for non-commercial use).
 - [ ] Choose and add a LICENSE. The README currently says "all rights reserved".
 - [ ] Remove or move private details. `docs/CONTEXT.md` and `docs/runs/*` name the pilot site and real prospects, and these are in the git history too.
 - [ ] Decide on LLM configuration for other users. One key is used for both API formats, and the default base URLs point at your employer's gateway.
+- [ ] The planned capture service downloads TikTok, Instagram and YouTube videos against those platforms' terms (your call for a private prototype). It would have to be removed or replaced before any public or commercial release.
