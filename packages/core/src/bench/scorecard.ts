@@ -236,6 +236,8 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       .from(cases)
       .innerJoin(ideas, eq(ideas.id, cases.ideaId))
       .where(and(inArray(ideas.runId, set), eq(cases.isExample, false))),
+    // Wasted entrants: killed on generic or autonomy only. A scale kill (revenue ceiling under the line) is intended
+    // filtering, not a wasted slot, so it does not count (an idea killed on scale and generic still counts once).
     db.select({
       total: countDistinct(ideas.id),
       wasted: sql<number>`(count(distinct ${ideas.id}) filter (where ${and(

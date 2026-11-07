@@ -3,10 +3,10 @@
 import { and, asc, eq, ne } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { cases, ideas } from '../db/schema';
-import { ValueToUserSchema, upsideScore } from '../pipeline/business-models';
+import { DEFAULT_MIN_REVENUE_CEILING, ValueToUserSchema, upsideScore } from '../pipeline/business-models';
 
-/** The default kill line: a generated idea's revenue ceiling must reach this (the gate's `minRevenueCeiling`). */
-export const DEFAULT_MIN_REVENUE_CEILING = 1_000_000;
+/** The default kill line, shared with the gate (business-models); re-exported for existing imports. */
+export { DEFAULT_MIN_REVENUE_CEILING };
 /** The rule keeps an idea only when its upside (value kind) is at least this. */
 export const MIN_UPSIDE = 3;
 const MD_CELL_MAX = 120;

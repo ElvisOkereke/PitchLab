@@ -6,6 +6,7 @@ export const CHECK_LABEL: Record<string, string> = {
   autonomy: 'Autonomy',
   reachability: 'Reachability',
   evidence: 'Evidence',
+  scale: 'Revenue ceiling',
 };
 
 export const checkLabel = (check: string) => CHECK_LABEL[check] ?? check;

@@ -58,6 +58,18 @@ describe('BoardView', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toContain('3 runs are already queued');
   });
 
+  it('labels a scale kill readably (revenue ceiling), with the arithmetic from the reasoning', () => {
+    const scaleKill: GateKill = {
+      ...kills[0]!, title: 'Small idea',
+      failed: [{ check: 'scale', reasoning: 'Too small: 2,000 businesses × 50% with the problem = 1,000 paying buyers; × $120 a year = $120,000 revenue ceiling, under the $1,000,000 line.' }],
+    };
+    const { container } = render(<BoardView board={board} gateKills={[scaleKill]} lenses={[]} query={{}} />);
+    const details = within(container.querySelector('[data-stage="killed"]') as HTMLElement).getByTestId('gate-kills');
+    expect(details.textContent).toContain('Revenue ceiling:');
+    expect(details.textContent).toContain('Too small: 2,000 businesses');
+    expect(details.textContent).not.toMatch(/❌ scale:/);
+  });
+
   it('shows the overturn-refused notice', () => {
     const { container } = render(<BoardView board={board} gateKills={[]} lenses={[]} query={{ notice: 'overturn_refused' }} />);
     expect(container.querySelector('[role="status"]')?.textContent).toBe('That case is no longer killed, so there was nothing to overturn.');

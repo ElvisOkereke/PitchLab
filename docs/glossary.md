@@ -20,7 +20,7 @@ How many raw ideas the run writes down before it filters them. More ideas give t
 How many of the surviving ideas get a full business case with sources and numbers. Each case is the expensive part of a run, so keep this small.
 
 ### Gate flags
-The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it. For other seeds, an idea that fails can be killed at the gate before it gets a case.
+The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence, revenue ceiling), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it. For other seeds, an idea that fails can be killed at the gate before it gets a case.
 
 ### Stage
 Where this case is in your own process: New, Validating, Pilot, Live or Killed. You move it by hand; PitchLab never changes it for you.

@@ -7,7 +7,7 @@ import {
   type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { estimateScale } from './audit/scale-estimate';
-import { DEFAULT_MIN_REVENUE_CEILING, agreementPct, renderBacktestMarkdown, runBacktest } from './audit/backtest';
+import { agreementPct, renderBacktestMarkdown, runBacktest } from './audit/backtest';
 import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
 import { scrubError } from './tools/scrub';
@@ -36,7 +36,7 @@ import { markOutreach, outreachCounts } from './validation/outreach';
 import { parseProspectCsv, upsertProspects } from './validation/prospects';
 import { executeValidationJob } from './validation/job';
 import { runValidation, type ValidationDeps } from './validation/run';
-import { getSetting, setSetting } from './validation/settings';
+import { getMinRevenueCeiling, getSetting, setSetting } from './validation/settings';
 import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
@@ -671,7 +671,7 @@ async function auditBacktestCommand(): Promise<number> {
   const env = loadEnv();
   const db = await openDb(env.DATABASE_URL);
   try {
-    const opts = { minRevenueCeiling: DEFAULT_MIN_REVENUE_CEILING };
+    const opts = { minRevenueCeiling: await getMinRevenueCeiling(db) };
     const bt = await runBacktest(db, opts);
     const date = new Date().toISOString().slice(0, 10);
     mkdirSync(AUDIT_DIR, { recursive: true });

@@ -1,6 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { settings } from '../db/schema';
+import { DEFAULT_MIN_REVENUE_CEILING } from '../pipeline/business-models';
 
 /** Owner identity used in every outreach footer (CASL, spec §11.6). */
 export const SENDER_KEYS = ['sender.name', 'sender.company', 'sender.address', 'sender.contact', 'sender.email'] as const;
@@ -19,6 +20,12 @@ export type Sender = { name: string; company?: string; address: string; contact:
 export async function getSetting(db: Db, key: string): Promise<unknown> {
   const [row] = await db.select({ value: settings.value }).from(settings).where(eq(settings.key, key));
   return row ? row.value : null;
+}
+
+/** The gate's revenue-ceiling line (`gate.minRevenueCeiling`): a finite number of at least 0, else DEFAULT_MIN_REVENUE_CEILING. */
+export async function getMinRevenueCeiling(db: Db): Promise<number> {
+  const v = await getSetting(db, 'gate.minRevenueCeiling');
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_MIN_REVENUE_CEILING;
 }
 
 /** Insert or replace a setting. */

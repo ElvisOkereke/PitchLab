@@ -123,19 +123,31 @@ export const ScaleResultSchema = z.object({
 const clampPct = (n: number) => (Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0);
 const hasSource = (s?: string) => typeof s === 'string' && s.trim() !== '';
 
-/** Paying buyers and revenue ceiling from the estimate; an unsourced share is capped at a realistic level. */
-export function computeScale(e: ScaleEstimate, priceHint: PriceHint | null): ScaleResult {
+/** The default revenue-ceiling line: the gate kills a generated idea whose ceiling is under it (setting `gate.minRevenueCeiling`). */
+export const DEFAULT_MIN_REVENUE_CEILING = 1_000_000;
+
+/** The shares as used, in percent (0-100) after clamping and the caps for unsourced shares, plus the names that were capped. */
+export type ScaleShares = { shareWithProblem: number; shareWillingToPay: number; shareReachable: number; capped: string[] };
+
+/** The shares computeScale multiplies, in percent: clamped to 0-100, and an unsourced share capped at a realistic level. */
+export function scaleShares(e: ScaleEstimate): ScaleShares {
   const capped: string[] = [];
   const share = (name: string, pct: number, cap: number, source?: string) => {
     let v = clampPct(pct);
     if (!hasSource(source) && v > cap) { v = cap; capped.push(name); }
-    return v / 100;
+    return v;
   };
+  const shareWithProblem = share('shareWithProblem', e.shareWithProblem.pct, 60, e.shareWithProblem.source);
+  const shareWillingToPay = share('shareWillingToPay', e.shareWillingToPay.pct, e.buyerUnit === 'individuals' ? 3 : 15, e.shareWillingToPay.source);
+  const shareReachable = share('shareReachable', e.shareReachable.pct, 20);
+  return { shareWithProblem, shareWillingToPay, shareReachable, capped };
+}
+
+/** Paying buyers and revenue ceiling from the estimate; an unsourced share is capped at a realistic level. */
+export function computeScale(e: ScaleEstimate, priceHint: PriceHint | null): ScaleResult {
+  const { shareWithProblem, shareWillingToPay, shareReachable, capped } = scaleShares(e);
   const population = Number.isFinite(e.population.count) ? Math.max(0, e.population.count) : 0;
-  const problem = share('shareWithProblem', e.shareWithProblem.pct, 60, e.shareWithProblem.source);
-  const pay = share('shareWillingToPay', e.shareWillingToPay.pct, e.buyerUnit === 'individuals' ? 3 : 15, e.shareWillingToPay.source);
-  const reach = share('shareReachable', e.shareReachable.pct, 20);
-  const payingBuyers = population * problem * pay * reach;
+  const payingBuyers = population * (shareWithProblem / 100) * (shareWillingToPay / 100) * (shareReachable / 100);
   const price = priceHint ? annualPrice(priceHint) : null;
   const revenueCeiling = price === null ? null : payingBuyers * price;
   const band: ScaleResult['band'] = revenueCeiling === null ? 2

@@ -6,6 +6,8 @@ import { gateVerdicts, ideas, knowledgeItems, markets, signals } from '../db/sch
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
+import { getMinRevenueCeiling } from '../validation/settings';
+import { ScaleEstimateSchema, ScaleResultSchema, computeScale, scaleShares, type PriceHint } from './business-models';
 import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
@@ -14,7 +16,7 @@ import type { RunConfig, StageDeps } from './types';
 export { COMMUNITY_PLATFORMS, countEvidence, countEvidenceForSignals } from './evidence';
 
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
-const ORDER = [...CHECKS, 'evidence'] as const;
+const ORDER = [...CHECKS, 'evidence', 'scale'] as const;
 
 const judgeSchema = z
   .object({
@@ -52,6 +54,61 @@ function evidenceReasoning(e: ReturnType<typeof evaluateEvidence>): string {
     ...[...new Set(e.demand.opportunities.map((o) => o.domain))].map((d) => `opportunity signal on ${d}`),
   ];
   return `${base}; demand route: ${sources.join(', ')}`;
+}
+
+/** The scale code rule's version, stored on the scale verdict. */
+export const SCALE_RULE_VERSION = 'scale-rule.v1';
+
+const SHARE_WORDS = { shareWithProblem: 'with the problem', shareWillingToPay: 'willing to pay', shareReachable: 'reachable' } as const;
+const num = (n: number) => Math.round(n).toLocaleString('en-US');
+const usd = (n: number) => `$${num(n)}`;
+const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+
+/**
+ * The gate's scale check (no model): a generated idea fails when its revenue ceiling (paying buyers times the yearly
+ * price, computeScale on the stored estimate) is under `line`. It passes, with a note, when the idea has no estimate
+ * (older idea) or the price cannot be turned into a yearly price (a unit like "per claim", a price of 0, or no price):
+ * an unknown price never kills. The reasoning shows the arithmetic, the capped shares, and whether every step is an
+ * assumption. Owner ideas are advisory (the caller never kills them).
+ */
+export function scaleVerdict(
+  idea: { scaleEstimate: unknown; scaleResult: unknown; priceHint: PriceHint | null }, line: number,
+): { pass: boolean; reasoning: string } {
+  const est = ScaleEstimateSchema.safeParse(idea.scaleEstimate);
+  if (!est.success) {
+    // A stored result without a readable estimate: judge on its ceiling, without the per-step arithmetic.
+    const stored = ScaleResultSchema.safeParse(idea.scaleResult);
+    if (!stored.success) return { pass: true, reasoning: 'no estimate (older idea)' };
+    const r = stored.data;
+    if (r.revenueCeiling === null || !r.annualPrice) {
+      return { pass: true, reasoning: `${num(r.payingBuyers)} paying buyers; price unknown, so there is no revenue ceiling (an unknown price never kills).` };
+    }
+    const sum = `${num(r.payingBuyers)} paying buyers × ${usd(r.annualPrice)} a year = ${usd(r.revenueCeiling)} revenue ceiling`;
+    const pass = r.revenueCeiling >= line;
+    return { pass, reasoning: pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.` };
+  }
+  const e = est.data;
+  const shares = scaleShares(e);
+  const result = computeScale(e, idea.priceHint);
+  const steps = (['shareWithProblem', 'shareWillingToPay', 'shareReachable'] as const)
+    .map((k) => `${pct(shares[k])} ${SHARE_WORDS[k]}${shares.capped.includes(k) ? ' (capped)' : ''}`);
+  const buyers = `${num(e.population.count)} ${e.buyerUnit} × ${steps.join(' × ')} = ${num(result.payingBuyers)} paying buyers`;
+  const notes = [
+    ...(shares.capped.length
+      ? [`Capped because no source was given: ${shares.capped.map((k) => SHARE_WORDS[k as keyof typeof SHARE_WORDS] ?? k).join(', ')}.`]
+      : []),
+    ...(result.allAssumed ? ['Every step is an assumption (no source).'] : []),
+  ];
+  const tail = notes.length ? ` ${notes.join(' ')}` : '';
+  // A price of 0 gives a ceiling of 0 in computeScale, but it says nothing about what buyers would pay: unknown here.
+  if (result.revenueCeiling === null || !result.annualPrice) {
+    const p = idea.priceHint;
+    const why = !p ? 'no price is given' : `the price (${p.amount} ${capField(p.unit, 60)}) cannot be turned into a yearly price`;
+    return { pass: true, reasoning: `${buyers}; price unknown: ${why}, so there is no revenue ceiling (an unknown price never kills).${tail}` };
+  }
+  const sum = `${buyers}; × ${usd(result.annualPrice)} a year = ${usd(result.revenueCeiling)} revenue ceiling`;
+  const pass = result.revenueCeiling >= line;
+  return { pass, reasoning: `${pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.`}${tail}` };
 }
 
 /**
@@ -93,6 +150,7 @@ export async function gate(
   const competitorsPrompt = loadPrompt('competitors');
   const gatePrompt = loadPrompt('gate');
   const gateModel = router.modelFor('gate');
+  const minRevenueCeiling = await getMinRevenueCeiling(db);
 
   const passed: string[] = [];
   const advisory: { ideaId: string; failedChecks: string[] }[] = [];
@@ -157,6 +215,13 @@ export async function gate(
       ideaId: idea.id, check: 'evidence', pass: evidencePass,
       reasoning: evidenceReasoning(evidence),
       sources: evidenceSources, model: 'rule', promptVersion: EVIDENCE_RULE_VERSION,
+    });
+    // The scale code rule (no model): the revenue ceiling against the line; an unknown price or no estimate passes.
+    const scale = scaleVerdict(idea, minRevenueCeiling);
+    results.set('scale', scale.pass);
+    values.push({
+      ideaId: idea.id, check: 'scale', pass: scale.pass, reasoning: scale.reasoning,
+      sources: [], model: 'rule', promptVersion: SCALE_RULE_VERSION,
     });
     const failed = ORDER.filter((c) => !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';

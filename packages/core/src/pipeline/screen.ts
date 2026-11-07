@@ -4,11 +4,11 @@ import type { Db } from '../db/client';
 import { cases, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
-import { valueMultiple, type Barriers } from './business-models';
+import { ScaleResultSchema, upsideScore, valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
 import { evaluateEvidence, type EvidenceFailure } from './evidence';
 import { demandLibraryEntries } from './gate';
-import { hasEdgeLine, hasScaleLine, ideaBlock } from './idea-text';
+import { hasEdgeLine, ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_WINNER_SIMILARITY = 0.8;
@@ -45,43 +45,57 @@ type Score = { value: number; note: string };
 /** screen.v4 scores as stored: the model's seven criteria plus the two computed by code. */
 export type ScreenScoresV4 = AiScores & { moneyCase: Score; barrier: Score };
 /**
- * Screen scores as stored (screen.v5): the v4 scores plus `edge` and `scale`. Each is the model's score when the idea
- * states it (ideaBlock shows its line), else MISSING_EDGE_OR_SCALE, computed by code (the model is not asked).
+ * screen.v5 scores as stored: the v4 scores plus `edge` and `scale`. Each is the model's score when the idea states it
+ * (ideaBlock shows its line), else MISSING_EDGE_OR_SCALE, computed by code (the model is not asked).
  */
-export type ScreenScores = ScreenScoresV4 & { edge: Score; scale: Score };
+export type ScreenScoresV5 = ScreenScoresV4 & { edge: Score; scale: Score };
+/**
+ * Screen scores as stored (screen.v6): the v5 shape plus `upside`. `edge` is still the model's score when the idea
+ * states one; `scale` is now computed by code from the stored scale result's band (MISSING_EDGE_OR_SCALE without one)
+ * and `upside` from the value kind (upsideScore; 3 when missing). The model is asked for neither.
+ */
+export type ScreenScores = ScreenScoresV5 & { upside: Score };
 
 /**
- * screen.v5 rank weights: every value weighs 1 except speed (0.5, spec B5). Novelty drops its tuning-4 double weight
- * (owner decision 1: judge ideas on edge and scale).
+ * screen.v6 rank weights: every value weighs 1 except speed (0.5, spec B5); upside joins at 1 (scale and value spec §4).
  */
 export const SCREEN_WEIGHTS = {
+  pain: 1, roi: 1, evidence: 1, speed: 0.5, autonomy: 1, novelty: 1, reach: 1, moneyCase: 1, barrier: 1, edge: 1, scale: 1, upside: 1,
+} as const;
+/**
+ * screen.v5 rank weights, kept for stored v5 scores (no upside): every value weighs 1 except speed (0.5). Novelty drops
+ * its tuning-4 double weight (owner decision 1: judge ideas on edge and scale).
+ */
+export const SCREEN_WEIGHTS_V5 = {
   pain: 1, roi: 1, evidence: 1, speed: 0.5, autonomy: 1, novelty: 1, reach: 1, moneyCase: 1, barrier: 1, edge: 1, scale: 1,
 } as const;
-/** The edge or scale score of an idea that does not state it (screen.v5, Review Focus 5). */
+/** The edge score of an idea that does not state one, and the scale score of an idea with no scale estimate (Review Focus 5). */
 export const MISSING_EDGE_OR_SCALE = 2;
 
 /**
- * The screen total, a weighted mean. screen.v5 scores (with edge and scale): the sum of SCREEN_WEIGHTS[k] * value over
- * the 11 values, over the sum of the weights (10.5). Older stored shapes keep their old form: screen.v4 (moneyCase and
- * barrier, no edge or scale) is (sum of the 7 + novelty + moneyCase + barrier) / 10, and screen.v3 and earlier is
- * (sum of the 7 + novelty) / 8.
+ * The screen total, a weighted mean. screen.v6 scores (with upside): the sum of SCREEN_WEIGHTS[k] * value over the 12
+ * values, over the sum of the weights (11.5). Older stored shapes keep their old form: screen.v5 (edge and scale, no
+ * upside) uses SCREEN_WEIGHTS_V5 over 10.5, screen.v4 (moneyCase and barrier, no edge or scale) is
+ * (sum of the 7 + novelty + moneyCase + barrier) / 10, and screen.v3 and earlier is (sum of the 7 + novelty) / 8.
  * (Tuning-4 removed the crowd penalty: it saturated on almost every idea. Old screenScores rows may still hold a
  * `knownCompetitors` list; it is ignored.)
  */
-export function weightedScreenTotal(scores: AiScores | ScreenScoresV4 | ScreenScores): number {
-  if ('edge' in scores && 'scale' in scores) {
-    const keys = Object.keys(SCREEN_WEIGHTS) as (keyof typeof SCREEN_WEIGHTS)[];
-    const sum = keys.reduce((s, k) => s + SCREEN_WEIGHTS[k] * scores[k].value, 0);
-    return sum / keys.reduce((s, k) => s + SCREEN_WEIGHTS[k], 0);
-  }
+export function weightedScreenTotal(scores: AiScores | ScreenScoresV4 | ScreenScoresV5 | ScreenScores): number {
+  const weighted = <W extends Record<string, number>>(weights: W, values: Record<keyof W, Score>) => {
+    const keys = Object.keys(weights) as (keyof W)[];
+    return keys.reduce((s, k) => s + weights[k]! * values[k].value, 0) / keys.reduce((s, k) => s + weights[k]!, 0);
+  };
+  if ('upside' in scores && 'edge' in scores && 'scale' in scores) return weighted(SCREEN_WEIGHTS, scores);
+  if ('edge' in scores && 'scale' in scores) return weighted(SCREEN_WEIGHTS_V5, scores);
   const base = CRITERIA.reduce((s, c) => s + scores[c].value, 0) + scores.novelty.value;
   const extra = 'moneyCase' in scores && 'barrier' in scores ? [scores.moneyCase.value, scores.barrier.value] : [];
   return (base + extra.reduce((a, b) => a + b, 0)) / (CRITERIA.length + 1 + extra.length);
 }
 
 /**
- * The screen.v5 edge and scale criteria, added to the prompt only when the idea states them. The edge rubric follows
- * ideate.v12's edge rubric; the scale anchors are the idea reviewer's (idea-review.v1).
+ * The edge criterion (screen.v5 and v6), added to the prompt only when the idea states an edge; it follows ideate.v12's
+ * edge rubric. The scale criterion was asked of the model in screen.v5 only (anchors from idea-review.v1); screen.v6
+ * computes scale in code and no longer uses it.
  */
 export const SCREEN_EDGE_CRITERION =
   "- edge: the concrete advantage over today's option, judged from the idea's Edge line, which is its own unverified claim: check it against what you know of the market and the incumbents. " +
@@ -94,9 +108,32 @@ const criterionScore = AiScoresSchema.shape.pain;
 const SCHEMAS = {
   none: AiScoresSchema,
   edge: AiScoresSchema.extend({ edge: criterionScore }),
-  scale: AiScoresSchema.extend({ scale: criterionScore }),
-  both: AiScoresSchema.extend({ edge: criterionScore, scale: criterionScore }),
 };
+
+/**
+ * The screen.v6 scale score: the band of the stored scale result (ScaleResultSchema; band 2 for an unknown price), or
+ * MISSING_EDGE_OR_SCALE when there is none or it is malformed. A price of 0 says nothing about what buyers would pay,
+ * so it scores like an unknown price (Review Focus 1), not band 1. `from` is the prompt's "computed from" wording.
+ */
+export function scaleScore(raw: unknown): Score & { from: string } {
+  const r = ScaleResultSchema.safeParse(raw);
+  if (!r.success) return { value: MISSING_EDGE_OR_SCALE, note: 'no scale estimate (computed)', from: 'no scale estimate' };
+  const buyers = Math.round(r.data.payingBuyers).toLocaleString('en-US');
+  if (r.data.revenueCeiling === null || !r.data.annualPrice) {
+    const from = `${buyers} paying buyers; the price is unknown, so there is no revenue ceiling`;
+    return { value: MISSING_EDGE_OR_SCALE, note: `${from} (computed)`, from };
+  }
+  const from = `revenue ceiling $${Math.round(r.data.revenueCeiling).toLocaleString('en-US')} (${buyers} paying buyers)`;
+  return { value: r.data.band, note: `${from} (computed)`, from };
+}
+
+/** The screen.v6 upside score from the value kind (earn 5, time 3, risk 3, save 2; missing or unknown 3). */
+export function upsideOf(valueToUser: unknown): Score & { from: string } {
+  const kind = (valueToUser as { kind?: unknown } | null)?.kind;
+  const known = kind === 'earn' || kind === 'time' || kind === 'risk' || kind === 'save' ? kind : null;
+  const from = known ? `the value kind ${known}` : 'no value kind';
+  return { value: upsideScore(known), note: `${from} (computed)`, from };
+}
 
 type Scored = {
   id: string; title: string; total: number; index: number; embedding: number[] | null;
@@ -225,34 +262,36 @@ export async function screen(
     const barrierNote = idea.barriers ? `toStart ${idea.barriers.toStart}, toCopy ${idea.barriers.toCopy}` : 'no barrier ratings';
     const moneyFrom = free ? `no value multiple, because the ${USER_PAYS_NOTHING_NOTE}; neutral band`
       : multiple === null ? 'a value multiple that cannot be worked out' : `the value multiple ${multiple.toFixed(1)}x`;
-    // Edge and scale: asked of the model only when the idea states them (ideaBlock shows the line), else computed.
+    // Edge: asked of the model only when the idea states one (ideaBlock shows the line), else computed. Scale (the
+    // stored scale result's band) and upside (the value kind) are always computed (screen.v6).
     const askEdge = hasEdgeLine(idea.edge);
-    const askScale = hasScaleLine(idea.scale);
+    const scale = scaleScore(idea.scaleResult);
+    const upside = upsideOf(idea.valueToUser);
     const computed = [
       `Money case (computed from ${moneyFrom}): ${money} of 5`,
       `Barrier (computed from ${barrierNote}; easy to start and hard to copy score high): ${barrier} of 5`,
       ...(askEdge ? [] : [`Edge (computed: the idea states no edge): ${MISSING_EDGE_OR_SCALE} of 5`]),
-      ...(askScale ? [] : [`Scale (computed: the idea states no scale): ${MISSING_EDGE_OR_SCALE} of 5`]),
+      `Scale (computed from ${scale.from}): ${scale.value} of 5`,
+      `Upside (computed from ${upside.from}; earn 5, time 3, risk 3, save 2): ${upside.value} of 5`,
     ].join('\n');
-    const edgeScale = [...(askEdge ? [SCREEN_EDGE_CRITERION] : []), ...(askScale ? [SCREEN_SCALE_CRITERION] : [])].join('\n');
-    const criteriaList = [...CRITERIA, ...(askEdge ? ['edge'] : []), ...(askScale ? ['scale'] : [])].join(', ');
-    const schema = askEdge && askScale ? SCHEMAS.both : askEdge ? SCHEMAS.edge : askScale ? SCHEMAS.scale : SCHEMAS.none;
-    // The model scores the seven criteria, plus edge and scale when asked; the computed scores are added here and
-    // cannot be overridden (an edge or scale the model was not asked for is stripped by the schema and replaced).
-    const modelScores: AiScores & { edge?: Score; scale?: Score } = await router.structured(
+    const criteriaList = [...CRITERIA, ...(askEdge ? ['edge'] : [])].join(', ');
+    const schema = askEdge ? SCHEMAS.edge : SCHEMAS.none;
+    // The model scores the seven criteria, plus edge when asked; the computed scores are added here and cannot be
+    // overridden (an edge, scale or upside the model was not asked for is stripped by the schema and replaced).
+    const modelScores: AiScores & { edge?: Score } = await router.structured(
       'screen',
       {
-        prompt: prompt.render({ idea: wrapUntrusted('idea', screenIdeaText(idea, marketsOf(idea))), computed, edgeScale, criteriaList }),
+        prompt: prompt.render({ idea: wrapUntrusted('idea', screenIdeaText(idea, marketsOf(idea))), computed, edge: askEdge ? SCREEN_EDGE_CRITERION : '', criteriaList }),
         schema, schemaName: 'screen_scores',
       },
       { runId: run.id, promptVersion: prompt.version },
     );
-    const missing = (what: string): Score => ({ value: MISSING_EDGE_OR_SCALE, note: `no ${what} stated (computed)` });
     const scores: ScreenScores = {
       ...modelScores,
       moneyCase: { value: money, note: moneyNote }, barrier: { value: barrier, note: barrierNote },
-      edge: askEdge && modelScores.edge ? modelScores.edge : missing('edge'),
-      scale: askScale && modelScores.scale ? modelScores.scale : missing('scale'),
+      edge: askEdge && modelScores.edge ? modelScores.edge : { value: MISSING_EDGE_OR_SCALE, note: 'no edge stated (computed)' },
+      scale: { value: scale.value, note: scale.note },
+      upside: { value: upside.value, note: upside.note },
     };
     const total = weightedScreenTotal(scores);
     log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}`);

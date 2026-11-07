@@ -56,7 +56,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   gateFlags: {
     label: 'Gate flags',
-    text: 'The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it.',
+    text: 'The gate runs checks on each idea (not generic, regulation, control, autonomy, reachability, evidence, revenue ceiling), and a flag means one failed. For an idea you wrote yourself it only advises, so you still get the case and decide whether to keep or kill it.',
   },
   stage: {
     label: 'Stage',
