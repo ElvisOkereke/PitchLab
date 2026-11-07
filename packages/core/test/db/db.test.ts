@@ -132,6 +132,21 @@ describe('db', () => {
     await expect(db.insert(ideaReviews).values({ ...review, promptVersion: 'v3', niche: 0 })).rejects.toThrow();
     await db.insert(ideaReviews).values({ ...review, promptVersion: 'review.v2' });
   });
+
+  it('migration 0013 adds scale columns and the scale gate check, additively', async () => {
+    const db = await testDb();
+    type Col = { column_name: string; is_nullable: string; data_type: string };
+    const cols = ((await db.execute(sql`select column_name, is_nullable, data_type from information_schema.columns where table_name = 'ideas'`)) as unknown as { rows: Col[] }).rows;
+    for (const c of ['scale_estimate', 'scale_result']) {
+      expect(cols.find((x) => x.column_name === c), c).toMatchObject({ is_nullable: 'YES', data_type: 'jsonb' });
+    }
+    expect(cols.find((x) => x.column_name === 'scale')).toBeDefined();
+    const labels = ((await db.execute(sql`select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'gate_check'`)) as unknown as { rows: { enumlabel: string }[] }).rows.map((r) => r.enumlabel);
+    expect(labels).toEqual(expect.arrayContaining(['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale']));
+    const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
+    const [idea] = await db.insert(ideas).values({ runId: run!.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], status: 'candidate' }).returning();
+    expect(idea).toMatchObject({ scaleEstimate: null, scaleResult: null });
+  });
 });
 
 describe('seed sectors', () => {

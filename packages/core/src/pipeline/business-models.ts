@@ -55,9 +55,9 @@ export const ScaleSchema = z.object({
 });
 export type Scale = z.infer<typeof ScaleSchema>;
 
-/** Yearly value to the user divided by the yearly price; null when it cannot be worked out. */
-export function valueMultiple(valueToUser: ValueToUser, priceHint: PriceHint, periodsPerYear?: number): number | null {
-  if (!Number.isFinite(priceHint.amount) || !(priceHint.amount > 0)) return null;
+/** The yearly price (amount times periods per year); null when the unit cannot be annualised. A price of 0 is 0. */
+export function annualPrice(priceHint: PriceHint, periodsPerYear?: number): number | null {
+  if (!Number.isFinite(priceHint.amount) || priceHint.amount < 0) return null;
   const unit = priceHint.unit.trim().toLowerCase();
   // A count in the unit ("every 2 weeks", "per 6 months") is not handled: say nothing rather than guess.
   if (/\d/.test(unit)) return null;
@@ -76,5 +76,60 @@ export function valueMultiple(valueToUser: ValueToUser, priceHint: PriceHint, pe
   else if (/\b(one[- ]?time|once|one[- ]?off|flat|lifetime)\b/.test(unit)) periods = 1;
   else if (periodsPerYear && periodsPerYear > 0) periods = periodsPerYear;
   if (periods === undefined) return null;
-  return valueToUser.amountPerYear / (priceHint.amount * periods);
+  return priceHint.amount * periods;
+}
+
+/** Yearly value to the user divided by the yearly price; null when it cannot be worked out. */
+export function valueMultiple(valueToUser: ValueToUser, priceHint: PriceHint, periodsPerYear?: number): number | null {
+  if (!Number.isFinite(priceHint.amount) || !(priceHint.amount > 0)) return null;
+  const price = annualPrice(priceHint, periodsPerYear);
+  if (price === null) return null;
+  return valueToUser.amountPerYear / price;
+}
+
+const SourcedShare = z.object({ pct: z.number().finite().min(0).max(100), basis: z.string().max(300), source: z.string().max(300).optional() });
+
+/** The scale estimate (a model claim): who the buyers are and the share at each step. Web-safe (zod only). */
+export const ScaleEstimateSchema = z.object({
+  buyerUnit: z.enum(['businesses', 'individuals']),
+  population: z.object({ count: z.number().finite().min(0), basis: z.string().max(300), source: z.string().max(300).optional() }),
+  shareWithProblem: SourcedShare,
+  shareWillingToPay: SourcedShare,
+  shareReachable: z.object({ pct: z.number().finite().min(0).max(100), basis: z.string().max(300) }),
+});
+export type ScaleEstimate = z.infer<typeof ScaleEstimateSchema>;
+
+export type ScaleResult = {
+  payingBuyers: number;
+  annualPrice: number | null;
+  revenueCeiling: number | null;
+  band: 1 | 2 | 3 | 4 | 5;
+  /** Names of the shares that were capped. */
+  capped: string[];
+  /** True when no step has a source. */
+  allAssumed: boolean;
+};
+
+const clampPct = (n: number) => (Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0);
+const hasSource = (s?: string) => typeof s === 'string' && s.trim() !== '';
+
+/** Paying buyers and revenue ceiling from the estimate; an unsourced share is capped at a realistic level. */
+export function computeScale(e: ScaleEstimate, priceHint: PriceHint | null): ScaleResult {
+  const capped: string[] = [];
+  const share = (name: string, pct: number, cap: number, source?: string) => {
+    let v = clampPct(pct);
+    if (!hasSource(source) && v > cap) { v = cap; capped.push(name); }
+    return v / 100;
+  };
+  const population = Number.isFinite(e.population.count) ? Math.max(0, e.population.count) : 0;
+  const problem = share('shareWithProblem', e.shareWithProblem.pct, 60, e.shareWithProblem.source);
+  const pay = share('shareWillingToPay', e.shareWillingToPay.pct, e.buyerUnit === 'individuals' ? 3 : 15, e.shareWillingToPay.source);
+  const reach = share('shareReachable', e.shareReachable.pct, 20);
+  const payingBuyers = population * problem * pay * reach;
+  const price = priceHint ? annualPrice(priceHint) : null;
+  const revenueCeiling = price === null ? null : payingBuyers * price;
+  const band: ScaleResult['band'] = revenueCeiling === null ? 2
+    : revenueCeiling < 250_000 ? 1 : revenueCeiling < 1_000_000 ? 2 : revenueCeiling < 5_000_000 ? 3 : revenueCeiling < 25_000_000 ? 4 : 5;
+  const allAssumed = ![e.population.source, e.shareWithProblem.source, e.shareWillingToPay.source].some(hasSource);
+  return { payingBuyers, annualPrice: price, revenueCeiling, band, capped, allAssumed };
 }

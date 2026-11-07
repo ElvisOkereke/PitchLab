@@ -92,6 +92,13 @@
       "when": 1793839899758,
       "tag": "0012_idea_quality",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794073358057,
+      "tag": "0013_scale_estimate",
+      "breakpoints": true
     }
   ]
 }

@@ -17,7 +17,7 @@ export const runStatus = pgEnum('run_status', ['queued', 'running', 'succeeded',
 export const stageStatus = pgEnum('stage_status', ['running', 'done', 'failed']);
 export const ideaOrigin = pgEnum('idea_origin', ['generated', 'owner']);
 export const ideaStatus = pgEnum('idea_status', ['candidate', 'duplicate', 'screened_out', 'gated_out', 'advanced']);
-export const gateCheck = pgEnum('gate_check', ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence']);
+export const gateCheck = pgEnum('gate_check', ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale']);
 export const caseStage = pgEnum('case_stage', ['new', 'validating', 'pilot', 'live', 'killed']);
 export const claimVerified = pgEnum('claim_verified', ['unverified', 'verified', 'unsupported', 'unreachable', 'needs_review']);
 export const criterion = pgEnum('criterion', ['pain', 'roi', 'evidence', 'speed', 'autonomy', 'novelty', 'reach', 'gut']);
@@ -156,6 +156,10 @@ export const ideas = pgTable('ideas', {
   edge: jsonb('edge').$type<unknown>(),
   /** How many buyers there are and how we know (ideate v12; model claim); null for older ideas. */
   scale: jsonb('scale').$type<unknown>(),
+  /** The scale estimate (model claim, ScaleEstimateSchema); null until estimated. */
+  scaleEstimate: jsonb('scale_estimate').$type<unknown>(),
+  /** computeScale output for the estimate (ScaleResult); null until estimated. */
+  scaleResult: jsonb('scale_result').$type<unknown>(),
   /** Research library items the idea drew on. */
   libraryItemIds: uuid('library_item_ids').array(),
   signalIds: uuid('signal_ids').array().notNull(),
