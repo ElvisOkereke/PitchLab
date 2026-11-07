@@ -3,7 +3,7 @@ import { money } from '@bcg/core/case/export-markdown';
 import { safeHttpUrl } from '@bcg/core/case/links';
 import { forYouToCheck, linkFlags, type LinkFlags } from '@bcg/core/case/review';
 import type { CaseView } from '@bcg/core/dashboard/case-view';
-import type { ScaleEstimate, ScaleResult } from '@bcg/core/pipeline/business-models';
+import { FREE_PRICE_CEILING_NOTE, userPaysNothing, type ScaleEstimate, type ScaleResult } from '@bcg/core/pipeline/business-models';
 import { checkLabel } from '@/lib/gate';
 import { libraryHref } from '@/lib/library-query';
 import { ExternalLink } from '../external-link';
@@ -38,22 +38,28 @@ const STEP_LABELS: Record<string, string> = {
 };
 
 /** The idea's scale estimate (ideate.v13): the paying buyers and revenue ceiling worked out in code, then each step as text. */
-function ScaleEstimateRow({ estimate: e, result: r }: { estimate: ScaleEstimate; result: ScaleResult | null }) {
-  const ceiling = r?.revenueCeiling == null ? 'unknown, because the price cannot be made yearly.' : `$${whole(r.revenueCeiling)} a year.`;
+function ScaleEstimateRow({ estimate: e, result: r, businessModel, priceIsFree }: {
+  estimate: ScaleEstimate; result: ScaleResult | null; businessModel?: string | null; priceIsFree?: boolean;
+}) {
+  // Ads and affiliate: the user pays nothing, so step 3 is the share who become regular users (the gate's wording).
+  const free = userPaysNothing(businessModel);
+  const ceiling = r?.revenueCeiling == null
+    ? (priceIsFree ? `${FREE_PRICE_CEILING_NOTE}.` : 'unknown, because the price cannot be made yearly.')
+    : `$${whole(r.revenueCeiling)} a year.`;
   return (
     <div>
-      <dt>Realistic paying buyers</dt>
+      <dt>{free ? 'Realistic regular users' : 'Realistic paying buyers'}</dt>
       <dd>
-        {r ? <TextBlock text={`${whole(r.payingBuyers)} ${e.buyerUnit} would realistically pay. Revenue ceiling: ${ceiling}`} /> : null}
+        {r ? <TextBlock text={`${whole(r.payingBuyers)} ${e.buyerUnit} would realistically ${free ? 'become regular users' : 'pay'}. Revenue ceiling: ${ceiling}`} /> : null}
         <TextBlock text={`Population: ${whole(e.population.count)} ${e.buyerUnit}. ${e.population.basis}`} />
         <ValueSource source={e.population.source} />
         <TextBlock text={`With the problem: ${e.shareWithProblem.pct}%. ${e.shareWithProblem.basis}`} />
         <ValueSource source={e.shareWithProblem.source} />
-        <TextBlock text={`Willing to pay: ${e.shareWillingToPay.pct}%. ${e.shareWillingToPay.basis}`} />
+        <TextBlock text={`${free ? 'Become regular users' : 'Willing to pay'}: ${e.shareWillingToPay.pct}%. ${e.shareWillingToPay.basis}`} />
         <ValueSource source={e.shareWillingToPay.source} />
         <TextBlock text={`Reachable in 3 years: ${e.shareReachable.pct}%. ${e.shareReachable.basis}`} />
         {r && r.capped.length > 0 ? (
-          <p>Cut to the cap because it had no source: {r.capped.map((c) => STEP_LABELS[c] ?? c).join(', ')}.</p>
+          <p>Cut to the cap because it had no source: {r.capped.map((c) => (free && c === 'shareWillingToPay' ? 'become regular users' : STEP_LABELS[c] ?? c)).join(', ')}.</p>
         ) : null}
         {r?.allAssumed ? <p>Every step is an assumption.</p> : null}
         {r?.bandCapped ? <p>Scale band limited to 3: the population has no source.</p> : null}
@@ -159,7 +165,7 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
             </dd>
           </div>
         ) : null}
-        {view.scaleEstimate ? <ScaleEstimateRow estimate={view.scaleEstimate} result={view.scaleResult ?? null} /> : null}
+        {view.scaleEstimate ? <ScaleEstimateRow estimate={view.scaleEstimate} result={view.scaleResult ?? null} businessModel={view.businessModel} priceIsFree={view.priceIsFree} /> : null}
         {view.lensName ? (
           <div>
             <dt>Lens</dt>

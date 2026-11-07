@@ -188,6 +188,15 @@ export function computeScale(e: ScaleEstimate, priceHint: PriceHint | null, busi
 
 const StoredPriceSchema = z.object({ amount: z.number().finite(), unit: z.string() }).passthrough();
 
+/** True when the stored price hint is 0 a year (a free product): its revenue ceiling is unknown, not $0. */
+export function priceIsFree(priceHint: unknown): boolean {
+  const price = StoredPriceSchema.safeParse(priceHint);
+  return price.success && annualPrice(price.data as PriceHint) === 0;
+}
+
+/** The revenue ceiling's wording when it is unknown because the price is 0. */
+export const FREE_PRICE_CEILING_NOTE = 'unknown: the price is 0 (a free product earns another way)';
+
 /** The idea fields currentScale reads (stored jsonb, so validated here). */
 export type ScaleFields = { scaleEstimate: unknown; scaleResult: unknown; priceHint: unknown; businessModel?: string | null };
 

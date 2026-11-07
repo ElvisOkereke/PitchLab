@@ -91,3 +91,41 @@ describe('Summary tab scale estimate', () => {
     expect(plain.container.textContent).not.toContain('band limited');
   });
 });
+
+/** Ads and affiliate ideas (the user pays nothing) and free products: the wording follows the gate's. */
+describe('Summary tab scale wording for ads, affiliate and free products', () => {
+  const scaleEstimate = {
+    buyerUnit: 'individuals' as const,
+    population: { count: 1_000_000, basis: 'Census', source: LIB },
+    shareWithProblem: { pct: 50, basis: 'Assumption: half' },
+    shareWillingToPay: { pct: 10, basis: 'Assumption: a share stay' },
+    shareReachable: { pct: 10, basis: 'Through ads' },
+  };
+  const scaleResult = { payingBuyers: 5000, annualPrice: 2, revenueCeiling: 10_000, band: 1 as const, capped: [], allAssumed: false };
+
+  it('says regular users, not paying buyers, for ads and affiliate', () => {
+    for (const businessModel of ['ads', 'affiliate']) {
+      const { container, unmount } = render(<SummaryTab view={{ ...caseViewFixture(), scaleEstimate, scaleResult, businessModel }} />);
+      const text = container.textContent ?? '';
+      expect(text).toContain('Realistic regular users');
+      expect(text).toContain('5,000 individuals would realistically become regular users. Revenue ceiling: $10,000 a year.');
+      expect(text).toContain('Become regular users: 10%. Assumption: a share stay');
+      expect(text).not.toMatch(/paying buyers|would realistically pay|Willing to pay/);
+      unmount();
+    }
+  });
+
+  it('keeps the paying wording for other models', () => {
+    const text = render(<SummaryTab view={{ ...caseViewFixture(), scaleEstimate, scaleResult, businessModel: 'subscription' }} />).container.textContent ?? '';
+    expect(text).toContain('Realistic paying buyers');
+    expect(text).toContain('Willing to pay: 10%.');
+  });
+
+  it('says the ceiling is unknown for a price of 0', () => {
+    const view = { ...caseViewFixture(), scaleEstimate, scaleResult: { ...scaleResult, annualPrice: null, revenueCeiling: null, band: 2 as const }, businessModel: 'ads', priceIsFree: true };
+    const text = render(<SummaryTab view={view} />).container.textContent ?? '';
+    expect(text).toContain('Revenue ceiling: unknown: the price is 0 (a free product earns another way).');
+    expect(text).not.toContain('$0');
+    expect(text).not.toContain('cannot be made yearly');
+  });
+});

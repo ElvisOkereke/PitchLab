@@ -210,8 +210,14 @@ Validate and Score.
 - **Realistic paying buyers** (new ideas, and older ones after `npm run gen -- audit scale`) shows how many buyers
   would realistically pay and the **revenue ceiling**: those buyers times the yearly price. Under it, each step of the
   sum is listed (the population, the share with the problem, the share willing to pay, the share reachable) with its
-  basis or source. A share with no source is capped, and the line says which. The gate stops a generated idea under
-  $1M a year, so the cases you see are above it. If the price can't be made yearly, the ceiling reads "unknown price".
+  basis or source. A share with no source is capped, and the line says which. For ads and affiliate ideas, where the
+  user pays nothing, the page says **regular users** and the third step is the share who become regular users. The gate
+  stops a generated idea under $1M a year, but that doesn't mean every case you see is above it: ideas you wrote
+  yourself are only advised, ideas whose price is unknown or 0 (a free product) pass with a note, and older ideas
+  without an estimate aren't checked. If the price can't be made yearly the ceiling reads "unknown price", and for a
+  price of 0 it reads "unknown: the price is 0". When the population has no source, or every step is an assumption, the
+  scale band is limited to 3. The $1M line can't be changed in the app yet: ask Claude, which sets
+  `gate.minRevenueCeiling`.
 - **Why:** This is the case in brief. "For you to check" is the work PitchLab could not do for you.
 - **Good:** A buyer you could name and find, a problem that costs them real money or time, and a short "For you to
   check" list.

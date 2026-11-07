@@ -60,12 +60,35 @@ describe('getCaseView', () => {
       shareReachable: { pct: 20, basis: 'Through accountants' },
     };
     const scaleResult = { payingBuyers: 2000, annualPrice: 1200, revenueCeiling: 2_400_000, band: 3, capped: [], allAssumed: false };
-    await insertCase(db, (await insertIdea(db, run.id, { scaleEstimate, scaleResult })).id, { slug: 'est-idea' });
+    await insertCase(db, (await insertIdea(db, run.id, { scaleEstimate, scaleResult, priceHint: { amount: 1200, unit: 'year', basis: 'b' } })).id, { slug: 'est-idea' });
     await insertCase(db, (await insertIdea(db, run.id)).id, { slug: 'no-est-idea' });
     await insertCase(db, (await insertIdea(db, run.id, { scaleEstimate: { buyerUnit: 'robots' }, scaleResult: { payingBuyers: 'many' } })).id, { slug: 'junk-est-idea' });
     expect(await getCaseView(db, 'est-idea')).toMatchObject({ scaleEstimate, scaleResult });
     expect(await getCaseView(db, 'no-est-idea')).toMatchObject({ scaleEstimate: null, scaleResult: null });
     expect(await getCaseView(db, 'junk-est-idea')).toMatchObject({ scaleEstimate: null, scaleResult: null });
+  });
+
+  it('recomputes the scale result from the estimate (a stale stored one never shows), and carries the business model and a free price', async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const scaleEstimate = {
+      buyerUnit: 'individuals', population: { count: 1_000_000, basis: 'Census', source: 'https://x.test/a' },
+      shareWithProblem: { pct: 50, basis: 'Assumption: half' }, shareWillingToPay: { pct: 40, basis: 'Assumption: some' },
+      shareReachable: { pct: 10, basis: 'Through ads' },
+    };
+    const stale = { payingBuyers: 1, annualPrice: 2, revenueCeiling: 0, band: 1, capped: [], allAssumed: false };
+    await insertCase(db, (await insertIdea(db, run.id, {
+      scaleEstimate, scaleResult: stale, businessModel: 'ads', priceHint: { amount: 2, unit: 'year', basis: 'b' },
+    })).id, { slug: 'ads-idea' });
+    await insertCase(db, (await insertIdea(db, run.id, {
+      scaleEstimate, scaleResult: stale, businessModel: 'ads', priceHint: { amount: 0, unit: 'year', basis: 'free' },
+    })).id, { slug: 'free-idea' });
+    const ads = (await getCaseView(db, 'ads-idea'))!;
+    // 1,000,000 x 50% x 10% (capped from 40%) x 10% = 5,000 regular users x $2.
+    expect(ads.scaleResult).toMatchObject({ payingBuyers: 5000, revenueCeiling: 10_000, band: 1 });
+    expect(ads).toMatchObject({ businessModel: 'ads', priceIsFree: false });
+    const free = (await getCaseView(db, 'free-idea'))!;
+    expect(free.scaleResult).toMatchObject({ revenueCeiling: null, band: 2 });
+    expect(free.priceIsFree).toBe(true);
   });
 
   it('keeps only the latest 20 stage events, newest first, and a null lens for owner ideas', async () => {

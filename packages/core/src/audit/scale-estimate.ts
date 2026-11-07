@@ -12,7 +12,7 @@ import { capField, wrapUntrusted } from '../llm/untrusted';
 import { ideationContext } from '../library/context';
 import { ScaleEstimateSchema, computeScale, type PriceHint } from '../pipeline/business-models';
 import { ideaBlock } from '../pipeline/idea-text';
-import { leadingNumber, populationCount } from '../pipeline/ideate';
+import { buyerUnit, leadingNumber, populationCount } from '../pipeline/ideate';
 import { ReviewRefusal } from './review';
 
 /** Ideas per model call. */
@@ -82,7 +82,7 @@ export function buildEstimate(e: Entry, allowed: Set<string>) {
   const pct = (v: unknown) => leadingNumber(v, PCT_REST);
   const src = (s: string | null | undefined) => { const k = keepSource(s, allowed); return k ? { source: k } : {}; };
   const parsed = ScaleEstimateSchema.safeParse({
-    buyerUnit: e.buyerUnit.trim().toLowerCase(),
+    buyerUnit: buyerUnit(e.buyerUnit),
     population: { count: populationCount(e.population.count), basis: capField(e.population.basis, BASIS_MAX), ...src(e.population.source) },
     shareWithProblem: { pct: pct(e.shareWithProblem.pct), basis: capField(e.shareWithProblem.basis, BASIS_MAX), ...src(e.shareWithProblem.source) },
     shareWillingToPay: { pct: pct(e.shareWillingToPay.pct), basis: capField(e.shareWillingToPay.basis, BASIS_MAX), ...src(e.shareWillingToPay.source) },

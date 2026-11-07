@@ -3,7 +3,7 @@ import type { Db } from '../db/client';
 import { benchmarkPasses, cases, claims, gateCheck, gateVerdicts, ideas, lenses, runs, scores, stageEvents } from '../db/schema';
 import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
 import {
-  EdgeSchema, ScaleEstimateSchema, ScaleResultSchema, ScaleSchema, type Edge, type Scale, type ScaleEstimate, type ScaleResult,
+  EdgeSchema, ScaleEstimateSchema, ScaleSchema, currentScale, priceIsFree, type Edge, type Scale, type ScaleEstimate, type ScaleResult,
 } from '../pipeline/business-models';
 
 export type CaseRow = typeof cases.$inferSelect;
@@ -27,6 +27,9 @@ export type CaseView = {
   /** The idea's scale estimate (ideate.v13 or the scale estimator) and its result worked out in code; null when absent or invalid. */
   scaleEstimate?: ScaleEstimate | null;
   scaleResult?: ScaleResult | null;
+  /** The idea's business model (ads and affiliate say "regular users") and whether its price hint is 0 (a free product). */
+  businessModel?: string | null;
+  priceIsFree?: boolean;
   /** The run and benchmark pass the case came from; null for the example (its run is hidden). Optional for older callers. */
   origin?: RunOrigin | null;
 };
@@ -43,7 +46,7 @@ const CHECK_ORDER = new Map<string, number>(gateCheck.enumValues.map((c, i) => [
 export async function getCaseView(db: Db, slug: string): Promise<CaseView | null> {
   if (typeof slug !== 'string' || !CASE_SLUG.test(slug)) return null;
   const [row] = await db.select({ case: cases, lensName: lenses.name, edge: ideas.edge, scale: ideas.scale,
-    scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
+    scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult, priceHint: ideas.priceHint, businessModel: ideas.businessModel,
     runId: runs.id, runCreatedAt: runs.createdAt, runIsExample: runs.isExample, seed: runSeedSql, passLabel: benchmarkPasses.label })
     .from(cases)
     .innerJoin(ideas, eq(ideas.id, cases.ideaId))
@@ -67,11 +70,13 @@ export async function getCaseView(db: Db, slug: string): Promise<CaseView | null
   const edge = EdgeSchema.safeParse(row.edge);
   const scale = ScaleSchema.safeParse(row.scale);
   const scaleEstimate = ScaleEstimateSchema.safeParse(row.scaleEstimate);
-  const scaleResult = ScaleResultSchema.safeParse(row.scaleResult);
+  // Recomputed from the stored estimate (the same result the screen and the gate use), so a result stored before a rule change never shows.
+  const scaleResult = currentScale(row);
   return {
     case: kase, claims: claimRows, scores: scoreRows, gate, events, lensName: row.lensName ?? null,
     edge: edge.success ? edge.data : null, scale: scale.success ? scale.data : null,
-    scaleEstimate: scaleEstimate.success ? scaleEstimate.data : null, scaleResult: scaleResult.success ? scaleResult.data : null,
+    scaleEstimate: scaleEstimate.success ? scaleEstimate.data : null, scaleResult,
+    businessModel: row.businessModel ?? null, priceIsFree: priceIsFree(row.priceHint),
     origin: toRunOrigin({ runId: row.runId, createdAt: row.runCreatedAt, seed: row.seed, passLabel: row.passLabel, isExample: row.runIsExample }),
   };
 }

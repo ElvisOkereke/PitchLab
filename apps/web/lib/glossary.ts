@@ -168,11 +168,11 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   payingBuyers: {
     label: 'Realistic paying buyers',
-    text: 'How many buyers would actually pay, not everyone who has the problem. It is the size of the group, times the share with the problem, the share willing to pay and the share you can reach. A share with no source is capped, so a wild guess cannot inflate it.',
+    text: 'How many buyers would actually pay, not everyone who has the problem. It is the size of the group, times the share with the problem, the share willing to pay and the share you can reach. A share with no source is capped, so a wild guess cannot inflate it (for ads and affiliate, it counts regular users).',
   },
   revenueCeiling: {
     label: 'Revenue ceiling',
-    text: 'The most the idea could earn in a year: realistic paying buyers times the yearly price. Generated ideas under $1M a year are stopped at the gate.',
+    text: 'The most the idea could earn in a year: realistic paying buyers (or regular users) times the yearly price, which for ads and affiliate is our revenue per user. Generated ideas under $1M a year are stopped at the gate, but a price of 0 (a free product) leaves it unknown and passes with a note.',
   },
   upside: {
     label: 'Upside',

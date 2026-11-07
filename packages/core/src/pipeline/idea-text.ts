@@ -1,25 +1,29 @@
 import { z } from 'zod';
 import type { ideas } from '../db/schema';
 import { capField } from '../llm/untrusted';
-import { EdgeSchema, ScaleEstimateSchema, ScaleResultSchema } from './business-models';
+import {
+  EdgeSchema, FREE_PRICE_CEILING_NOTE, ScaleEstimateSchema, currentScale, priceIsFree, userPaysNothing, type ScaleFields,
+} from './business-models';
 
 type IdeaFields = Pick<typeof ideas.$inferSelect, 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution'> &
-  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'scaleEstimate' | 'scaleResult'>>;
+  Partial<Pick<typeof ideas.$inferSelect, 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'scaleEstimate' | 'scaleResult' | 'priceHint' | 'businessModel'>>;
 
 const whole = (n: number) => Math.round(n).toLocaleString('en-US');
 
 /**
- * "Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr" from a stored scale result (ideate.v13),
- * or "revenue ceiling: unknown price" when the price could not be made yearly; '' when the result is missing or invalid.
+ * "Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr" from the idea's current scale result
+ * (currentScale: recomputed from the estimate when there is one, so a result stored before a rule change never shows
+ * a stale figure). Ads and affiliate ideas say "regular users". The ceiling reads "unknown price" when the price could
+ * not be made yearly and "unknown: the price is 0 ..." for a free product; '' when there is no valid result.
  * The unit comes from the estimate and is left out when the estimate is invalid.
  */
-function payingBuyersLine(rawResult: unknown, rawEstimate: unknown): string {
-  const result = ScaleResultSchema.safeParse(rawResult);
-  if (!result.success) return '';
-  const r = result.data;
-  const unit = ScaleEstimateSchema.shape.buyerUnit.safeParse((rawEstimate as { buyerUnit?: unknown } | null)?.buyerUnit);
-  const ceiling = r.revenueCeiling === null ? 'unknown price' : `$${whole(r.revenueCeiling)}/yr`;
-  return capField(`Realistic paying buyers: ${whole(r.payingBuyers)}${unit.success ? ` (${unit.data})` : ''}; revenue ceiling: ${ceiling}`, 200);
+function payingBuyersLine(idea: ScaleFields): string {
+  const r = currentScale(idea);
+  if (!r) return '';
+  const unit = ScaleEstimateSchema.shape.buyerUnit.safeParse((idea.scaleEstimate as { buyerUnit?: unknown } | null)?.buyerUnit);
+  const ceiling = r.revenueCeiling === null ? (priceIsFree(idea.priceHint) ? FREE_PRICE_CEILING_NOTE : 'unknown price') : `$${whole(r.revenueCeiling)}/yr`;
+  const who = userPaysNothing(idea.businessModel) ? 'regular users' : 'paying buyers';
+  return capField(`Realistic ${who}: ${whole(r.payingBuyers)}${unit.success ? ` (${unit.data})` : ''}; revenue ceiling: ${ceiling}`, 200);
 }
 
 const MAX_INCUMBENTS = 8;
@@ -76,7 +80,7 @@ export function ideaBlock(idea: IdeaFields): string {
     const s = scale.data;
     lines.push(`Scale ${CLAIM}: ${capField(s.buyers, 200)}. Basis: ${capField(s.basis, 300)}${s.source ? `. Source: ${capField(s.source, 300)}` : ''}`);
   }
-  const paying = payingBuyersLine(idea.scaleResult, idea.scaleEstimate);
+  const paying = payingBuyersLine({ scaleEstimate: idea.scaleEstimate, scaleResult: idea.scaleResult, priceHint: idea.priceHint, businessModel: idea.businessModel });
   if (paying) lines.push(paying);
   return lines.join('\n');
 }

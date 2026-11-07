@@ -255,23 +255,41 @@ Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design
 
 Design: `docs/superpowers/specs/2026-11-07-scale-and-value-design.md`.
 
-- **`computeScale`** (`pipeline/business-models.ts`): from a `ScaleEstimate` (`buyerUnit`, `population`,
-  `shareWithProblem`, `shareWillingToPay`, `shareReachable`, each with a basis and an optional source) and the price
-  hint, it returns `payingBuyers`, `annualPrice`, `revenueCeiling`, `band`, the names of capped shares and `allAssumed`.
-  A share with no source is capped (willing to pay: individuals 3%, businesses 15%; reachable 20%; with the problem 60%);
-  a sourced share is only clamped to 0-100. The price is annualised with the `valueMultiple` unit rules; when it can't
-  be, the ceiling is null and the band is 2. Bands by ceiling: under $250k 1, under $1M 2, under $5M 3, under $25M 4,
-  otherwise 5. The result is stored in `ideas.scale_estimate` and `ideas.scale_result` (migration 0013).
+- **`computeScale(estimate, priceHint, businessModel?)`** (`pipeline/business-models.ts`): from a `ScaleEstimate`
+  (`buyerUnit`, `population`, `shareWithProblem`, `shareWillingToPay`, `shareReachable`, each with a basis and an
+  optional source), the price hint and the idea's business model, it returns `payingBuyers`, `annualPrice`,
+  `revenueCeiling`, `band`, the names of capped shares, `allAssumed` and `bandCapped`. A share with no source is capped;
+  a sourced share is only clamped to 0-100. Caps (unsourced shares only):
+
+  | Share | Cap |
+  |---|---|
+  | `shareWithProblem` | 60% |
+  | `shareWillingToPay`, individuals | 3% |
+  | `shareWillingToPay`, businesses | 15% |
+  | `shareWillingToPay`, ads or affiliate, individuals | 10% |
+  | `shareWillingToPay`, ads or affiliate, businesses | 30% |
+  | `shareReachable` | 20% |
+
+  For ads and affiliate (`userPaysNothing`), step 3 means the share who become regular users, and the price hint is our
+  revenue per user per year. The price is annualised with the `valueMultiple` unit rules; when it can't be, or when it
+  is 0 (a free product earns another way), the ceiling is null and the band is 2. Bands by ceiling: under $250k 1,
+  under $1M 2, under $5M 3, under $25M 4, otherwise 5. The band is then capped at 3 (`bandCapped`) when the population
+  has no source or every step is an assumption; the ceiling itself is unchanged and so is the gate. The result is stored
+  in `ideas.scale_estimate` and `ideas.scale_result` (migration 0013).
+- **`currentScale(idea)`** (same file): recomputes `computeScale` from the stored estimate, price hint and business
+  model when the estimate is valid, else falls back to the validated stored result, else null. The screen, the gate, the
+  backtest, `getCaseView` and `ideaBlock` all use it, so they can't disagree and a result stored before a rule change
+  never shows a stale figure.
 - **Estimator** (`audit/scale-estimate.ts`, `scale-estimate.v1`; `gen audit scale [passId|--last|--decided]`): writes
   the same estimate for ideas that lack one, on the `review` model stage, with the nearest library `market` entries.
   Idempotent and fills only ideas without one; it never sees a Board decision. `--decided` covers every idea behind a
   kept or killed case.
 - **Ideate v13** asks for the estimate and prefers earning to saving; code computes the result.
-- **Screen v6 and gate v6:** `scale` is the band from `scale_result` (2 when missing) and the model no longer judges it;
+- **Screen v6 and gate v6:** `scale` is the band from `currentScale` (2 when missing) and the model no longer judges it;
   a computed `upside` criterion scores earn 5, time 3, risk 3, save 2, missing 3; all weights 1 except `speed` 0.5. The
   gate has a code check `scale` (enum value added in migration 0013) that fails a generated idea whose revenue ceiling
   is under the setting `gate.minRevenueCeiling` (default 1,000,000, read by `getMinRevenueCeiling`), shows the
-  arithmetic and caps, passes with a note when there is no estimate or no price, and only advises for owner ideas. A
+  arithmetic and caps, passes with a note when there is no estimate or the price is unknown or 0, and only advises for owner ideas. A
   scale kill does not count as a wasted gate entrant.
 - **`ownerKeeps`** (`bench/scorecard.ts`, web-safe): cases of the set (not examples) whose current `stage` is not `new`
   are decided; `validating`, `pilot` and `live` are kept; it meets at 0.5 and is `no_data` when none are decided. It

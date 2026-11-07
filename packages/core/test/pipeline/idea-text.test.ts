@@ -68,17 +68,19 @@ describe('ideaBlock', () => {
       shareWillingToPay: { pct: 10, basis: 'b' }, shareReachable: { pct: 12.5, basis: 'b' },
     };
     const scaleResult = { payingBuyers: 12_500.4, annualPrice: 1200, revenueCeiling: 15_000_480, band: 4, capped: [], allAssumed: true };
-    expect(ideaBlock({ ...base, scaleEstimate, scaleResult })).toBe(
-      `${BASE_TEXT}\nRealistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,480/yr`,
+    // The shown result is recomputed from the estimate and the price (100 a month): 12,500 buyers, $15,000,000.
+    const priceHint = { amount: 100, unit: 'month', basis: 'b' };
+    expect(ideaBlock({ ...base, scaleEstimate, scaleResult, priceHint })).toBe(
+      `${BASE_TEXT}\nRealistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr`,
     );
-    expect(ideaBlock({ ...base, scaleEstimate: { ...scaleEstimate, buyerUnit: 'individuals' }, scaleResult: { ...scaleResult, annualPrice: null, revenueCeiling: null } })).toBe(
-      `${BASE_TEXT}\nRealistic paying buyers: 12,500 (individuals); revenue ceiling: unknown price`,
+    expect(ideaBlock({ ...base, scaleEstimate: { ...scaleEstimate, buyerUnit: 'individuals' }, scaleResult })).toBe(
+      `${BASE_TEXT}\nRealistic paying buyers: 3,750 (individuals); revenue ceiling: unknown price`,
     );
     // The scale line (older free text) stays when both are present, before the paying-buyers line.
-    const both = ideaBlock({ ...base, scale: { buyers: 'b', basis: 'Assumption: x' }, scaleEstimate, scaleResult });
+    const both = ideaBlock({ ...base, scale: { buyers: 'b', basis: 'Assumption: x' }, scaleEstimate, scaleResult, priceHint });
     expect(both.split('\n').slice(-2)).toEqual([
       "Scale (the idea's own unverified claim): b. Basis: Assumption: x",
-      'Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,480/yr',
+      'Realistic paying buyers: 12,500 (businesses); revenue ceiling: $15,000,000/yr',
     ]);
   });
 
@@ -92,5 +94,39 @@ describe('ideaBlock', () => {
   it('keeps at most 8 names', () => {
     const text = ideaBlock({ ...base, knownIncumbents: Array.from({ length: 9 }, (_, i) => `Inc${i}`), functionalGap: null });
     expect(text).toBe(`${BASE_TEXT}\n${INC}${Array.from({ length: 8 }, (_, i) => `Inc${i}`).join('; ')}`);
+  });
+
+  describe('ads, affiliate and free products', () => {
+    const scaleEstimate = {
+      buyerUnit: 'individuals',
+      population: { count: 1_000_000, basis: 'b' }, shareWithProblem: { pct: 50, basis: 'b' },
+      shareWillingToPay: { pct: 40, basis: 'b' }, shareReachable: { pct: 10, basis: 'b' },
+    };
+    const stale = { payingBuyers: 1, annualPrice: null, revenueCeiling: 0, band: 1, capped: [], allAssumed: true };
+
+    it('says regular users for ads and affiliate, with the unsourced 10% cap and our revenue per user', () => {
+      const priceHint = { amount: 2, unit: 'year', basis: 'b' };
+      for (const businessModel of ['ads', 'affiliate'] as const) {
+        // 1,000,000 x 50% x 10% (capped from 40%) x 10% = 5,000 regular users x $2.
+        expect(ideaBlock({ ...base, scaleEstimate, scaleResult: stale, priceHint, businessModel })).toBe(
+          `${BASE_TEXT}
+Realistic regular users: 5,000 (individuals); revenue ceiling: $10,000/yr`,
+        );
+      }
+      expect(ideaBlock({ ...base, scaleEstimate, scaleResult: stale, priceHint, businessModel: 'subscription' })).toContain('Realistic paying buyers: 1,500 (individuals)');
+    });
+
+    it('says the ceiling is unknown for a price of 0, and never shows $0 from a stale stored result', () => {
+      const text = ideaBlock({ ...base, scaleEstimate, scaleResult: stale, priceHint: { amount: 0, unit: 'month', basis: 'free' }, businessModel: 'ads' });
+      expect(text).toContain('revenue ceiling: unknown: the price is 0 (a free product earns another way)');
+      expect(text).not.toContain('$0');
+    });
+
+    it('uses the stored result when there is no valid estimate', () => {
+      expect(ideaBlock({ ...base, scaleEstimate: null, scaleResult: { ...stale, payingBuyers: 7, revenueCeiling: 70 } })).toBe(
+        `${BASE_TEXT}
+Realistic paying buyers: 7; revenue ceiling: $70/yr`,
+      );
+    });
   });
 });

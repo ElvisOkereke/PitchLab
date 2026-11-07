@@ -112,6 +112,19 @@ describe('estimateScale', () => {
     expect((await get(db, ids[0]!)).scaleResult).toEqual({ marker: 1 });
   });
 
+  it('accepts the buyer unit as the model spells it ("business", "consumers"), like ideate does', async () => {
+    const db = await testDb();
+    const { passId, ids } = await passWith(db, 3, { priceHint: price });
+    const units = ['business', 'consumers', 'robots'];
+    const router = echoRouter((id) => est(id, { buyerUnit: units[ids.indexOf(id)] }));
+    const res = await estimateScale({ db, router, ...quiet }, { passId });
+    expect(res.estimated).toBe(2);
+    expect(res.skipped).toBe(1);
+    expect((await get(db, ids[0]!)).scaleEstimate).toMatchObject({ buyerUnit: 'businesses' });
+    expect((await get(db, ids[1]!)).scaleEstimate).toMatchObject({ buyerUnit: 'individuals' });
+    expect((await get(db, ids[2]!)).scaleEstimate).toBeNull();
+  });
+
   it('normalises number text and counts invalid entries as skipped', async () => {
     const db = await testDb();
     const { passId, ids } = await passWith(db, 4, { priceHint: price });

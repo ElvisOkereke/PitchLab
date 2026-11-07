@@ -169,7 +169,10 @@ follow its progress.
     Each idea names its audience, one of 11 business models, revenue mechanics, value to the user per year, a price
     hint, barriers to start and to copy (1 to 5) and the incumbents it claims to beat. It also states its **edge**
     (kind: AI, cost, speed, accuracy, data, network, new capability or distribution; the claim, what it beats and why
-    now) and its **scale** (how many buyers, and why). An idea is stored only when its evidence passes one of two
+    now) and its **scale**: an estimate of the realistic paying buyers (a population times the share with the problem, the
+    share willing to pay and the share reachable, each with a basis or source) and the price, from which code works out
+    the revenue ceiling. For ads and affiliate ideas the third share is the share who become regular users and the price
+    is our revenue per user per year. An idea is stored only when its evidence passes one of two
     routes: 3 operator or neutral complaint signals from 3 domains, or 1 such complaint plus 1 **demand source** (a
     cited library trend, market, rule change or pricing entry it was shown, or an opportunity signal from another
     domain than the complaint). The run must reach at least
@@ -179,16 +182,18 @@ follow its progress.
     and its basis is labelled **"Assumption:"**.
   - **dedupe:** embeds each idea and marks copies (similarity 0.88 or more) of an idea from any earlier run or one
     already kept in this run. Owner ideas are always kept.
-  - **screen** (prompt v5): the model scores 7 criteria, plus **edge** and **scale** (1 to 5) when the idea states
-    them; code adds two scores it cannot override, the **money case**
+  - **screen** (prompt v6): the model scores 7 criteria, plus **edge** (1 to 5) when the idea states one; code adds
+    four scores it cannot override: the **money case**
     (from the value multiple: 10× or more scores 5, 5× 4, 3× 3, 1.5× 2, less 1; unknown 2; ads and affiliate, where
-    the user pays nothing, a neutral 3) and the **barrier** score (easy to start and hard to copy score high). The total
-    is a weighted mean of the 7 criteria, money case, barrier, edge and scale: every value weighs 1 except speed (0.5).
-    An old idea with no edge or scale counts as 2 on each. The top ideas advance, skipping any that has
+    the user pays nothing, a neutral 3), the **barrier** score (easy to start and hard to copy score high), **scale**
+    (the band of the revenue ceiling, computed from the stored estimate; 2 when the ceiling is unknown, and at most 3
+    when the population has no source or every step is an assumption) and **upside** (earn 5, time 3, risk 3, save 2).
+    The total is a weighted mean: every value weighs 1 except speed (0.5). An old idea with no edge or estimate counts
+    as 2 on each (upside 3). The top ideas advance, skipping any that has
     too little evidence for the gate (the gate's own evidence rule, applied early), a third idea with the same business
     model (cap of 2 per model), a near-twin of an advancing idea, a copy of an idea that has a case, or one close to a
     past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant.
-  - **gate** (prompt v5): competitor research, then a different model judges five checks, harshly: **generic**
+  - **gate** (prompt v6): competitor research, then a different model judges five checks, harshly: **generic**
     (established competitors or library startups already provide the function and the idea has no concrete, checkable
     edge against named incumbents; a claimed gap that is only positioning does not count), **regulation** (needs a licence), **control** (depends on unofficial APIs, a partner or one
     platform), **autonomy** and **reachability** (buyers, or individuals through communities, search, app stores,
@@ -196,7 +201,9 @@ follow its progress.
     pass when software-led with light setup or review, as a guide under about 2 hours per customer per month.
     **Evidence** is a code rule with ideate's two routes: at least 3 independent operator or neutral sources on
     distinct domains (up to 2 threads per community site; vendor and untagged sources never count), or 1 operator or
-    neutral complaint plus 1 demand source. Any failure kills a generated idea.
+    neutral complaint plus 1 demand source. A code check, **scale**, fails a generated idea whose revenue ceiling is
+    under $1M a year (setting `gate.minRevenueCeiling`); it passes with a note when there is no estimate or the price is
+    unknown or 0 (a free product), and only advises for your own ideas. Any failure kills a generated idea.
   - **case** (case-write v4): research, then write summary, evidence, numbers inputs, competitors and pitch. The model
     gives only inputs, each with a source or a stated assumption; code does all arithmetic with a formula per business
     model (for example subscription, take rate × GMV, impressions × CPM, referrals × commission, conversion × paid
@@ -287,6 +294,13 @@ follow its progress.
   price). An unsourced share is capped, so a guess cannot inflate it. The gate stops a generated idea whose revenue
   ceiling is under $1M a year; the screen scores scale from the same number, in code. `gen audit scale --last` (or a pass
   id, or `--decided` for every case you kept or killed) fills in the estimate for older ideas.
+- **Ads, free products and unsourced guesses.** For ads and affiliate ideas, where the user pays nothing, the third step
+  of the estimate is the share who become regular users (unsourced caps: individuals 10%, businesses 30%) and the price
+  is our revenue per user per year; the Summary tab and the idea text say "regular users". A price of 0 (a free
+  product) leaves the revenue ceiling unknown: scale band 2, and the gate passes with a note. When the population has no
+  source, or every step is an assumption, the scale band is capped at 3 (the ceiling and the gate are unaffected).
+  The screen, the gate, the backtest and the Summary tab all read one `currentScale` that recomputes from the stored
+  estimate, so an older stored result never shows a stale figure.
 - **Earn over save.** Ideas are asked to prefer earning money for the buyer over saving them money. The screen scores
   this as upside (earn 5, time 3, risk 3, save 2) and the idea reviewer notes it.
 - **The Board is the verdict.** Moving a case on the Board now counts as your verdict. The scorecard's **Owner keeps**

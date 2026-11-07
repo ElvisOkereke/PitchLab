@@ -160,7 +160,8 @@ const BUYER_UNITS: Record<string, ScaleEstimate['buyerUnit']> = {
   businesses: 'businesses', business: 'businesses', companies: 'businesses', company: 'businesses', firms: 'businesses', b2b: 'businesses',
   individuals: 'individuals', individual: 'individuals', consumers: 'individuals', consumer: 'individuals', people: 'individuals', persons: 'individuals',
 };
-const buyerUnit = (v: unknown) => (typeof v === 'string' ? BUYER_UNITS[v.trim().toLowerCase()] ?? v : v);
+/** A buyer unit as the model spelled it, mapped to a valid one; anything unrecognised is returned unchanged (and fails validation). */
+export const buyerUnit = (v: unknown) => (typeof v === 'string' ? BUYER_UNITS[v.trim().toLowerCase()] ?? v : v);
 /** Each step of the scale estimate: its key, its number field and how that number text is read. */
 const ESTIMATE_STEPS: [string, string, (v: unknown) => unknown][] = [
   ['population', 'count', populationCount],
