@@ -4,8 +4,10 @@ import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizz
 import { caseToMarkdown } from './case/export-markdown';
 import {
   CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
-  type AuditReviewOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
+import { estimateScale } from './audit/scale-estimate';
+import { DEFAULT_MIN_REVENUE_CEILING, agreementPct, renderBacktestMarkdown, runBacktest } from './audit/backtest';
 import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
 import { scrubError } from './tools/scrub';
@@ -46,6 +48,7 @@ const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
 const fromBase = (p: string) => resolve(BASE_DIR, p);
 const EXPORT_DIR = fromBase(join('output', 'cases'));
 const BENCH_DIR = fromBase(join('output', 'bench'));
+const AUDIT_DIR = fromBase(join('output', 'audit'));
 const VALIDATION_DIR = fromBase(join('output', 'validation'));
 const DEFAULT_DB_URL = 'pglite://.data/pglite';
 
@@ -629,6 +632,61 @@ async function auditReviewCommand(passId: string | undefined, opts: AuditReviewO
   }
 }
 
+/** `gen audit scale`: estimates the scale of ideas that lack an estimate, then prints estimated, skipped and cost. */
+async function auditScaleCommand(passId: string | undefined, opts: AuditScaleOpts): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    let target: { passId: string } | { decided: true };
+    if (opts.decided) target = { decided: true };
+    else {
+      const id = passId ?? await newestPassId(db);
+      if (!id) throw new CliError('No benchmark passes yet. Queue one first: npm run gen -- bench run', 1);
+      target = { passId: id };
+    }
+    let res;
+    try {
+      res = await estimateScale({ db, router: buildRouter(env, db), log: out }, target, { dryRun: opts.dryRun });
+    } catch (err) {
+      if (err instanceof ReviewRefusal) throw new CliError(err.message, 1);
+      throw err;
+    }
+    if (opts.dryRun) {
+      out('Dry run: no model calls were made and nothing was saved.');
+      return 0;
+    }
+    out(`Estimated ${res.estimated}, skipped ${res.skipped}, cost $${res.spentUsd.toFixed(4)} (estimated $${res.estimatedUsd.toFixed(2)}).`);
+    if (res.stoppedForBudget) out('Stopped early: the spend passed twice the estimate. Run the command again to estimate the rest.');
+    if (res.estimated > 0 && opts.decided) out('See how the rule compares with your decisions: npm run gen -- audit backtest');
+    return 0;
+  } finally {
+    await closeDb(db);
+  }
+}
+
+/** `gen audit backtest`: the scale rule against the cases you kept or killed; writes output/audit/backtest-<date>.md. */
+async function auditBacktestCommand(): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const opts = { minRevenueCeiling: DEFAULT_MIN_REVENUE_CEILING };
+    const bt = await runBacktest(db, opts);
+    const date = new Date().toISOString().slice(0, 10);
+    mkdirSync(AUDIT_DIR, { recursive: true });
+    const path = join(AUDIT_DIR, `backtest-${date}.md`);
+    writeFileSync(path, renderBacktestMarkdown(bt, { ...opts, date }), 'utf8');
+    out(`Agreement ${agreementPct(bt)}% (${bt.agree} of ${bt.decided} decided cases with an estimate); ${bt.disagreements.length} disagreements; ${bt.noEstimate.length} with no estimate.`);
+    const t = bt.table;
+    out(`Kept: ${t.keptAbove} above the line, ${t.keptBelow} below. Killed: ${t.killedAbove} above, ${t.killedBelow} below.`);
+    out(`Written to ${path}`);
+    return 0;
+  } finally {
+    await closeDb(db);
+  }
+}
+
 async function auditHoldoutAddCommand(text: string): Promise<number> {
   return withDb(async (db) => {
     const r = await holdoutAdd(db, text);
@@ -676,6 +734,8 @@ const program = buildProgram({
   benchRun: benchRunCommand,
   benchReport: benchReportCommand,
   auditReview: auditReviewCommand,
+  auditScale: auditScaleCommand,
+  auditBacktest: auditBacktestCommand,
   auditHoldoutAdd: auditHoldoutAddCommand,
   auditHoldoutList: auditHoldoutListCommand,
   auditHoldoutClear: auditHoldoutClearCommand,

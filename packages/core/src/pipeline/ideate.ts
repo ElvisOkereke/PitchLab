@@ -106,7 +106,7 @@ const clip = (v: unknown, max: number) => (typeof v === 'string' && v.length > m
  * minus sign, a malformed or space-grouped number (`"1,2"`, `"2 000"`, `"1e5"`), a magnitude word (`"$15k"`,
  * `"2 million"`) or a remainder the field does not allow (a per-month amount where a yearly one is asked for).
  */
-function leadingNumber(v: unknown, restOk: RegExp): unknown {
+export function leadingNumber(v: unknown, restOk: RegExp): unknown {
   if (typeof v !== 'string') return v;
   // Model text can be steered by untrusted evidence: trim, refuse long strings and collapse spaces before the regex, whose
   // adjacent optional whitespace runs would otherwise backtrack polynomially on a long run of spaces.

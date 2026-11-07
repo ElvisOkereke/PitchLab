@@ -8,7 +8,7 @@ function handlers() {
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
-    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok),
+    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -209,5 +209,23 @@ describe('gen audit holdout', () => {
 
   it('add needs text', async () => {
     await expect(parse(['audit', 'holdout', 'add'])).rejects.toThrow();
+  });
+});
+
+describe('gen audit scale and backtest', () => {
+  const id = '123e4567-e89b-12d3-a456-426614174000';
+  it('parses a pass id, --last or --decided, with --dry-run', async () => {
+    expect((await parse(['audit', 'scale', id])).auditScale).toHaveBeenCalledWith(id, {});
+    expect((await parse(['audit', 'scale', '--last', '--dry-run'])).auditScale).toHaveBeenCalledWith(undefined, { last: true, dryRun: true });
+    expect((await parse(['audit', 'scale', '--decided'])).auditScale).toHaveBeenCalledWith(undefined, { decided: true });
+  });
+  it('needs exactly one target and a valid id', async () => {
+    await expect(parse(['audit', 'scale'])).rejects.toThrow(/pass id, --last or --decided/);
+    await expect(parse(['audit', 'scale', id, '--decided'])).rejects.toThrow(/pass id, --last or --decided/);
+    await expect(parse(['audit', 'scale', '--last', '--decided'])).rejects.toThrow(/pass id, --last or --decided/);
+    await expect(parse(['audit', 'scale', 'abc'])).rejects.toThrow(/not a pass id/);
+  });
+  it('wires backtest', async () => {
+    expect((await parse(['audit', 'backtest'])).auditBacktest).toHaveBeenCalled();
   });
 });

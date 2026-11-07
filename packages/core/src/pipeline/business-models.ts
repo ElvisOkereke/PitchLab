@@ -133,3 +133,14 @@ export function computeScale(e: ScaleEstimate, priceHint: PriceHint | null): Sca
   const allAssumed = ![e.population.source, e.shareWithProblem.source, e.shareWillingToPay.source].some(hasSource);
   return { payingBuyers, annualPrice: price, revenueCeiling, band, capped, allAssumed };
 }
+
+/** How much a value kind says about upside to the buyer (earn is worth most). A missing or unknown kind scores 3. */
+export function upsideScore(kind: ValueToUser['kind'] | null | undefined): number {
+  switch (kind) {
+    case 'earn': return 5;
+    case 'time': return 3;
+    case 'risk': return 3;
+    case 'save': return 2;
+    default: return 3;
+  }
+}

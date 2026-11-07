@@ -72,12 +72,15 @@ export type CliHandlers = {
   research(topic: string, opts: ResearchCliOpts): Promise<number>;
   researchStatus(): Promise<number>;
   auditReview(passId: string | undefined, opts: AuditReviewOpts): Promise<number>;
+  auditScale(passId: string | undefined, opts: AuditScaleOpts): Promise<number>;
+  auditBacktest(): Promise<number>;
   auditHoldoutAdd(text: string): Promise<number>;
   auditHoldoutList(): Promise<number>;
   auditHoldoutClear(): Promise<number>;
 };
 
 export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
+export type AuditScaleOpts = { last?: boolean; decided?: boolean; dryRun?: boolean };
 
 const PASS_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -295,6 +298,24 @@ export function buildProgram(h: CliHandlers): Command {
       if ((passId === undefined) === !opts.last) throw new CliError('Give a pass id or --last (not both).', 2);
       if (passId !== undefined && !PASS_ID_RE.test(passId)) throw new CliError(`That is not a pass id: ${passId}`, 2);
       process.exitCode = await h.auditReview(passId, opts);
+    });
+  auditCmd.command('scale')
+    .description("Estimate the scale (paying buyers and revenue ceiling) of ideas that have no estimate: a pass's ideas, or every idea behind a kept or killed case (costs model calls; only ideas without an estimate are sent)")
+    .argument('[passId]', 'a pass id')
+    .option('--last', 'the newest finished benchmark pass')
+    .option('--decided', 'every idea behind a case you have kept or killed')
+    .option('--dry-run', 'show how many ideas would be estimated and the estimated cost, without calling the model')
+    .action(async (passId: string | undefined, opts: AuditScaleOpts) => {
+      if ([passId !== undefined, opts.last === true, opts.decided === true].filter(Boolean).length !== 1) {
+        throw new CliError('Give a pass id, --last or --decided (just one).', 2);
+      }
+      if (passId !== undefined && !PASS_ID_RE.test(passId)) throw new CliError(`That is not a pass id: ${passId}`, 2);
+      process.exitCode = await h.auditScale(passId, opts);
+    });
+  auditCmd.command('backtest')
+    .description('Compare the scale rule with the cases you kept or killed; writes output/audit/backtest-<date>.md (no model calls)')
+    .action(async () => {
+      process.exitCode = await h.auditBacktest();
     });
   const holdoutCmd = auditCmd.command('holdout').description('Holdout examples: ideas you would want, compared with each pass by `bench report` (never shown to the model)');
   holdoutCmd.command('add')
