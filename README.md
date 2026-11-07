@@ -252,8 +252,8 @@ follow its progress.
 - **Scorecard metrics** (target in brackets): repetition (below 0.55), near-duplicates (below 10%), buyer variety (8 or
   more per run), consumer share (30% or more), business-model variety (4 or more per run), real-need evidence (50% or
   more), demand evidence (80% or more of ideas cite a trend, rule change or market entry), customer return (100%, median 3× or more), our margin (100%), wasted gate
-  entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), cost per
-  case (tracked). Example runs and cases are always left out.
+  entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), owner
+  keeps (50% or more of the cases you decided on the Board), cost per case (tracked). Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
   benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
   one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**
@@ -282,6 +282,20 @@ follow its progress.
   new tools) as well as pain.
 - **Tech forums are off by default.** WordPress and GitHub evidence is only collected when the setting
   `harvest.techForums` is on. Hacker News and Stack Exchange are unchanged.
+- **Scale estimate and the $1M line.** Each idea now works out its realistic paying buyers (a population times the
+  share with the problem, the share willing to pay and the share reachable) and a revenue ceiling (buyers times the yearly
+  price). An unsourced share is capped, so a guess cannot inflate it. The gate stops a generated idea whose revenue
+  ceiling is under $1M a year; the screen scores scale from the same number, in code. `gen audit scale --last` (or a pass
+  id, or `--decided` for every case you kept or killed) fills in the estimate for older ideas.
+- **Earn over save.** Ideas are asked to prefer earning money for the buyer over saving them money. The screen scores
+  this as upside (earn 5, time 3, risk 3, save 2) and the idea reviewer notes it.
+- **The Board is the verdict.** Moving a case on the Board now counts as your verdict. The scorecard's **Owner keeps**
+  is the share of the cases you decided (not New) that you kept (Validating, Pilot or Live), and **Reviewer agreement**
+  counts kept as liked and killed as disliked, with idea ratings winning when both exist. The reviewer is now
+  `idea-review.v2`: it scores scale on realistic paying buyers and the revenue ceiling.
+- **Backtest.** `gen audit backtest` compares the scale and upside rule with your Board decisions and writes
+  `output/audit/backtest-<date>.md`: the agreement, a table of kept and killed against above and below the line, and
+  the cases where the rule and you disagree.
 - **bench-v3** is the current benchmark (see above). Results are logged in
   [the idea quality log](docs/idea-quality-log.md).
 

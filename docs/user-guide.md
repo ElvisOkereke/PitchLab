@@ -207,6 +207,11 @@ Validate and Score.
   or distribution), what it beats ("Versus today's option") and why it is possible now. **Idea's scale** says how
   many buyers there are and the basis for that number, with its source when there is one. Both are the idea's own
   claims, not checked facts. Ideas from before these fields existed don't show these lines.
+- **Realistic paying buyers** (new ideas, and older ones after `npm run gen -- audit scale`) shows how many buyers
+  would realistically pay and the **revenue ceiling**: those buyers times the yearly price. Under it, each step of the
+  sum is listed (the population, the share with the problem, the share willing to pay, the share reachable) with its
+  basis or source. A share with no source is capped, and the line says which. The gate stops a generated idea under
+  $1M a year, so the cases you see are above it. If the price can't be made yearly, the ceiling reads "unknown price".
 - **Why:** This is the case in brief. "For you to check" is the work PitchLab could not do for you.
 - **Good:** A buyer you could name and find, a problem that costs them real money or time, and a short "For you to
   check" list.
@@ -450,12 +455,30 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
      so scores you give afterwards show only after you press **Recompute** under that pass's column. That adds a new
      column with today's scores; the old one stays as it was. Retrying a failed run after its pass froze doesn't change
      the pass either: press Recompute to include the retried run.
+- **Owner keeps:** the row counts the cases you decided on the Board. A case that has left New is decided; one in
+  Validating, Pilot or Live is kept, and one in Killed is not. It reads "kept N of M decided" and meets at 50%. It uses
+  each case's stage today, so a case you move back from Killed counts as kept. You never score anything extra: sorting
+  cases on the Board is your verdict. Press **Recompute** under a pass to see today's Board in a new column.
 - **What good looks like:** Repetition and near-duplicates fall, buyer variety rises, and your own verdict stays above
   3.5. The newer rows should also rise: demand evidence (at least 80% of ideas rest on a trend, a rule change or a market entry from the library; ideas from before this existed are left out), consumer share (at least 30% of ideas for individuals), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
 - **From the terminal:** `npm run gen -- bench report` prints the scorecard and writes it to `output/bench/`.
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline
   --dry-run` shows what a baseline would hold without saving it.
+
+## Check the scale rule against your decisions
+
+- **What:** The backtest shows whether the rule PitchLab uses to stop small ideas (a revenue ceiling of at least $1M
+  a year, with upside of at least 3) would have agreed with what you kept and killed on the Board.
+- **Why:** The rule is only worth keeping if it matches your taste. Your decisions are the test.
+- **Do it:**
+  1. Run `npm run gen -- audit scale --decided --dry-run` to see the cost, then without `--dry-run`. It writes the
+     scale estimate for every idea behind a case you kept or killed that has none. The estimator never sees your
+     decision.
+  2. Run `npm run gen -- audit backtest`. It prints the agreement and writes `output/audit/backtest-<date>.md`: a
+     table of kept and killed cases against above and below the line, and the cases where the rule and you disagree.
+- **What good looks like:** The rule agrees with you on most cases, and the disagreements are ones you can explain.
+  If it keeps cases you killed, the line may be too low; if it drops cases you kept, too high.
 
 ## Rate ideas and read the audit
 
@@ -472,13 +495,15 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
      niche, ten ideas per call, and only reviews what is missing. It stops early, with what it has done so far, if it
      spends more than twice its estimate.
   3. A pass snapshot is frozen, so press **Recompute** under the pass on **Progress** (or run
-     `npm run gen -- bench report <passId> --recompute`) after you rate or review. Your ratings and the reviews then
-     show in a new column.
+     `npm run gen -- bench report <passId> --recompute`) after you rate, move cases on the Board, or review. Your
+     ratings, Board decisions and the reviews then show in a new column.
   4. Open **Progress** and read the **Audit** section under a pass: the top domains and vendor voice, the lens mix,
      what the gate killed, and the niche share. A flag means one source, lens or check dominates; it is a prompt to
-     look, not a failure. Reviewer agreement appears once 10 or more rated ideas are reviewed.
+     look, not a failure. Reviewer agreement appears once 10 or more ideas you rated, kept or killed are reviewed. The reviewer
+     (`idea-review.v2`) scores scale on realistic paying buyers and the revenue ceiling, and adds a note on whether the
+     idea earns money or saves it.
   5. Add 2 or 3 holdout examples in **Settings** (Holdout examples), or with
      `npm run gen -- audit holdout add "an idea you would want"`. `audit holdout list` shows them and
      `audit holdout clear` removes them. The report shows the closest generated idea to each.
 - **What good looks like:** Your likes are at least half of the ideas you rate, the median edge and scale are 3.5 or
-  more, the niche share is at most 30%, and the reviewer agrees with you at least 70% of the time.
+  more, the niche share is at most 30%, you keep at least half of the cases you decide, and the reviewer agrees with you at least 70% of the time.

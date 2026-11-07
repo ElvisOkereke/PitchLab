@@ -119,3 +119,14 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
   - make the scorecard read Board decisions as owner verdicts ("owner keeps");
   - recalibrate the reviewer against them (`idea-review.v2`) before trusting its scale and niche scores;
   - ask the owner what the kept cases share, in their words.
+
+## 2026-11-07: Backtest: scale and value rule vs the owner's Board decisions
+
+- **Status:** placeholder. The controller fills this in after `gen audit scale --decided` and `gen audit backtest`.
+- **To record:**
+  - agreement between the rule (revenue ceiling at least $1M and upside at least 3) and the owner's kept and killed cases;
+  - the confusion table (kept or killed, against above or below the line);
+  - the cases where the rule and the owner disagree, and what they share;
+  - cases with no estimate, and the cost of the estimator run;
+  - owner keeps and reviewer agreement (idea-review.v2) on the same cases.
+- **Next:** decide whether to keep the $1M line, then run bench-v3 #2.

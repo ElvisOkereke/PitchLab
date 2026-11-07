@@ -218,12 +218,12 @@ Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design
 - **Audit modules** (`packages/core/src/audit/`): `owner-tags.ts` (the owner's idea tags; `owner_rating` is -1, 0 or 1),
   `review.ts` (the reviewer), `pass-audit.ts` (pass audit and flags) and `holdout.ts` (holdout examples). All read stored
   rows only, except the reviewer and the holdout embedding, which log their cost.
-- **Reviewer stage:** `idea-review.v1` scores each generated idea 1–5 for `scale`, `edge`, `novelty` and `niche`, with
+- **Reviewer stage:** `idea-review.v1` (now `v2`, see Scale and value round) scores each generated idea 1–5 for `scale`, `edge`, `novelty` and `niche`, with
   reasons, ten ideas per call, on the model stage `review` (default: the `score` stage's model), stored in
   `idea_reviews`. Valid reviews are stored, the rest skipped with a count, and a re-run reviews only what is missing.
   `gen audit review <passId>` or `--last` (the newest finished pass) runs it. Each call may use up to 16,000 output
   tokens, and a soft budget stops the run after a batch once its spend passes twice the estimate. Liked is `edge >= 4 && scale >= 3`; disliked is `edge <= 2 || scale <= 2`; the niche
-  share counts `niche >= 4 || scale <= 2`. Agreement with the owner shows from 10 rated ideas.
+  share counts `niche >= 4 || scale <= 2`. Agreement with the owner shows from 10 judged ideas (rated, or kept or killed on the Board).
 - **Pass audit and flags:** top domain over 15%, vendor voice over 40%, one lens over 35% of ideas, one gate check over
   50% of kills, niche share over 30%. A pass with no signals or gate entrants renders "no data" lines and no flags. A
   flag is skipped when its sample is tiny (under 10 signals, or under 5 ideas, kills or reviews), and the top-domain
@@ -250,6 +250,40 @@ Design: `docs/superpowers/specs/2026-11-04-idea-quality-loop-and-ambition-design
 - **screen v5:** adds `edge` and `scale` criteria (1–5); `speed` weighs 0.5. A missing edge or scale on an old idea
   counts as 2 and never crashes. Old prompt versions are kept.
 - **bench-v3:** see Benchmark. Ratings and the audit reach Progress through web-safe modules.
+
+## Scale and value round
+
+Design: `docs/superpowers/specs/2026-11-07-scale-and-value-design.md`.
+
+- **`computeScale`** (`pipeline/business-models.ts`): from a `ScaleEstimate` (`buyerUnit`, `population`,
+  `shareWithProblem`, `shareWillingToPay`, `shareReachable`, each with a basis and an optional source) and the price
+  hint, it returns `payingBuyers`, `annualPrice`, `revenueCeiling`, `band`, the names of capped shares and `allAssumed`.
+  A share with no source is capped (willing to pay: individuals 3%, businesses 15%; reachable 20%; with the problem 60%);
+  a sourced share is only clamped to 0-100. The price is annualised with the `valueMultiple` unit rules; when it can't
+  be, the ceiling is null and the band is 2. Bands by ceiling: under $250k 1, under $1M 2, under $5M 3, under $25M 4,
+  otherwise 5. The result is stored in `ideas.scale_estimate` and `ideas.scale_result` (migration 0013).
+- **Estimator** (`audit/scale-estimate.ts`, `scale-estimate.v1`; `gen audit scale [passId|--last|--decided]`): writes
+  the same estimate for ideas that lack one, on the `review` model stage, with the nearest library `market` entries.
+  Idempotent and fills only ideas without one; it never sees a Board decision. `--decided` covers every idea behind a
+  kept or killed case.
+- **Ideate v13** asks for the estimate and prefers earning to saving; code computes the result.
+- **Screen v6 and gate v6:** `scale` is the band from `scale_result` (2 when missing) and the model no longer judges it;
+  a computed `upside` criterion scores earn 5, time 3, risk 3, save 2, missing 3; all weights 1 except `speed` 0.5. The
+  gate has a code check `scale` (enum value added in migration 0013) that fails a generated idea whose revenue ceiling
+  is under the setting `gate.minRevenueCeiling` (default 1,000,000, read by `getMinRevenueCeiling`), shows the
+  arithmetic and caps, passes with a note when there is no estimate or no price, and only advises for owner ideas. A
+  scale kill does not count as a wasted gate entrant.
+- **`ownerKeeps`** (`bench/scorecard.ts`, web-safe): cases of the set (not examples) whose current `stage` is not `new`
+  are decided; `validating`, `pilot` and `live` are kept; it meets at 0.5 and is `no_data` when none are decided. It
+  reads the stage at compute time, so a frozen pass shows today's Board only after Recompute. `reviewerAgreement`
+  judges an idea by its owner rating of 1 or -1, else by its case (kept liked, killed disliked); it still needs 10
+  judged ideas and counts only reviews of `IDEA_REVIEW_VERSION`.
+- **Reviewer v2** (`idea-review.v2`, `IDEA_REVIEW_VERSION`; v1 is kept): scale anchors on realistic paying buyers and
+  the revenue ceiling ($250k, $1M, $5M, $25M), edge asks for a checkable advantage over a named option, and `reasons`
+  gains an optional `upside` line (earn or save). The reviewer is shown the idea's paying-buyers line (`ideaBlock`) and
+  never the Board decision, ratings or holdout. Stored columns are unchanged.
+- **Backtest** (`audit/backtest.ts`; `gen audit backtest`): compares the rule (ceiling at least the line and upside at
+  least 3) with kept and killed cases and writes `output/audit/backtest-<date>.md`.
 
 ## Data model
 
