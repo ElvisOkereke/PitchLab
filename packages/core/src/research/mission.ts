@@ -275,7 +275,7 @@ const EXTRACT_SYSTEM =
 // ---- helpers ------------------------------------------------------------------------------------------
 
 /** A text the collector actually fetched (API text or page text): extraction input and the quote-verification ground truth. */
-type Collected = {
+export type Collected = {
   url: string; domain: string; sourceType: string; title: string; text: string; publishedAt: Date | null; via?: FetchVia; snapshotAt?: Date;
   /** Values the collector already knows (Federal Register dates); merged into facts the model left empty. */
   hints?: Record<string, unknown>;
@@ -702,7 +702,6 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
     const topic = wrapUntrusted('topic', capField(m.topic, 200));
     /** The mission's kinds in a fixed order for the prompts (Slice A first, as the earlier prompts listed them). */
     const planKinds = (Object.keys(PLAN_KIND_NOTES) as KnowledgeKind[]).filter((k) => kinds.includes(k));
-    const extractKinds = KNOWLEDGE_KINDS.filter((k) => kinds.includes(k));
     const hint = (s: MissionSource): string =>
       s !== 'hn' || !hnTrendOn ? SOURCE_HINTS[s] : hnSearch ? SOURCE_HINTS.hn + HN_TREND_SENTENCE : HN_TREND_ONLY_HINT;
 
@@ -957,51 +956,10 @@ ${text}` : it.url;
     log(`mission ${missionId}: ${texts.length} texts, ${structured.length} structured records`);
 
     // 3. Extract + 4. Verify
-    const extracted: KnowledgeDraft[] = [];
     const extractPrompt = loadPrompt('library-extract');
-    let invalid = 0;
-    let batchesOk = 0;
-    let batchesFailed = 0;
-    for (let i = 0; i < texts.length; i += EXTRACT_BATCH) {
-      if (await overBudget('during extraction')) break;
-      const batch = texts.slice(i, i + EXTRACT_BATCH);
-      const shown = batch.map((t) => stripInvisible(t.title ? `${t.title}\n${t.text}` : t.text));
-      const blocks = shown.map((s, j) => `Source ${j + 1}:\n${wrapUntrusted('source', capField(s, SOURCE_TEXT_CAP))}`).join('\n\n');
-      let out: z.infer<typeof ExtractSchema>;
-      try {
-        out = await router.structured(
-          'library_extract',
-          {
-            system: EXTRACT_SYSTEM,
-            prompt: extractPrompt.render({
-              kinds: kindList, countries, sources: blocks,
-              kindFacts: extractKinds.map((k) => EXTRACT_KIND_FACTS[k]).join(NL),
-              kindRules: extractKinds.map((k) => EXTRACT_KIND_RULES[k]).filter(Boolean).map((r) => `${r}${NL}${NL}`).join(''),
-            }),
-            schema: ExtractSchema,
-            schemaName: 'library_entries',
-          },
-          ctx(extractPrompt.version),
-        );
-        batchesOk++;
-      } catch (e) {
-        batchesFailed++;
-        warn(`extract: ${sourceReason(e)}`);
-        continue;
-      }
-      const perSource = new Map<number, number>();
-      for (const e of out.entries) {
-        const d = toDraft(e, batch, shown, kinds);
-        if (!d) {
-          invalid++;
-          continue;
-        }
-        const n = perSource.get(e.source) ?? 0;
-        if (n >= MAX_ENTRIES_PER_SOURCE) continue; // one source cannot flood the library
-        perSource.set(e.source, n + 1);
-        extracted.push(d);
-      }
-    }
+    const { drafts: extracted, invalid, batchesOk, batchesFailed } = await extractDrafts(router, texts, {
+      kinds, countries, ctx: ctx(extractPrompt.version), overBudget: () => overBudget('during extraction'), warn,
+    });
     if (invalid > 0) warn(`extract: ${invalid} invalid draft${invalid === 1 ? '' : 's'} dropped`);
 
     const collected = [...extracted, ...structured];
@@ -1027,6 +985,65 @@ ${text}` : it.url;
   } catch (err) {
     return finish('failed', errorMessage(err));
   }
+}
+
+/**
+ * Extraction and verification of collected texts (shared by research missions and the automatic feeds): batches of
+ * EXTRACT_BATCH go to the model, each entry is checked against its own source (toDraft), and one source keeps at most
+ * MAX_ENTRIES_PER_SOURCE entries per batch. `overBudget` is asked before every batch; a failed batch is skipped.
+ */
+export async function extractDrafts(
+  router: ModelRouter,
+  texts: Collected[],
+  o: { kinds: KnowledgeKind[]; countries: string; ctx: CallCtx; overBudget: () => Promise<boolean>; warn: (w: string) => void },
+): Promise<{ drafts: KnowledgeDraft[]; invalid: number; batchesOk: number; batchesFailed: number }> {
+  const extractKinds = KNOWLEDGE_KINDS.filter((k) => o.kinds.includes(k));
+  const extractPrompt = loadPrompt('library-extract');
+  const drafts: KnowledgeDraft[] = [];
+  let invalid = 0;
+  let batchesOk = 0;
+  let batchesFailed = 0;
+  for (let i = 0; i < texts.length; i += EXTRACT_BATCH) {
+    if (await o.overBudget()) break;
+    const batch = texts.slice(i, i + EXTRACT_BATCH);
+    const shown = batch.map((t) => stripInvisible(t.title ? `${t.title}\n${t.text}` : t.text));
+    const blocks = shown.map((s, j) => `Source ${j + 1}:\n${wrapUntrusted('source', capField(s, SOURCE_TEXT_CAP))}`).join('\n\n');
+    let out: z.infer<typeof ExtractSchema>;
+    try {
+      out = await router.structured(
+        'library_extract',
+        {
+          system: EXTRACT_SYSTEM,
+          prompt: extractPrompt.render({
+            kinds: o.kinds.join(', '), countries: o.countries, sources: blocks,
+            kindFacts: extractKinds.map((k) => EXTRACT_KIND_FACTS[k]).join(NL),
+            kindRules: extractKinds.map((k) => EXTRACT_KIND_RULES[k]).filter(Boolean).map((r) => `${r}${NL}${NL}`).join(''),
+          }),
+          schema: ExtractSchema,
+          schemaName: 'library_entries',
+        },
+        o.ctx,
+      );
+      batchesOk++;
+    } catch (e) {
+      batchesFailed++;
+      o.warn(`extract: ${sourceReason(e)}`);
+      continue;
+    }
+    const perSource = new Map<number, number>();
+    for (const e of out.entries) {
+      const d = toDraft(e, batch, shown, o.kinds);
+      if (!d) {
+        invalid++;
+        continue;
+      }
+      const n = perSource.get(e.source) ?? 0;
+      if (n >= MAX_ENTRIES_PER_SOURCE) continue; // one source cannot flood the library
+      perSource.set(e.source, n + 1);
+      drafts.push(d);
+    }
+  }
+  return { drafts, invalid, batchesOk, batchesFailed };
 }
 
 /** Validate one extracted entry against its own source and the kind's facts schema; null means invalid (dropped). */

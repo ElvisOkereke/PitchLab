@@ -6,6 +6,9 @@ A running list of what is waiting on you. Done items are removed as work lands; 
 
 - [ ] Restart `npm run worker` (and `npm run web`) whenever Claude merges new work, so both run the latest code. Settings → Connections should then show YouTube, Product Hunt and the local browser as connected.
 - [ ] Turn on **Background research** in Settings when you want the library to keep growing on its own.
+- [ ] The automatic feeds (Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub, newsletters, YouTube Shorts) run every 6 hours while the worker is up and spend at most $2 a day (settings `feeds.everyHours`, `feeds.dailyUsd`). Settings → Connections → Feeds shows each source's last run. If Bluesky there says "search needs sign-in", add `BLUESKY_HANDLE` and a Bluesky app password as `BLUESKY_APP_PASSWORD` to `.env` and restart the worker.
+- [ ] Reddit posts are kept in the library under your ruling to include Reddit, but the older pipeline rule that bans reddit.com as an evidence source still applies when ideas are made. Say whether to lift that ban for library entries, or the Reddit entries will not reach ideation.
+- [ ] Check Settings → Connections → Feeds after the first run: a newsletter feed address that no longer works shows as an error there. Tell Claude which feeds to add or replace (the list lives in setting `feeds.rss`, with no editing screen yet). The default addresses were chosen from each publisher's usual feed path and could not be tested from here.
 - [ ] YouTube-only library entries are deleted 30 days after collection (the 2026-10-28 batch goes around 27 Nov). New missions or background research on the same topics bring fresh ones back.
 
 ## Set up the new sources (being built now)

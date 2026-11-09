@@ -66,6 +66,7 @@ export type CliHandlers = {
   configSet(key: string, value: string): Promise<number>;
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
+  feedsRun(): Promise<number>;
   benchBaseline(opts: { force?: boolean; dryRun?: boolean }): Promise<number>;
   benchRun(): Promise<number>;
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
@@ -107,7 +108,7 @@ function budgetArg(v: string): number {
   return n;
 }
 
-export type WorkerCliOpts = { interval: number; once?: boolean };
+export type WorkerCliOpts = { interval: number; once?: boolean; feeds?: boolean };
 
 /** Why `gen resume` refuses a run with this status, or null when it may resume it (failed or running only). */
 export function resumeRefusal(status: 'queued' | 'running' | 'succeeded' | 'failed'): string | null {
@@ -179,8 +180,17 @@ export function buildProgram(h: CliHandlers): Command {
     .description('Execute runs queued from the dashboard, oldest first (Ctrl+C: stop after the current run; twice: exit now)')
     .option('--interval <seconds>', `seconds between queue checks while idle (default ${WORKER_INTERVAL_DEFAULT_S}, minimum 2)`, intervalSeconds, WORKER_INTERVAL_DEFAULT_S)
     .option('--once', 'check the queue once (execute at most one queued run), then exit')
+    .option('--feeds', 'with --once, also run the automatic feeds when they are due (otherwise --once never runs them)')
     .action(async (opts: WorkerCliOpts) => {
       process.exitCode = await h.worker(opts);
+    });
+
+  program.command('feeds')
+    .description('Automatic feeds (Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub, newsletters, Shorts): "gen feeds run" does one run now, within the daily cap (feeds.dailyUsd)')
+    .argument('<action>', '"run"')
+    .action(async (action: string) => {
+      if (action !== 'run') throw new CliError('Usage: gen feeds run', 2);
+      process.exitCode = await h.feedsRun();
     });
 
   program.command('research')

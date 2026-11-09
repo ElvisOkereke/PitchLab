@@ -35,6 +35,8 @@ export interface YoutubeOpts extends HttpOpts {
   apiKey?: string;
   regionCode?: string;
   maxVideos?: number;
+  /** 'short': only videos under 4 minutes (the automatic feeds' Shorts source). */
+  videoDuration?: 'short';
   commentsPerVideo?: number;
   db: Db;
   /** For the caller's own bookkeeping (data calls are attributed through `onCall`). */
@@ -111,6 +113,7 @@ export async function youtubeSearch(q: string, opts: YoutubeOpts): Promise<RawIt
   try {
     const search = await call('search', {
       part: 'snippet', type: 'video', q, maxResults: String(maxVideos), relevanceLanguage: 'en',
+      ...(opts.videoDuration ? { videoDuration: opts.videoDuration } : {}),
       ...(opts.regionCode && REGION.test(opts.regionCode) ? { regionCode: opts.regionCode.toUpperCase() } : {}),
     }, { searches: 1, units: 0, headroom: 1 + maxVideos });
     const ids = [...new Set(arr(obj(search).items).map((i) => str(obj(i.id).videoId)).filter((id) => VIDEO_ID.test(id)))].slice(0, maxVideos);

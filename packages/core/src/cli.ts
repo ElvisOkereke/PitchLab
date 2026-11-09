@@ -41,6 +41,7 @@ import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
+import { runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
@@ -202,6 +203,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       intervalMs: opts.interval * 1000,
       signal: stop.signal,
       once: opts.once,
+      feedsOnce: opts.feeds,
       log: out,
       // Also finalises here: a run that failed during setup is marked failed by the worker after `execute` throws.
       heartbeat: async () => {
@@ -216,6 +218,14 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
         busy = true;
         try {
           return (await executeAndReport(db, env, id)) === 0 ? 'succeeded' : 'failed';
+        } finally {
+          busy = false;
+        }
+      },
+      executeFeeds: async () => {
+        busy = true;
+        try {
+          await runDueFeedsJob(feedDeps(db, env));
         } finally {
           busy = false;
         }
@@ -247,6 +257,31 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     return 0;
   } finally {
     process.off('SIGINT', onSigint);
+    await closeDb(db);
+  }
+}
+
+/** The feeds' collaborators: the model router, the guarded page fetcher and the optional keys (never logged). */
+function feedDeps(db: Db, env: Env): FeedDeps {
+  return {
+    db, router: buildRouter(env, db), fetchPage, log: out,
+    keys: { youtubeApiKey: env.YOUTUBE_API_KEY, blueskyHandle: env.BLUESKY_HANDLE, blueskyAppPassword: env.BLUESKY_APP_PASSWORD },
+  };
+}
+
+/** `gen feeds run`: one feeds run now (not only when due), within the daily cap. Costs model calls. */
+async function feedsRunCommand(): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const r = await runFeedsJob(feedDeps(db, env));
+    for (const [name, s] of Object.entries(r.bySource)) {
+      out(`${name.padEnd(15)} ${String(s.items).padStart(4)} items  ${String(s.added).padStart(3)} added${s.errors.length ? `  (${s.errors.join('; ')})` : ''}`);
+    }
+    out(`Spent $${r.spentUsd.toFixed(2)}.`);
+    return 0;
+  } finally {
     await closeDb(db);
   }
 }
@@ -728,6 +763,7 @@ const program = buildProgram({
   configSet: configSetCommand,
   configGet: configGetCommand,
   worker: workerCommand,
+  feedsRun: feedsRunCommand,
   research: researchCommand,
   researchStatus: researchStatusCommand,
   benchBaseline: benchBaselineCommand,

@@ -45,6 +45,12 @@ describe('fetchPage', () => {
     expect((await fetchPage('https://a.test', { fetchImpl: statusFetch(403) })).reason).toBe('http_error');
     expect((await fetchPage('https://a.test', { timeoutMs: 10, fetchImpl: hangingFetch() })).reason).toBe('timeout');
     expect((await fetchPage('https://a.test', { fetchImpl: typedFetch('application/pdf') })).reason).toBe('not_html');
+    // XML is refused unless the caller asks for feeds (newsletter feeds); every other guard still applies.
+    expect((await fetchPage('https://a.test', { fetchImpl: typedFetch('application/rss+xml') })).reason).toBe('not_html');
+    const feed = await fetchPage('https://a.test', { fetchImpl: typedFetch('application/rss+xml; charset=utf-8'), accept: 'feed' });
+    expect(feed.reason).toBeUndefined();
+    expect(feed).toMatchObject({ ok: true, text: 'data' });
+    expect((await fetchPage('https://a.test', { fetchImpl: typedFetch('application/pdf'), accept: 'feed' })).reason).toBe('not_html');
     expect((await fetchPage('https://a.test', { maxBytes: 10, fetchImpl: htmlFetch('x'.repeat(100)) })).reason).toBe('too_large');
     expect((await fetchPage('file:///etc/passwd')).reason).toBe('blocked_scheme');
   });

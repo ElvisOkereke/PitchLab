@@ -3,6 +3,7 @@ import { CRITERION_LABEL, OWNER_CRITERIA } from '@bcg/core/dashboard/criteria';
 import type { MarketSummary } from '@bcg/core/dashboard/markets';
 import type { ResearchSettings } from '@bcg/core/dashboard/missions';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
+import type { FeedsStatus } from '@bcg/core/research/feeds/status';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
 import { formatDateTime } from '@/lib/time';
 import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
@@ -22,6 +23,8 @@ export type SettingsData = {
   research: ResearchSettings;
   /** The saved holdout examples (shown only here, to the owner). */
   holdout: string[];
+  /** What the last automatic feeds run did (null before the first run). */
+  feeds?: FeedsStatus | null;
 };
 
 const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] = [
@@ -39,6 +42,30 @@ const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
   youtube: 'Optional. Add YOUTUBE_API_KEY to your .env file, then restart npm run worker.',
   browser: 'Optional, for pages that need JavaScript. Install it with npx playwright-core install chromium, run in packages/core.',
 };
+
+/** The automatic feeds, as text: each source's last run, items found, entries added and errors. */
+export function FeedsList({ feeds }: { feeds: FeedsStatus | null }) {
+  return (
+    <div data-testid="feeds">
+      <h3>Feeds</h3>
+      {feeds ? (
+        <ul className="plain stack">
+          {feeds.sources.map((s) => (
+            <li key={s.name} data-testid={`feed-${s.name}`}>
+              <span className="name">{s.label}</span>{' '}
+              <span className="muted small">
+                last run {formatDateTime(new Date(feeds.at))}, {s.items} item{s.items === 1 ? '' : 's'}, {s.added} added
+                {s.errors.length ? `, errors: ${s.errors.join('; ')}` : ', no errors'}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted small">The feeds have not run yet. They run on their own every few hours while the worker is up (or run npm run gen -- feeds run).</p>
+      )}
+    </div>
+  );
+}
 
 function Badge({ ok, yes, no }: { ok: boolean | null; yes: string; no: string }) {
   if (ok === null) return <span className="badge badge-muted">unknown (worker not seen)</span>;
@@ -107,6 +134,7 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
             <span className="name">Database</span> <Badge ok={data.database} yes="connected" no="not reachable" />
           </li>
         </ul>
+        <FeedsList feeds={data.feeds ?? null} />
         <p className="muted small">
           {data.worker ? `As reported by the worker at ${formatDateTime(new Date(data.worker.at))}.` : 'Start npm run worker to see which providers it has.'}
         </p>

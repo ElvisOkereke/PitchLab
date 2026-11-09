@@ -20,3 +20,10 @@ test('YOUTUBE_API_KEY is optional and empty counts as unset', () => {
   expect(loadEnv({ LLM_API_KEY: 'k', YOUTUBE_API_KEY: '' }).YOUTUBE_API_KEY).toBeUndefined();
   expect(loadEnv({ LLM_API_KEY: 'k', YOUTUBE_API_KEY: 'abc' }).YOUTUBE_API_KEY).toBe('abc');
 });
+
+test('BLUESKY_HANDLE and BLUESKY_APP_PASSWORD are optional and empty counts as unset', () => {
+  const e = loadEnv({ LLM_API_KEY: 'k', BLUESKY_HANDLE: '', BLUESKY_APP_PASSWORD: '' });
+  expect(e.BLUESKY_HANDLE).toBeUndefined();
+  expect(e.BLUESKY_APP_PASSWORD).toBeUndefined();
+  expect(loadEnv({ LLM_API_KEY: 'k', BLUESKY_HANDLE: 'me.bsky.social', BLUESKY_APP_PASSWORD: 'abcd-efgh' })).toMatchObject({ BLUESKY_HANDLE: 'me.bsky.social', BLUESKY_APP_PASSWORD: 'abcd-efgh' });
+});

@@ -28,6 +28,8 @@ export interface FetchPageOpts {
   allowHosts?: readonly string[];
   /** User-Agent sent on every hop (default BusinessCaseGen). Research missions send their robots.txt identity. */
   userAgent?: string;
+  /** 'feed': also accept RSS/Atom/XML bodies (returned as raw text in `text`), for newsletter feeds. Every other guard is unchanged. */
+  accept?: 'feed';
 }
 
 const USER_AGENT = 'BusinessCaseGen/0.1 (research; contact: owner)';
@@ -215,7 +217,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
         method: 'GET',
         redirect: 'manual',
         signal: controller.signal,
-        headers: { 'User-Agent': opts.userAgent ?? USER_AGENT, Accept: 'text/html,text/plain;q=0.9,*/*;q=0.1' },
+        headers: { 'User-Agent': opts.userAgent ?? USER_AGENT, Accept: opts.accept === 'feed' ? 'application/rss+xml,application/atom+xml,application/xml;q=0.9,text/xml;q=0.9,*/*;q=0.1' : 'text/html,text/plain;q=0.9,*/*;q=0.1' },
       });
 
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
@@ -235,7 +237,7 @@ export async function fetchPage(url: string, opts: FetchPageOpts = {}): Promise<
 
       const type = (res.headers.get('content-type') ?? '').toLowerCase();
       const isHtml = type.includes('text/html') || type.includes('application/xhtml+xml');
-      const isPlain = type.includes('text/plain');
+      const isPlain = type.includes('text/plain') || (opts.accept === 'feed' && type.includes('xml'));
       if (!isHtml && !isPlain) {
         await res.body?.cancel().catch(() => {});
         return fail('not_html', res.status, parsed.href);

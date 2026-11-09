@@ -93,6 +93,10 @@ export type WorkerOptions = {
   executeValidation: (jobId: string) => Promise<'succeeded' | 'failed'>;
   /** Research missions, taken after runs and validation jobs. When absent, missions stay queued. */
   executeMission?: (missionId: string) => Promise<'succeeded' | 'failed'>;
+  /** Automatic feeds: called when idle (after runs, validation and missions); the callee decides whether they are due. A throw is logged and ignored. */
+  executeFeeds?: () => Promise<void>;
+  /** With `once`, still run the feeds (gen worker --once --feeds). */
+  feedsOnce?: boolean;
   heartbeat: () => Promise<void>;
   log: (m: string) => void;
   once?: boolean;
@@ -184,6 +188,20 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
     }
   };
   const maintain = maintenanceScheduler(o.db, o.log);
+  let nextFeedsCheck = 0;
+  /** Idle-time feeds. Checked at most once a minute (the due test is a settings read); the job is slow, so the heartbeat keeps running. */
+  const feedsIfDue = async () => {
+    if (!o.executeFeeds || (o.once && !o.feedsOnce) || Date.now() < nextFeedsCheck) return;
+    nextFeedsCheck = Date.now() + 60_000;
+    const timer = setInterval(() => void beat(), o.intervalMs);
+    try {
+      await o.executeFeeds();
+    } catch (err) {
+      o.log(`feeds failed: ${messageOf(err)}`);
+    } finally {
+      clearInterval(timer);
+    }
+  };
   while (!o.signal.aborted) {
     await maintain();
     await beat();
@@ -236,6 +254,7 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
           o.log(`background research check failed: ${messageOf(err)}`);
         }
       }
+      await feedsIfDue();
       if (o.once) {
         o.log('no queued runs');
         return;

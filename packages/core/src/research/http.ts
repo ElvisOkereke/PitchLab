@@ -89,6 +89,32 @@ export async function request(
   init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; errorReason?: boolean },
   opts: HttpOpts = {},
 ): Promise<unknown> {
+  return send(source, url, init, opts, (text) => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new SourceError('bad_response', source);
+    }
+  });
+}
+
+/** Like `request`, for fixed-host endpoints that answer with text (Atom, HTML). Same limits and error mapping; the caller checks the shape. */
+export async function requestText(
+  source: string,
+  url: string,
+  init: { headers?: Record<string, string>; timeoutMs?: number; maxBytes?: number },
+  opts: HttpOpts = {},
+): Promise<string> {
+  return (await send(source, url, init, opts, (text) => text)) as string;
+}
+
+async function send(
+  source: string,
+  url: string,
+  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; errorReason?: boolean },
+  opts: HttpOpts,
+  parse: (text: string) => unknown,
+): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 15000);
   const endpoint = new URL(url).pathname;
@@ -109,13 +135,9 @@ export async function request(
       throw new SourceError('http_error', source, `${source}: HTTP ${res.status}`, reason);
     }
     const text = await readCapped(res, init.maxBytes ?? 2_000_000);
-    try {
-      const json = JSON.parse(text);
-      ok = true;
-      return json;
-    } catch {
-      throw new SourceError('bad_response', source);
-    }
+    const parsed = parse(text);
+    ok = true;
+    return parsed;
   } catch (e) {
     if (e instanceof SourceError) throw e;
     if (e instanceof TooLarge) throw new SourceError('bad_response', source, `${source}: response too large`);

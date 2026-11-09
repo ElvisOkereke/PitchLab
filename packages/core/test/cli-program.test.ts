@@ -6,7 +6,7 @@ function handlers() {
   return {
     run: vi.fn(ok), resume: vi.fn(ok), export: vi.fn(ok), runs: vi.fn(ok),
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
-    configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok),
+    configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok), feedsRun: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
     auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok),
   } satisfies CliHandlers;
@@ -102,6 +102,12 @@ describe('gen prospects import / outreach / config', () => {
     expect(() => checkConfigValue('landing.formEndpoint', 'javascript:alert(1)')).toThrow(/http/);
     expect(() => checkConfigValue('landing.formEndpoint', 'https://forms.owner.ca/x')).not.toThrow();
     expect(() => checkConfigValue('sender.name', 'x'.repeat(600))).toThrow(/too long/);
+  });
+
+  it('worker --feeds is passed through, and `feeds run` calls the handler (other actions are refused)', async () => {
+    expect((await parse(['worker', '--once', '--feeds'])).worker).toHaveBeenCalledWith({ interval: 10, once: true, feeds: true });
+    expect((await parse(['feeds', 'run'])).feedsRun).toHaveBeenCalledTimes(1);
+    await expect(parse(['feeds', 'nope'])).rejects.toThrow(/gen feeds run/);
   });
 
   it('worker takes an --interval in seconds (default 10, minimum 2) and --once', async () => {

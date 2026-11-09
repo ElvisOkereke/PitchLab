@@ -193,3 +193,38 @@ describe('SettingsView holdout card', () => {
     expect(getByTestId('holdout-form').querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('');
   });
 });
+
+describe('SettingsView feeds', () => {
+  const feeds = {
+    at: '2026-11-08T12:00:00.000Z',
+    spentUsd: 0.4,
+    sources: [
+      { name: 'reddit' as const, label: 'Reddit', items: 42, added: 7, errors: [] },
+      { name: 'bluesky' as const, label: 'Bluesky', items: 0, added: 0, errors: ['search needs sign-in (set BLUESKY_HANDLE and BLUESKY_APP_PASSWORD)', 'rate limited'] },
+    ],
+  };
+
+  it('lists each source in Connections with its last run, items, added and errors as text', () => {
+    const { getByTestId } = render(<SettingsView data={data({ feeds })} />);
+    const conn = getByTestId('connections');
+    expect(within(conn).getByTestId('feeds')).toBeTruthy();
+    const reddit = getByTestId('feed-reddit').textContent!;
+    expect(reddit).toContain('Reddit');
+    expect(reddit).toContain('42 items');
+    expect(reddit).toContain('7 added');
+    expect(reddit).toContain('no errors');
+    const bsky = getByTestId('feed-bluesky').textContent!;
+    expect(bsky).toContain('0 items');
+    expect(bsky).toContain('errors: search needs sign-in (set BLUESKY_HANDLE and BLUESKY_APP_PASSWORD); rate limited');
+  });
+
+  it('says the feeds have not run before the first run, and escapes error text', () => {
+    const none = render(<SettingsView data={data({ feeds: null })} />);
+    expect(none.getByTestId('feeds').textContent).toContain('have not run yet');
+    none.unmount();
+    const bad = { ...feeds, sources: [{ name: 'reddit' as const, label: 'Reddit', items: 1, added: 0, errors: ['<img src=x onerror=alert(1)>'] }] };
+    const { getByTestId } = render(<SettingsView data={data({ feeds: bad })} />);
+    expect(getByTestId('feed-reddit').querySelector('img')).toBeNull();
+    expect(getByTestId('feed-reddit').textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});

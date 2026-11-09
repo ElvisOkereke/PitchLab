@@ -190,6 +190,38 @@ describe('runWorker with missions', () => {
   });
 });
 
+describe('runWorker feeds', () => {
+  it('runs the feeds when idle, after runs and missions, and never with --once unless --feeds is set', async () => {
+    const db = await testDb();
+    const executeFeeds = vi.fn(async () => {});
+    const executeMission = vi.fn(async () => 'succeeded' as const);
+    const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded' as const, executeValidation: noValidation, executeMission, executeFeeds };
+    await runWorker(base);
+    expect(executeFeeds).not.toHaveBeenCalled();
+    await runWorker({ ...base, feedsOnce: true });
+    expect(executeFeeds).toHaveBeenCalledTimes(1);
+    // a queued mission goes first; the feeds wait for an idle pass
+    await insertMissionRow(db);
+    await runWorker({ ...base, feedsOnce: true });
+    expect(executeMission).toHaveBeenCalledTimes(1);
+    expect(executeFeeds).toHaveBeenCalledTimes(1);
+  });
+
+  it('a feeds failure is logged and the worker carries on; the check repeats at most once a minute', async () => {
+    const db = await testDb();
+    const executeFeeds = vi.fn(async () => { throw new Error('feeds boom'); });
+    const logs: string[] = [];
+    const stop = new AbortController();
+    let beats = 0;
+    await runWorker({
+      db, intervalMs: 5, signal: stop.signal, log: (m) => { logs.push(m); }, execute: async () => 'succeeded' as const, executeValidation: noValidation, executeFeeds,
+      heartbeat: async () => { if (++beats >= 6) stop.abort(); },
+    });
+    expect(logs.some((m) => m.includes('feeds failed: feeds boom'))).toBe(true);
+    expect(executeFeeds).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('runWorker', () => {
   it('executes queued runs oldest first and writes a heartbeat with no secret values', async () => {
     const db = await testDb();

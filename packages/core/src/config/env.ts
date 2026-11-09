@@ -27,6 +27,9 @@ const schema = z.object({
   PRODUCTHUNT_TOKEN: z.string().min(1).optional(),
   /** Optional: enables the YouTube comments source (official Data API v3) in research missions. */
   YOUTUBE_API_KEY: z.string().min(1).optional(),
+  /** Optional: Bluesky sign-in for the feeds, used only if the public search endpoint demands auth (use an app password, never the account password). */
+  BLUESKY_HANDLE: z.string().min(1).optional(),
+  BLUESKY_APP_PASSWORD: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;
