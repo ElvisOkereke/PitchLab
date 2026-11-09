@@ -8,6 +8,13 @@ A running list of what is waiting on you. Done items are removed as work lands; 
 - [ ] Turn on **Background research** in Settings when you want the library to keep growing on its own.
 - [ ] YouTube-only library entries are deleted 30 days after collection (the 2026-10-28 batch goes around 27 Nov). New missions or background research on the same topics bring fresh ones back.
 
+## Set up the new sources (being built now)
+
+- [ ] **Telegram bot (2 minutes, free).** In Telegram, open @BotFather, send `/newbot`, pick a name, then copy the token it gives you into `.env` as `TELEGRAM_BOT_TOKEN=…`. After the sources work is merged and the worker restarted, send `/start` to your bot: the first person to do that becomes its only owner. Then share any Reel, TikTok, Short or post to the bot.
+- [ ] **Throwaway accounts for capture.** Make one Instagram account and one TikTok account you don't mind losing (not your personal ones). After the merge, run `npm run capture:login` and log in to both in the window that opens. Instagram needs this; TikTok and YouTube usually work without it.
+- [ ] **Optional: a scraping service key** for sites that block bots (G2, Capterra, Trustpilot and the like). Make a free account at ScrapingBee, ZenRows or Apify, then add `SCRAPER_PROVIDER=scrapingbee` (or `zenrows` / `apify`) and `SCRAPER_API_KEY=…` to `.env`.
+- [ ] **Optional: Bluesky.** Only if Settings → Connections later says Bluesky search needs a login: create an app password in Bluesky (Settings → App passwords) and add `BLUESKY_HANDLE=…` and `BLUESKY_APP_PASSWORD=…` to `.env`.
+
 ## Judge the ideas (your part of the quality loop)
 
 - [ ] After each benchmark pass, sort its new cases on the **Board**: keep (move to Validating or Pilot) or kill. Your Board decisions are what PitchLab measures itself against.
