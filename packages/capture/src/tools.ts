@@ -155,6 +155,7 @@ export function runTool(spawn: SpawnLike, command: string, args: string[], timeo
     child.on('close', (code) => finish({ code }));
     timer = setTimeout(() => {
       timedOut = true;
+      // Tree kill is Windows-only, like the tools themselves (capture:setup installs Windows x64 binaries only).
       if (process.platform === 'win32' && typeof child.pid === 'number') {
         try {
           defaultSpawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).on('error', () => {});

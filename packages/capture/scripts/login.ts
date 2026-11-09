@@ -60,7 +60,19 @@ export async function runLogin(opts: LoginOptions): Promise<boolean> {
     return false;
   }
   await mkdir(opts.profileDir, { recursive: true });
-  const context = await chromium.launchPersistentContext(opts.profileDir, { headless: false, viewport: null });
+  let context: ContextLike;
+  try {
+    context = await chromium.launchPersistentContext(opts.profileDir, { headless: false, viewport: null });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const locked = /ProcessSingleton|already in use|lock/i.test(msg);
+    log(
+      locked
+        ? 'The capture profile is in use. Close the capture browser and stop the worker (it may be capturing), then run capture:login again.'
+        : `Chromium could not start (${msg.split('\n')[0].slice(0, 200)}). Close the capture browser and stop the worker if either is running, then try again. ${INSTALL_HINT}`,
+    );
+    return false;
+  }
   const closed = new Promise<void>((r) => context.on('close', () => r()));
   const first = context.pages()[0] ?? (await context.newPage());
   await first.goto(LOGIN_URLS[0]).catch(() => null);

@@ -102,6 +102,8 @@ export async function installTools(opts: InstallOptions): Promise<void> {
   const tools = opts.tools ?? TOOLS;
   const log = opts.log ?? ((l: string) => console.log(l));
   const extract = opts.extract ?? windowsExtract;
+  const insecure = tools.filter((t) => !t.url.startsWith('https://'));
+  if (insecure.length) throw new Error(`Tool URLs must use https: ${insecure.map((t) => `${t.id} (${t.url})`).join(', ')}`);
   const unpinned = tools.filter((t) => !/^[0-9a-f]{64}$/.test(t.sha256));
   if (unpinned.length && !opts.trustDownload) {
     throw new Error(

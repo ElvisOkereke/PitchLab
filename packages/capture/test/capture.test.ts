@@ -107,8 +107,9 @@ describe('captureLink', () => {
 
     const work = dirname(valueAfter(calls[1].args, '-o'));
     expect(dirname(work)).toBe(tmpDir);
-    expect(calls[0].args).toEqual(['--dump-json', '--no-playlist', '--no-warnings', '--no-progress', '--', url]);
-    const dl = ['--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '200M', '--ffmpeg-location', toolsDir];
+    const yt = ['--ignore-config', '--no-plugin-dirs'];
+    expect(calls[0].args).toEqual([...yt, '--dump-json', '--no-playlist', '--no-warnings', '--no-progress', '--', url]);
+    const dl = [...yt, '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '200M', '--ffmpeg-location', toolsDir];
     expect(calls[1].args).toEqual([...dl, '-f', 'bestaudio/best', '-o', join(work, 'audio.%(ext)s'), '--', url]);
     expect(calls[2].args).toEqual([...dl, '-f', 'bv*[height<=480]/b[height<=480]/worst', '-o', join(work, 'video.%(ext)s'), '--', url]);
     const ff = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
@@ -119,7 +120,7 @@ describe('captureLink', () => {
     expect(res).toEqual({
       ok: true,
       platform: 'youtube',
-      title: 'Video by someone',
+      title: 'YouTube video',
       caption: 'How I make $10k a month selling planners',
       transcript: 'Hello there. Buy my planner.',
       screenText: 'SAVE THIS\nLink in bio',
@@ -128,6 +129,7 @@ describe('captureLink', () => {
       warnings: [],
     });
     expect(existsSync(work)).toBe(false);
+    expect(JSON.stringify(res)).not.toMatch(/someone/i);
   });
 
   it('passes the capture-profile cookies only for Instagram and Facebook, and only to yt-dlp', async () => {
@@ -137,7 +139,6 @@ describe('captureLink', () => {
       ['https://www.tiktok.com/@a/video/1', false],
       ['https://www.youtube.com/shorts/x', false],
       ['https://www.threads.net/@a/post/1', false],
-      ['https://example.com/v', false],
     ];
     for (const [url, cookies] of cases) {
       resetCapturePacing();
@@ -194,12 +195,12 @@ describe('captureLink', () => {
   });
 
   it('has no fallback without readPage, or when readPage throws', async () => {
-    const meta = { code: 1, stderr: 'ERROR: Unsupported URL: https://example.com/article' };
-    const a = await captureLink('https://example.com/article', opts({ spawn: tools({ meta }).spawn }));
-    expect(a).toEqual({ ok: false, platform: 'other', error: expect.stringMatching(/Unsupported URL/) });
+    const meta = { code: 1, stderr: 'ERROR: Video unavailable' };
+    const a = await captureLink('https://www.youtube.com/watch?v=gone', opts({ spawn: tools({ meta }).spawn }));
+    expect(a).toEqual({ ok: false, platform: 'youtube', error: expect.stringMatching(/Video unavailable/) });
     resetCapturePacing();
     const b = await captureLink(
-      'https://example.com/article',
+      'https://www.youtube.com/watch?v=gone',
       opts({ spawn: tools({ meta }).spawn, readPage: async () => Promise.reject(new Error('blocked')) }),
     );
     expect(b.ok).toBe(false);
@@ -296,5 +297,117 @@ describe('captureLink', () => {
       captureLink('https://www.youtube.com/shorts/2', opts({ spawn })),
     ]);
     expect(order).toEqual(['meta', 'done', 'meta', 'done']);
+  });
+
+  it('replaces creator handles with "the creator" everywhere and drops "Video by" boilerplate', async () => {
+    const info = {
+      ...INFO,
+      title: 'Reel by Plan.Queen',
+      description: 'Follow @plan.queen for more! PLAN.QUEEN ships worldwide. Collab with planqueen_shop and Jane Doe',
+      uploader: 'Plan.Queen',
+      uploader_id: 'planqueen_shop',
+      channel: 'Jane Doe',
+      creator: 'JD',
+    };
+    const { spawn } = tools({
+      meta: { stdout: JSON.stringify(info) },
+      wav: { code: 1, stderr: 'ERROR: could not open audio for planqueen_shop' },
+    });
+    const ocr = async (paths: string[]) => paths.map(() => '@plan.queen\nShop now');
+    const res = await captureLink('https://www.instagram.com/reel/abc/', opts({ spawn, ocr }));
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.title).toBe('Instagram video');
+      expect(res.caption).toBe('Follow the creator for more! the creator ships worldwide. Collab with the creator and the creator');
+      expect(res.screenText).toBe('the creator\nShop now');
+      expect(res.warnings.join(' ')).toContain('the creator');
+    }
+    expect(JSON.stringify(res)).not.toMatch(/plan\.?queen|jane doe/i);
+  });
+
+  it('keeps a real title after "Post by <handle>:" boilerplate, and scrubs a TikTok @handle from the URL out of errors', async () => {
+    const r1 = await captureLink(
+      'https://www.youtube.com/shorts/x',
+      opts({ spawn: tools({ meta: { stdout: JSON.stringify({ ...INFO, title: 'Post by someone: 5 planner hacks' }) } }).spawn }),
+    );
+    expect(r1.ok && r1.title).toBe('5 planner hacks');
+    resetCapturePacing();
+    const r2 = await captureLink(
+      'https://www.tiktok.com/@shopgirl99/video/1',
+      opts({ spawn: tools({ meta: { code: 1, stderr: 'ERROR: [TikTok] shopgirl99: account is private (@shopgirl99)' } }).spawn }),
+    );
+    expect(r2.ok).toBe(false);
+    expect(JSON.stringify(r2)).not.toMatch(/shopgirl99/i);
+  });
+
+  it('routes every yt-dlp call through proxyUrl, and only yt-dlp', async () => {
+    const { spawn, calls } = tools();
+    await captureLink('https://www.youtube.com/shorts/x', opts({ spawn, proxyUrl: 'http://127.0.0.1:41234' }));
+    const yts = calls.filter((c) => c.command === ytdlp());
+    expect(yts).toHaveLength(3);
+    for (const c of yts) {
+      expect(c.args.slice(0, 4)).toEqual(['--ignore-config', '--no-plugin-dirs', '--proxy', 'http://127.0.0.1:41234']);
+    }
+    for (const c of calls.filter((c) => c.command !== ytdlp())) expect(c.args).not.toContain('--proxy');
+  });
+
+  it('refuses before spawning when checkUrl says no', async () => {
+    const { spawn, calls } = tools();
+    const checkUrl = vi.fn(async () => false);
+    const res = await captureLink('https://www.youtube.com/shorts/x', opts({ spawn, checkUrl }));
+    expect(checkUrl).toHaveBeenCalledWith('https://www.youtube.com/shorts/x');
+    expect(res).toEqual({ ok: false, platform: 'youtube', error: expect.stringMatching(/not allowed/i) });
+    expect(calls).toHaveLength(0);
+    resetCapturePacing();
+    const ok = await captureLink('https://www.youtube.com/shorts/x', opts({ spawn, checkUrl: async () => true }));
+    expect(ok.ok).toBe(true);
+  });
+
+  it.each([
+    'http://127.0.0.1/x',
+    'http://10.0.0.5/v',
+    'http://[::1]/v',
+    'http://2130706433/v',
+    'http://localhost:3000/v',
+    'http://foo.localhost/v',
+    'http://printer.local/v',
+    'http://metadata.google.internal/computeMetadata/v1/',
+    'http://intranet/v',
+  ])('refuses the private or local host %s without spawning or reading the page', async (url) => {
+    const { spawn, calls } = tools();
+    const readPage = vi.fn(async () => ({ pageText: 'secret' }));
+    const res = await captureLink(url, opts({ spawn, readPage }));
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).toMatch(/not allowed/i);
+      expect(res.fallback).toBeUndefined();
+    }
+    expect(calls).toHaveLength(0);
+    expect(readPage).not.toHaveBeenCalled();
+  });
+
+  it('does not run yt-dlp for an unknown site; it goes straight to the page reader', async () => {
+    const { spawn, calls } = tools();
+    const readPage = vi.fn(async () => ({ caption: 'og description', pageText: 'Article text' }));
+    const res = await captureLink('https://example.com/article', opts({ spawn, readPage }));
+    expect(calls).toHaveLength(0);
+    expect(readPage).toHaveBeenCalledWith('https://example.com/article');
+    expect(res).toEqual({ ok: false, platform: 'other', error: expect.any(String), fallback: { caption: 'og description', pageText: 'Article text' } });
+    resetCapturePacing();
+    const bare = await captureLink('https://example.com/article', opts({ spawn }));
+    expect(bare).toEqual({ ok: false, platform: 'other', error: expect.any(String) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a hanging readPage or OCR times out instead of blocking the queue', async () => {
+    const never = () => new Promise<never>(() => {});
+    const r1 = await captureLink('https://example.com/a', opts({ spawn: tools().spawn, readPage: never, timeoutMs: 30 }));
+    expect(r1).toEqual({ ok: false, platform: 'other', error: expect.any(String) });
+    const r2 = await captureLink('https://www.youtube.com/shorts/x', opts({ spawn: tools().spawn, ocr: never, timeoutMs: 30 }));
+    expect(r2.ok).toBe(true);
+    if (r2.ok) {
+      expect(r2.screenText).toBe('');
+      expect(r2.warnings.join(' ')).toMatch(/timed out/i);
+    }
   });
 });

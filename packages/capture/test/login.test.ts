@@ -49,4 +49,15 @@ describe('runLogin', () => {
     expect(ok).toBe(false);
     expect(log.mock.calls.map((c) => c[0]).join('\n')).toMatch(/playwright-core install chromium/);
   });
+
+  it('explains a locked profile instead of crashing when the launch fails', async () => {
+    const f = fakeChromium();
+    f.chromium.launchPersistentContext.mockRejectedValueOnce(new Error('Failed to create a ProcessSingleton for your profile directory'));
+    const log = vi.fn();
+    const profileDir = join(mkdtempSync(join(tmpdir(), 'bcg-login-test-')), 'p');
+    const ok = await runLogin({ profileDir, importer: async () => ({ chromium: f.chromium }), log });
+    expect(ok).toBe(false);
+    expect(log.mock.calls.map((c) => c[0]).join(' ')).toMatch(/close the capture browser.*stop the worker/i);
+    rmSync(join(profileDir, '..'), { recursive: true, force: true });
+  });
 });

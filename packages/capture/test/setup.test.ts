@@ -73,6 +73,13 @@ describe('installTools', () => {
     expect(log.mock.calls.map((c) => c[0]).join('\n')).toContain(sha('EXE-BYTES'));
   });
 
+  it('refuses any tool URL that is not https, before downloading anything', async () => {
+    const fetch = mockFetch({ 'http://example.test/yt-dlp.exe': 'EXE-BYTES' });
+    const tools = [fileEntry(), fileEntry({ url: 'http://example.test/yt-dlp.exe' })];
+    await expect(installTools({ toolsDir, fetch, tools, extract: vi.fn(), log: () => {} })).rejects.toThrow(/https/);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('fails on a non-OK HTTP status', async () => {
     const fetch = mockFetch({});
     await expect(installTools({ toolsDir, fetch, tools: [fileEntry()], extract: vi.fn(), log: () => {} })).rejects.toThrow(/404/);

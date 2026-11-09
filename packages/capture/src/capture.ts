@@ -60,8 +60,92 @@ export interface CaptureOptions {
   log?: (message: string) => void;
   /** Reads the page itself when yt-dlp cannot (core supplies one built on its guarded page fetch). */
   readPage?: (url: string) => Promise<CaptureFallback | null | undefined>;
-  /** Per-tool timeout; defaults to TOOL_TIMEOUT_MS. */
+  /** Per-tool timeout (also bounds readPage and OCR); defaults to TOOL_TIMEOUT_MS. */
   timeoutMs?: number;
+  /**
+   * Proxy for every yt-dlp request. Core passes its guarded proxy, which refuses private addresses on every hop, so
+   * yt-dlp's own redirects and CDN fetches stay bounded by the SSRF guard.
+   */
+  proxyUrl?: string;
+  /** Extra URL policy (core: banned and never-fetch hosts). false refuses the capture before anything runs. */
+  checkUrl?: (url: string) => Promise<boolean>;
+}
+
+/** Platforms yt-dlp is used for; any other site goes straight to readPage. */
+const YTDLP_PLATFORMS: Platform[] = ['instagram', 'tiktok', 'youtube', 'x', 'threads', 'facebook', 'linkedin'];
+const LABELS: Record<Platform, string> = {
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
+  youtube: 'YouTube',
+  x: 'X',
+  threads: 'Threads',
+  linkedin: 'LinkedIn',
+  facebook: 'Facebook',
+  other: 'Web',
+};
+
+/**
+ * True when the host must never be captured from this package: IP literals (v4, v6 and the numeric forms the URL
+ * parser normalises), localhost, single-label names and .local / .internal / .localhost names. Core's guarded proxy
+ * and checkUrl add DNS-level checks on top.
+ */
+export function isLocalOrPrivateHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+  } catch {
+    return true;
+  }
+  if (!host) return true;
+  if (host.startsWith('[') || host.includes(':')) return true;
+  if (/^\d+(\.\d+){0,3}$/.test(host) || /^0x[0-9a-f]+$/i.test(host)) return true;
+  if (!host.includes('.')) return true;
+  return host === 'localhost' || /\.(localhost|local|internal)$/.test(host);
+}
+
+/** Settles with `onTimeout()` (which may throw) if `p` has not settled within `ms`. */
+function withTimeout<T>(p: Promise<T>, ms: number, onTimeout: () => T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p.finally(() => clearTimeout(timer)),
+    new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        try {
+          resolve(onTimeout());
+        } catch (err) {
+          reject(err);
+        }
+      }, ms);
+    }),
+  ]);
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Replaces each creator handle or name (case-insensitive, with or without @) with "the creator". Names shorter than
+ * 3 characters are left alone so ordinary words are not rewritten.
+ */
+export function scrubHandles(text: string, handles: string[]): string {
+  const list = [...new Set(handles.map((h) => h.trim().replace(/^@/, '')).filter((h) => h.length >= 3))].sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const h of list) out = out.replace(new RegExp(`(?<![\\w.@])@?${escapeRe(h)}(?![\\w])`, 'gi'), 'the creator');
+  return out;
+}
+
+/** Drops "Video by …" / "Reel by …" / "Post by …" boilerplate (after handles are scrubbed). */
+function cleanTitle(title: string, platform: Platform): string {
+  const t = title.replace(/^(?:video|reel|post|photo|clip)s?\s+by\s+(?:the creator|\S+)\s*(?:[:|\-–—]\s*)?/i, '').trim();
+  return t || `${LABELS[platform]} video`;
+}
+
+/** @handles in the URL path (TikTok, Threads, YouTube), known before any metadata. */
+function handlesInUrl(url: string): string[] {
+  try {
+    return [...new URL(url).pathname.matchAll(/\/@([\w.-]+)/g)].map((m) => m[1]);
+  } catch {
+    return [];
+  }
 }
 
 // One capture at a time, process-wide, with pacing between Instagram/TikTok captures.
@@ -79,23 +163,32 @@ export function resetCapturePacing(): void {
  * ffmpeg frames + OCR. Never throws. A metadata failure returns ok:false (with the readPage fallback when given);
  * later steps that fail become warnings.
  */
-export function captureLink(url: string, opts: CaptureOptions): Promise<CaptureResult> {
-  if (!isHttpUrl(url)) return Promise.resolve({ ok: false, platform: 'other', error: 'Only http(s) links can be captured.' });
-  const run = queue.then(() => paced(url, opts));
+export async function captureLink(url: string, opts: CaptureOptions): Promise<CaptureResult> {
+  if (!isHttpUrl(url)) return { ok: false, platform: 'other', error: 'Only http(s) links can be captured.' };
+  const platform = detectPlatform(url);
+  if (isLocalOrPrivateHost(url)) return { ok: false, platform, error: 'That address is not allowed (local or private host).' };
+  if (opts.checkUrl) {
+    const allowed = await opts.checkUrl(url).catch(() => false);
+    if (!allowed) return { ok: false, platform, error: 'That address is not allowed.' };
+  }
+  const run = queue.then(() => paced(url, platform, opts));
   queue = run.catch(() => {});
   return run;
 }
 
-async function paced(url: string, opts: CaptureOptions): Promise<CaptureResult> {
-  const platform = detectPlatform(url);
+async function paced(url: string, platform: Platform, opts: CaptureOptions): Promise<CaptureResult> {
+  if (!YTDLP_PLATFORMS.includes(platform)) {
+    return withFallback({ ok: false, platform, error: 'Not a supported video platform; read as a page instead.' }, url, opts);
+  }
   const now = opts.now ?? Date.now;
   const isPaced = PACED.includes(platform);
   if (isPaced && lastPacedAt !== null) {
     const wait = PACED_GAP_MS - (now() - lastPacedAt);
     if (wait > 0) await (opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms))))(wait);
   }
+  const handles = handlesInUrl(url);
   try {
-    return await capture(url, platform, opts);
+    return scrubResult(await capture(url, platform, opts, handles), handles);
   } finally {
     if (isPaced) lastPacedAt = now();
   }
@@ -105,9 +198,32 @@ function describeDuration(ms: number): string {
   return ms >= 60_000 && ms % 60_000 === 0 ? `${ms / 60_000} minutes` : `${Math.max(1, Math.round(ms / 1000))} s`;
 }
 
-async function capture(url: string, platform: Platform, opts: CaptureOptions): Promise<CaptureResult> {
+function scrubResult(res: CaptureResult, handles: string[]): CaptureResult {
+  const s = (t: string) => scrubHandles(t, handles);
+  if (!res.ok) {
+    const out: CaptureResult = { ok: false, platform: res.platform, error: s(res.error) };
+    if (res.fallback) {
+      out.fallback = {};
+      if (res.fallback.caption) out.fallback.caption = s(res.fallback.caption);
+      if (res.fallback.pageText) out.fallback.pageText = s(res.fallback.pageText);
+    }
+    return out;
+  }
+  return {
+    ...res,
+    title: cleanTitle(s(res.title), res.platform),
+    caption: s(res.caption),
+    transcript: s(res.transcript),
+    screenText: s(res.screenText),
+    warnings: res.warnings.map(s),
+  };
+}
+
+async function capture(url: string, platform: Platform, opts: CaptureOptions, handles: string[]): Promise<CaptureResult> {
   const dirs = { profileDir: opts.profileDir, tmpDir: opts.tmpDir, toolsDir: opts.toolsDir };
-  const log = (m: string) => opts.log?.(sanitizeText(m, dirs));
+  const log = (m: string) => opts.log?.(scrubHandles(sanitizeText(m, dirs), handles));
+  // Never read yt-dlp config files or plugins from this machine (a config could add options such as --exec).
+  const yt = ['--ignore-config', '--no-plugin-dirs', ...(opts.proxyUrl ? ['--proxy', opts.proxyUrl] : [])];
   const spawn = opts.spawn ?? defaultSpawn;
   const timeoutMs = opts.timeoutMs ?? TOOL_TIMEOUT_MS;
   const t = toolPaths(opts.toolsDir);
@@ -128,7 +244,7 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions): P
   let work: string | undefined;
   try {
     log(`capture: reading ${platform} metadata`);
-    const meta = await runTool(spawn, t.ytdlp, ['--dump-json', '--no-playlist', '--no-warnings', '--no-progress', ...cookies, '--', url], timeoutMs);
+    const meta = await runTool(spawn, t.ytdlp, [...yt, '--dump-json', '--no-playlist', '--no-warnings', '--no-progress', ...cookies, '--', url], timeoutMs);
     let info: Record<string, unknown> | null = null;
     let error = failure('yt-dlp', meta);
     if (!error) {
@@ -140,6 +256,7 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions): P
       }
       if (!info) error = 'yt-dlp returned no readable metadata.';
     }
+    if (info) for (const k of ['uploader', 'uploader_id', 'channel', 'creator']) if (typeof info[k] === 'string') handles.push(info[k] as string);
     if (error || !info) {
       log(`capture: ${error}`);
       return withFallback({ ok: false, platform, error: error ?? 'yt-dlp failed.' }, url, opts);
@@ -152,7 +269,8 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions): P
       warnings.push(w);
       log(`capture: ${w}`);
     };
-    const download = ['--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '200M', '--ffmpeg-location', opts.toolsDir];
+    // --max-filesize is not a hard cap for fragmented (HLS/DASH) streams; the per-tool timeout bounds those.
+    const download = [...yt, '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '200M', '--ffmpeg-location', opts.toolsDir];
     const findFile = async (prefix: string) =>
       (await readdir(work!)).filter((f) => f.startsWith(`${prefix}.`) && !/\.(part|ytdl|wav|json)$/i.test(f)).map((f) => join(work!, f))[0];
 
@@ -214,7 +332,11 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions): P
       if (frames.length) {
         log(`capture: reading on-screen text from ${frames.length} frames`);
         try {
-          screenText = dedupeLines(await (opts.ocr ?? tesseractOcr({ cachePath: join(opts.toolsDir, 'tesseract') }))(frames)).join('\n').slice(0, MAX_SCREEN_TEXT);
+          const ocr = opts.ocr ?? tesseractOcr({ cachePath: join(opts.toolsDir, 'tesseract') });
+          const texts = await withTimeout(ocr(frames), timeoutMs, () => {
+            throw new Error(`OCR timed out after ${describeDuration(timeoutMs)}`);
+          });
+          screenText = dedupeLines(texts).join('\n').slice(0, MAX_SCREEN_TEXT);
         } catch (err) {
           warn(`on-screen text failed: ${sanitizeError(err instanceof Error ? err.message : String(err), dirs)}`);
         }
@@ -250,7 +372,7 @@ async function withFallback(
 ): Promise<CaptureResult> {
   if (!opts.readPage) return res;
   try {
-    const page = await opts.readPage(url);
+    const page = await withTimeout(opts.readPage(url), opts.timeoutMs ?? TOOL_TIMEOUT_MS, () => null);
     const fallback: CaptureFallback = {};
     if (page?.caption) fallback.caption = page.caption.slice(0, MAX_CAPTION);
     if (page?.pageText) fallback.pageText = page.pageText.slice(0, MAX_TRANSCRIPT);
