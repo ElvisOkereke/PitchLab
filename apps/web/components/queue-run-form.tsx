@@ -6,13 +6,14 @@ import type { FormState } from '@/lib/form';
 import { useFormFields } from '@/lib/use-form-fields';
 import { HelpTip } from './help-tip';
 
-type Seed = 'open' | 'sector' | 'lens' | 'idea';
+type Seed = 'open' | 'sector' | 'lens' | 'idea' | 'finds';
 
 const SEEDS: { value: Seed; label: string; hint: string }[] = [
   { value: 'open', label: 'Open', hint: 'Let the generator look across every sector.' },
   { value: 'sector', label: 'Sectors', hint: 'Only the sectors you tick.' },
   { value: 'lens', label: 'Lenses', hint: 'Only the idea patterns you tick.' },
   { value: 'idea', label: 'Your idea', hint: 'Build a case for an idea you describe.' },
+  { value: 'finds', label: 'From my finds', hint: 'Start from your 10 most recent captured finds (links you shared).' },
 ];
 const isSeed = (v: string): v is Seed => SEEDS.some((s) => s.value === v);
 

@@ -1,5 +1,6 @@
 'use server';
 
+import { queueRun } from '@bcg/core/dashboard/runs';
 import { addFinds, deleteFind, FIND_BATCH_MAX, normalizeFindUrl, retryFind } from '@bcg/core/finds/store';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
@@ -65,4 +66,24 @@ export async function deleteFindAction(fd: FormData): Promise<void> {
   await requireOwnerAction();
   await deleteFind(getDb(), parseId(fd));
   revalidatePath(PAGE);
+}
+
+const RUN_REFUSAL: Record<string, string> = {
+  too_many_queued: '3 runs are already queued. Wait for the worker.',
+  no_finds: 'No captured finds yet. Wait for the worker to capture your links.',
+};
+
+/**
+ * "Start a run from these finds": queues a finds run over the 10 most recent captured finds (fixed when queued), with
+ * the default counts, like the Runs page's queue form.
+ */
+export async function startRunFromFindsAction(_prev: FormState, _fd: FormData): Promise<FormState> {
+  await requireOwnerAction();
+  const r = await queueRun(getDb(), { seedType: 'finds', ideaCount: 12, advanceCount: 3 });
+  if (!r.ok) return { error: RUN_REFUSAL[r.reason] ?? 'The run could not be queued. Refresh and try again.' };
+  const n = r.findIds?.length ?? 0;
+  revalidatePath('/runs');
+  revalidatePath('/command');
+  revalidatePath(PAGE);
+  return { ok: true, notice: `Queued a run from ${n} finds. It starts when the worker is running; follow it on the Runs page.` };
 }

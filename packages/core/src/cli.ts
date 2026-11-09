@@ -44,7 +44,7 @@ import { buildCollectors, runMission } from './research/mission';
 import { runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 import { fileURLToPath } from 'node:url';
-import { addFinds, listFinds } from './finds/store';
+import { addFinds, FINDS_SEED_MAX, listFinds, resolveFindsSeed } from './finds/store';
 import { captureToolsPresent, openCapture } from './finds/capture';
 import { pollTelegram, sendTelegram } from './finds/telegram';
 import { createFindsExecutor, runQueuedFinds, type RunFindsDeps } from './finds/run';
@@ -151,7 +151,8 @@ async function executeAndReport(db: Db, env: Env, id: string): Promise<number> {
 }
 
 /** `gen run` (config) or `gen resume` (runId). */
-async function execute(runId: string | null, config: RunConfig | null): Promise<number> {
+async function execute(runId: string | null, initial: RunConfig | null): Promise<number> {
+  let config = initial;
   loadDotEnv();
   const env = loadEnv();
   const db = await openDb(env.DATABASE_URL);
@@ -162,6 +163,16 @@ async function execute(runId: string | null, config: RunConfig | null): Promise<
         const found = await db.select({ id: lenses.id }).from(lenses).where(inArray(lenses.id, config.lensIds));
         const missing = config.lensIds.filter((l) => !found.some((f) => f.id === l));
         if (missing.length) throw new CliError(`Unknown lens id(s): ${missing.join(', ')}`, 2);
+      }
+      if (config?.seedType === 'finds') {
+        // Fixed now, so a resumed run works from the same finds (R20).
+        const seed = await resolveFindsSeed(db, config.findIds);
+        if (!seed.ok) {
+          throw new CliError(seed.reason === 'no_finds'
+            ? 'No captured finds yet. Share links with the Telegram bot or run `gen finds add <url>`, then let the worker capture them.'
+            : seed.reason === 'too_many_finds' ? `At most ${FINDS_SEED_MAX} finds per run.` : `Not a captured find: ${seed.detail ?? ''}`, 2);
+        }
+        config = { ...config, findIds: seed.findIds };
       }
       // Created as running (not queued) so a `gen worker` on the same database never claims it.
       id = (await createRun(db, config!, { status: 'running' })).id;
@@ -450,6 +461,7 @@ function configFrom(opts: RunOpts): RunConfig {
     partial.lensIds = csv(opts.lenses ?? '');
     if (partial.lensIds.length === 0) throw new CliError('--seed lens requires --lenses x,y', 2);
   }
+  if (opts.seed === 'finds' && opts.findIds?.length) partial.findIds = opts.findIds;
   if (opts.ideas !== undefined) partial.ideaCount = positiveInt(opts.ideas);
   if (opts.advance !== undefined) partial.advanceCount = positiveInt(opts.advance);
   return defaultRunConfig(partial);

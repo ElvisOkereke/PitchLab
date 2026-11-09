@@ -1,5 +1,5 @@
 import type { Db } from '@bcg/core/db/client';
-import { finds } from '@bcg/core/db/schema';
+import { finds, runs } from '@bcg/core/db/schema';
 import { addFinds } from '@bcg/core/finds/store';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +12,7 @@ vi.mock('@/lib/db', () => ({ getDb: () => state.db }));
 vi.mock('@/lib/auth/require-owner', () => ({ requireOwnerAction: async () => {}, requireOwner: async () => {} }));
 vi.mock('next/cache', () => import('../helpers/next-mocks').then((m) => m.nextCacheMock));
 
-const { addFindsAction, retryFindAction, deleteFindAction } = await import('@/actions/finds');
+const { addFindsAction, retryFindAction, deleteFindAction, startRunFromFindsAction } = await import('@/actions/finds');
 
 const form = (fields: Record<string, string>) => {
   const fd = new FormData();
@@ -99,5 +99,30 @@ describe('retryFindAction and deleteFindAction', () => {
   it('rejects a malformed id', async () => {
     await expect(retryFindAction(form({ id: 'nope' }))).rejects.toThrow('Invalid request.');
     await expect(deleteFindAction(form({ id: '' }))).rejects.toThrow('Invalid request.');
+  });
+});
+
+describe('startRunFromFindsAction', () => {
+  it('queues a finds run over the most recent captured finds', async () => {
+    const { results } = await addFinds(state.db, [
+      { url: 'https://example.com/a', source: 'paste' }, { url: 'https://example.com/b', source: 'paste' }, { url: 'https://example.com/c', source: 'paste' },
+    ]);
+    for (const r of results.slice(0, 2)) await state.db.update(finds).set({ status: 'done' }).where(eq(finds.id, r.id!));
+    const r = await startRunFromFindsAction({}, new FormData());
+    expect(r.ok).toBe(true);
+    expect(r.notice).toMatch(/Queued a run from 2 finds/);
+    const [run] = await state.db.select().from(runs);
+    expect(run!.status).toBe('queued');
+    expect(run!.config).toMatchObject({ seedType: 'finds', marketId: 'ca-us' });
+    expect([...run!.config.findIds!].sort()).toEqual(results.slice(0, 2).map((x) => x.id!).sort());
+    expect(request.revalidated).toEqual(expect.arrayContaining(['/runs', '/command', '/library/finds']));
+  });
+
+  it('refuses when no find is captured yet, writing nothing', async () => {
+    await addFinds(state.db, [{ url: 'https://example.com/a', source: 'paste' }]);
+    const before = await snapshotDb(state.db);
+    const r = await startRunFromFindsAction({}, new FormData());
+    expect(r).toEqual({ error: 'No captured finds yet. Wait for the worker to capture your links.' });
+    expect(await snapshotDb(state.db)).toEqual(before);
   });
 });

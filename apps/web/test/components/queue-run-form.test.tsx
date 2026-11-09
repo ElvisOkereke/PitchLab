@@ -49,11 +49,24 @@ describe('QueueRunForm', () => {
     const adv = container.querySelector('input[name="advanceCount"]')!;
     expect([adv.getAttribute('min'), adv.getAttribute('max'), (adv as HTMLInputElement).value]).toEqual(['1', '10', '3']);
     expect(container.querySelector('textarea[name="ideaText"]')!.getAttribute('maxlength')).toBe('20000');
-    expect(container.querySelectorAll('input[name="seedType"]')).toHaveLength(4);
+    expect(container.querySelectorAll('input[name="seedType"]')).toHaveLength(5);
     expect((container.querySelector('input[name="seedType"][value="open"]') as HTMLInputElement).checked).toBe(true);
     for (const el of container.querySelectorAll('input:not([type="hidden"]), textarea')) {
       expect(el.id && container.querySelector(`label[for="${el.id}"]`), `${el.getAttribute('name')} has a label`).toBeTruthy();
     }
+  });
+});
+
+describe('QueueRunForm: From my finds', () => {
+  it('offers "From my finds" as a seed, explained, with no fields of its own', () => {
+    const { container, getByLabelText } = render(<QueueRunForm {...props} />);
+    const radio = getByLabelText('From my finds') as HTMLInputElement;
+    expect(radio.value).toBe('finds');
+    expect(container.textContent).toMatch(/10 most recent captured finds/);
+    fireEvent.click(radio);
+    expect(visible(container.querySelector('textarea[name="ideaText"]'))).toBe(false);
+    expect(visible(container.querySelector('input[name="sectors"]'))).toBe(false);
+    expect(visible(container.querySelector('input[name="lensIds"]'))).toBe(false);
   });
 });
 

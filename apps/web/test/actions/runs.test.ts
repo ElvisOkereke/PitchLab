@@ -1,5 +1,5 @@
 import type { Db } from '@bcg/core/db/client';
-import { runs } from '@bcg/core/db/schema';
+import { finds, runs } from '@bcg/core/db/schema';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createTestDb, seedFailedRun, snapshotDb } from '../helpers/db';
@@ -29,6 +29,18 @@ const redirectOf = async (p: Promise<unknown>) => {
 beforeEach(async () => {
   state.db = await createTestDb();
   resetRequest();
+});
+
+describe('queueRunAction: From my finds', () => {
+  it('queues a finds run over the most recent captured finds, and refuses when there are none', async () => {
+    expect(await queueRunAction({}, form({ seedType: 'finds', ideaCount: '', advanceCount: '' })))
+      .toEqual({ error: 'No captured finds yet. Share or paste some links on the Finds page first.', values: expect.any(Object) });
+    expect(await state.db.select().from(runs)).toHaveLength(0);
+    const [f] = await state.db.insert(finds).values({ url: 'https://example.com/a', platform: 'other', source: 'paste', status: 'done' }).returning({ id: finds.id });
+    expect(await queueRunAction({}, form({ seedType: 'finds', ideaCount: '6', advanceCount: '2' }))).toEqual({ ok: true });
+    const [row] = await state.db.select().from(runs);
+    expect(row!.config).toMatchObject({ seedType: 'finds', findIds: [f!.id], ideaCount: 6, advanceCount: 2 });
+  });
 });
 
 describe('queueRunAction', () => {

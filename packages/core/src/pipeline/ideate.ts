@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { Db } from '../db/client';
 import { ideaReviews, ideas, lenses, markets, signals } from '../db/schema';
 import { AMBITION_LENSES, CONSUMER_SEGMENTS } from '../db/seed';
-import { ideationContext, renderIdeationContext } from '../library/context';
+import { findEntries, ideationContext, renderIdeationContext } from '../library/context';
+import { recentCapturedFindIds } from '../finds/store';
 import { loadPrompt } from '../llm/prompts';
 import { StructuredOutputError, type CallCtx } from '../llm/types';
 import { capField, wrapUntrusted } from '../llm/untrusted';
@@ -33,7 +34,7 @@ export const MIN_MODELS = 4;
 const SEGMENTS_PER_RUN = 5;
 const MAX_FOCUS_SECTORS = 8;
 /** Library context per lens: startups already selling, dead startups, pricing entries, what is changing, market size. */
-const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15, changingMax: 10, marketsMax: 6 } as const;
+const LIBRARY_LIMITS = { alreadySoldMax: 15, lessonsMax: 8, pricingMax: 15, changingMax: 10, marketsMax: 6, seenInTheWildMax: 6 } as const;
 /** The one re-ask round (mix gap and count top-up) asks for at most this many ideas. */
 const REASK_MAX_IDEAS = 6;
 /** Each ideate call asks for at most this many ideas: long v8 ideas in bigger calls hit the output cap and were lost. */
@@ -533,7 +534,7 @@ function groundEstimate(e: ScaleEstimate, known: Known, prefixes: [string, strin
 }
 
 type LibraryBlocks = {
-  alreadySold: string; lessons: string; pricing: string; changing: string; markets: string;
+  alreadySold: string; lessons: string; pricing: string; changing: string; markets: string; seenInTheWild: string;
   ids: Set<string>;
   /** Each shown entry's id to its library kind (the demand evidence route counts only shown trend, market, rule_change and pricing entries). */
   kinds: Map<string, string>;
@@ -542,7 +543,7 @@ type LibraryBlocks = {
   /** Rendered urls that were cut off (lower case), to the entry id. */
   prefixes: [string, string][];
 };
-const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [], changing: [], markets: [] });
+const EMPTY_LIBRARY = renderIdeationContext({ alreadySold: [], lessons: [], pricing: [], changing: [], markets: [], seenInTheWild: [] });
 
 /**
  * Words that name a way to be hard to copy (ideate.v9). A sanity check, not a judgement of quality: forgiving about word
@@ -692,7 +693,20 @@ export async function ideate(
     if (withSegments) lines.push(`Consumer segments: ${segments.join('; ')}`);
     return lines.join('\n');
   };
-  const seedText = cfg.seedType === 'lens' ? '' : [...sectors, ...(cfg.seedType === 'open' ? segments : [])].join(', ');
+  // A finds seed: its finds are shown first to every lens, and what they are steers the library query.
+  let seedFindIds: string[] = [];
+  let seedFinds: Awaited<ReturnType<typeof findEntries>> = [];
+  if (cfg.seedType === 'finds') {
+    try {
+      seedFindIds = cfg.findIds?.length ? cfg.findIds : await recentCapturedFindIds(db);
+      seedFinds = await findEntries(db, seedFindIds);
+    } catch (err) {
+      log(`ideate: the seed's finds are unavailable (${errorMessage(err)})`);
+    }
+  }
+  const seedText = cfg.seedType === 'lens' ? ''
+    : cfg.seedType === 'finds' ? seedFinds.map((f) => capField(f.what, 120)).join('; ')
+    : [...sectors, ...(cfg.seedType === 'open' ? segments : [])].join(', ');
 
   // Library context per lens: one embedding (lens pattern + seed), then bounded SQL. Never fails the stage.
   const libraryCache = new Map<string, LibraryBlocks>();
@@ -704,8 +718,8 @@ export async function ideate(
       const text = capField(`${lens.pattern} ${seedText || lens.promptHint}`, 1000);
       const [vector] = await router.embed([text], { runId: run.id, promptVersion: 'library-query.v1' });
       if (vector) {
-        const ctx = await ideationContext(db, vector, { countries: market.countries, ...LIBRARY_LIMITS });
-        const shown = [...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing, ...ctx.changing, ...ctx.markets];
+        const ctx = await ideationContext(db, vector, { countries: market.countries, ...LIBRARY_LIMITS, pinnedFindIds: seedFindIds });
+        const shown = [...ctx.alreadySold, ...ctx.lessons, ...ctx.pricing, ...ctx.changing, ...ctx.markets, ...ctx.seenInTheWild];
         const sources: Known = new Map();
         const prefixes: [string, string][] = [];
         for (const e of shown) {
@@ -722,6 +736,8 @@ export async function ideate(
           ...ctx.pricing.map((e) => [e.id, 'pricing'] as const),
           ...ctx.changing.map((e) => [e.id, e.kind] as const),
           ...ctx.markets.map((e) => [e.id, 'market'] as const),
+          // Shown and citable, but never a demand source (DEMAND_LIBRARY_KINDS leaves `find` out).
+          ...ctx.seenInTheWild.map((e) => [e.id, 'find'] as const),
         ]);
         blocks = { ...renderIdeationContext(ctx), ids: new Set(shown.map((x) => x.id)), kinds, sources, prefixes };
       }
@@ -774,6 +790,7 @@ export async function ideate(
             pricing: wrapUntrusted('pricing', library.pricing),
             changing: wrapUntrusted('changing', library.changing),
             markets: wrapUntrusted('markets', library.markets),
+            seenInTheWild: wrapUntrusted('seen-in-the-wild', library.seenInTheWild),
             priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
             gateKilled,
             alreadyCovered,

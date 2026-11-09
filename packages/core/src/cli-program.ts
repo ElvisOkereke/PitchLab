@@ -39,6 +39,8 @@ function pilotSiteArg(v: string): string {
 export type RunOpts = {
   seed: RunConfig['seedType'];
   sectors?: string; lenses?: string; file?: string; ideas?: string; advance?: string;
+  /** Finds seed: the find ids given after --finds (none: the 10 most recent captured finds). */
+  findIds?: string[];
 };
 
 export type ValidateCliOpts = {
@@ -163,14 +165,22 @@ export function buildProgram(h: CliHandlers): Command {
 
   program.command('run')
     .description('Create and execute a run')
-    .addOption(new Option('--seed <type>', 'how to seed the run').choices(['open', 'sector', 'lens', 'idea']).makeOptionMandatory())
+    .addOption(new Option('--seed <type>', 'how to seed the run (required unless --finds is given)').choices(['open', 'sector', 'lens', 'idea', 'finds']))
     .option('--sectors <list>', 'comma-separated sectors (for --seed sector)')
     .option('--lenses <list>', 'comma-separated lens ids (for --seed lens)')
     .option('--file <path>', 'idea file (for --seed idea)')
+    .option('--finds [ids...]', 'start from your finds: the ids given, or the 10 most recent captured finds')
     .option('--ideas <n>', 'number of ideas to generate')
     .option('--advance <n>', 'number of ideas to advance to the gate')
-    .action(async (opts: RunOpts) => {
-      process.exitCode = await h.run(opts);
+    .action(async (raw: Omit<RunOpts, 'seed' | 'findIds'> & { seed?: RunConfig['seedType']; finds?: true | string[] }) => {
+      const { finds, seed, ...rest } = raw;
+      if (finds !== undefined) {
+        if (seed !== undefined && seed !== 'finds') throw new CliError(`--finds cannot be combined with --seed ${seed}`, 2);
+        process.exitCode = await h.run({ ...rest, seed: 'finds', ...(Array.isArray(finds) && finds.length ? { findIds: finds } : {}) });
+        return;
+      }
+      if (seed === undefined) throw new CliError('Give --seed <type> or --finds [ids...].', 2);
+      process.exitCode = await h.run({ ...rest, seed });
     });
 
   program.command('resume')

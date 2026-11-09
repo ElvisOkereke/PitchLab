@@ -146,6 +146,16 @@ describe('gen prospects import / outreach / config', () => {
     expect((await parse(['run', '--seed', 'sector', '--sectors', 'a,b'])).run).toHaveBeenCalledWith({ seed: 'sector', sectors: 'a,b' });
     expect((await parse(['runs'])).runs).toHaveBeenCalled();
   });
+
+  it('run --finds seeds a run from finds: the most recent ones, or the ids given (sources expansion §C)', async () => {
+    const a = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    const b = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+    expect((await parse(['run', '--finds'])).run).toHaveBeenCalledWith({ seed: 'finds' });
+    expect((await parse(['run', '--finds', a, b, '--ideas', '4'])).run).toHaveBeenCalledWith({ seed: 'finds', findIds: [a, b], ideas: '4' });
+    expect((await parse(['run', '--seed', 'finds'])).run).toHaveBeenCalledWith({ seed: 'finds' });
+    await expect(parse(['run', '--seed', 'open', '--finds'])).rejects.toThrow(/--finds/);
+    await expect(parse(['run'])).rejects.toThrow(/--seed/);
+  });
 });
 
 describe('gen bench', () => {

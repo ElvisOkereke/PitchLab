@@ -5,7 +5,7 @@ Plain-language meanings for the terms you will see in PitchLab. The first group 
 ## Terms with a "?" tip in the app
 
 ### Seed
-The starting point for a run. Open looks across every sector, Sectors and Lenses narrow it to the ones you tick, and Your idea builds a case for an idea you describe.
+The starting point for a run. Open looks across every sector, Sectors and Lenses narrow it to the ones you tick, Your idea builds a case for an idea you describe, and From my finds starts from the links you shared.
 
 ### Lenses
 A lens is a pattern for spotting a business idea, such as a silent failure to monitor or a task to turn into a fixed-price service. Tick lenses to make the run look only through those patterns.

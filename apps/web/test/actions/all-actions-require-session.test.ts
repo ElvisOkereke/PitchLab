@@ -135,6 +135,13 @@ const SPECS: Record<string, Spec> = {
   'finds.ts#deleteFindAction': {
     seed: async (db) => ({ id: (await addFinds(db, [{ url: 'https://example.com/v', source: 'paste' }])).results[0]!.id! }),
   },
+  'finds.ts#startRunFromFindsAction': {
+    seed: async (db) => {
+      const { results } = await addFinds(db, [{ url: 'https://example.com/v', source: 'paste' }]);
+      await db.update(finds).set({ status: 'done' }).where(eq(finds.id, results[0]!.id!));
+      return {};
+    },
+  },
   'tour.ts#saveTourStateAction': {
     seed: async () => ({}),
     args: () => [{ version: 1, completed: ['setup'], current: { chapter: 'generate', step: 0 }, dismissed: false }],

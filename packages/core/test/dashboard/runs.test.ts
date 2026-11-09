@@ -9,7 +9,9 @@ import {
 import { BENCHMARKS } from '../../src/bench/definitions';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { EXAMPLE_SLUG, ensureExample } from '../../src/example/example';
-import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
+import { insertCase, insertIdea, insertRun, testDb, unit } from '../helpers/db';
+import { seedFind } from '../helpers/finds';
+import { resolveFindsSeed } from '../../src/finds/store';
 
 let db: Db;
 beforeEach(async () => {
@@ -197,5 +199,59 @@ describe('example run is hidden', () => {
     expect(after.total).toBe(before.total);
     expect(after.rows.every((r) => !r.isExample)).toBe(true);
     expect((await countRunsByStatus(db)).succeeded).toBe(0);
+  });
+});
+
+describe('finds seed (sources expansion §C)', () => {
+  const v = (dim: number) => { const x = unit(0).map(() => 0); x[0] = 0.5; x[dim] = Math.sqrt(0.75); return x; };
+
+  it('schemas accept a finds seed with at most 20 find ids', () => {
+    const id = randomUUID();
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: [id] })).success).toBe(true);
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds' })).success).toBe(true);
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: Array.from({ length: 21 }, () => randomUUID()) })).success).toBe(false);
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: ['nope'] })).success).toBe(false);
+    expect(QueueRunInputSchema.safeParse({ seedType: 'finds' }).success).toBe(true);
+    expect(QueueRunInputSchema.safeParse({ seedType: 'finds', findIds: [id] }).success).toBe(true);
+    expect(QueueRunInputSchema.safeParse({ seedType: 'finds', findIds: Array.from({ length: 21 }, () => randomUUID()) }).success).toBe(false);
+  });
+
+  it('defaults to the 10 most recent captured finds, stored in the run config', async () => {
+    const made: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      made.push((await seedFind(db, { what: `F${i}`, vec: v(i + 1), createdAt: new Date(Date.UTC(2026, 10, 1 + i)) })).findId);
+    }
+    await seedFind(db, { what: 'Queued', vec: v(30), status: 'queued', createdAt: new Date(Date.UTC(2026, 10, 25)) });
+    await seedFind(db, { what: 'Failed', vec: v(31), status: 'failed', createdAt: new Date(Date.UTC(2026, 10, 26)) });
+    const r = await queueRun(db, { seedType: 'finds', ideaCount: 12, advanceCount: 3 });
+    expect(r.ok).toBe(true);
+    const [row] = await queued();
+    expect(row!.config).toMatchObject({ seedType: 'finds', marketId: QUEUE_MARKET_ID });
+    expect(row!.config.findIds).toEqual(made.slice(2).reverse());
+  });
+
+  it('checks given find ids exist and are captured, keeps their order, and refuses when there are no finds', async () => {
+    expect(await queueRun(db, { seedType: 'finds', ideaCount: 12, advanceCount: 3 })).toEqual({ ok: false, reason: 'no_finds' });
+    const a = await seedFind(db, { what: 'A', vec: v(1) });
+    const b = await seedFind(db, { what: 'B', vec: v(2) });
+    const q = await seedFind(db, { what: 'Q', vec: v(3), status: 'queued', noItem: true });
+    const missing = randomUUID();
+    expect(await queueRun(db, { seedType: 'finds', findIds: [a.findId, q.findId, missing], ideaCount: 12, advanceCount: 3 }))
+      .toEqual({ ok: false, reason: 'unknown_find', detail: `${q.findId}, ${missing}` });
+    expect(await queueRun(db, { seedType: 'finds', findIds: ['not-a-uuid'], ideaCount: 12, advanceCount: 3 }))
+      .toEqual({ ok: false, reason: 'unknown_find', detail: 'not-a-uuid' });
+    expect(await queued()).toHaveLength(0);
+    expect((await queueRun(db, { seedType: 'finds', findIds: [b.findId, a.findId, b.findId], ideaCount: 12, advanceCount: 3 })).ok).toBe(true);
+    expect((await queued())[0]!.config.findIds).toEqual([b.findId, a.findId]);
+  });
+
+  it('resolveFindsSeed: the same rules for the CLI', async () => {
+    expect(await resolveFindsSeed(db, undefined)).toEqual({ ok: false, reason: 'no_finds' });
+    const a = await seedFind(db, { what: 'A', vec: v(1) });
+    expect(await resolveFindsSeed(db, [])).toEqual({ ok: true, findIds: [a.findId] });
+    expect(await resolveFindsSeed(db, [a.findId])).toEqual({ ok: true, findIds: [a.findId] });
+    expect(await resolveFindsSeed(db, Array.from({ length: 21 }, () => a.findId))).toEqual({ ok: true, findIds: [a.findId] });
+    const many = Array.from({ length: 21 }, () => randomUUID());
+    expect(await resolveFindsSeed(db, many)).toMatchObject({ ok: false, reason: 'too_many_finds' });
   });
 });

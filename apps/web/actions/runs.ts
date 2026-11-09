@@ -13,6 +13,9 @@ const REFUSAL = {
   too_many_queued: '3 runs are already queued. Wait for the worker.',
   unknown_lens: 'One of the lenses is unknown or inactive. Refresh and try again.',
   unknown_sector: 'One of the sectors is not in the market. Refresh and try again.',
+  unknown_find: 'One of the finds is not captured yet or was deleted. Refresh and try again.',
+  no_finds: 'No captured finds yet. Share or paste some links on the Finds page first.',
+  too_many_finds: 'Pick at most 20 finds.',
 } as const;
 
 /** Fields whose messages core writes for the owner (counts, list sizes, idea length, advance ≤ ideas). */
@@ -32,7 +35,7 @@ function issueMessage(issue: { path: PropertyKey[]; message: string }): string {
   return 'Pick how to seed the run.';
 }
 
-/** Queues a run for `npm run worker` (seed open / sectors / lenses / idea, idea and advance counts). */
+/** Queues a run for `npm run worker` (seed open / sectors / lenses / idea / finds, idea and advance counts). */
 export async function queueRunAction(_prev: FormState, fd: FormData): Promise<FormState> {
   await requireOwnerAction();
   const raw = formToObject(fd, ['sectors', 'lensIds']);

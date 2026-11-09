@@ -4,6 +4,7 @@ import type { Db } from '../db/client';
 import { benchmarkPasses, cases, ideas, lenses, markets, runStages, runStatus, runs } from '../db/schema';
 import { STAGES, defaultRunConfig, type RunConfig } from '../pipeline/types';
 import { scrubError } from '../tools/scrub';
+import { FINDS_SEED_MAX, resolveFindsSeed } from '../finds/store';
 
 // ---- Run config ----------------------------------------------------------------------------------
 
@@ -11,10 +12,11 @@ const int = (min: number, max: number) => z.number().int().min(min).max(max);
 
 /** Zod mirror of RunConfig with hard bounds. The worker re-validates every stored config with it before executing. */
 export const RunConfigSchema = z.object({
-  seedType: z.enum(['open', 'sector', 'lens', 'idea']),
+  seedType: z.enum(['open', 'sector', 'lens', 'idea', 'finds']),
   sectors: z.array(z.string().max(100)).max(8).optional(),
   lensIds: z.array(z.string().max(100)).max(8).optional(),
   ideaText: z.string().max(20_000).optional(),
+  findIds: z.array(z.uuid()).max(FINDS_SEED_MAX).optional(),
   marketId: z.string().min(1).max(50),
   ideaCount: int(1, 30),
   advanceCount: int(1, 10),
@@ -55,6 +57,12 @@ export const QueueRunInputSchema = z.discriminatedUnion('seedType', [
     ...counts,
   }),
   z.object({
+    seedType: z.literal('finds'),
+    /** Optional: with none, queueRun uses the most recent captured finds. Each must be a captured find (checked in queueRun). */
+    findIds: z.array(z.string().trim().min(1).max(100)).max(FINDS_SEED_MAX, `Pick at most ${FINDS_SEED_MAX} finds.`).optional(),
+    ...counts,
+  }),
+  z.object({
     seedType: z.literal('idea'),
     ideaText: z.string().trim().min(50, 'Describe the idea in at least 50 characters.').max(20_000, 'The idea text is at most 20,000 characters.'),
     ...counts,
@@ -74,8 +82,9 @@ const MARKET_ID = QUEUE_MARKET_ID;
 export const QUEUE_LOCK_KEY = 0x6263_7131; // "bcq1"
 
 export type QueueResult =
-  | { ok: true; id: string }
-  | { ok: false; reason: 'too_many_queued' | 'unknown_lens' | 'unknown_sector'; detail?: string };
+  /** `findIds`: for a finds seed, the finds the run was fixed to. */
+  | { ok: true; id: string; findIds?: string[] }
+  | { ok: false; reason: 'too_many_queued' | 'unknown_lens' | 'unknown_sector' | 'unknown_find' | 'no_finds' | 'too_many_finds'; detail?: string };
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
@@ -99,6 +108,14 @@ export async function queueRun(db: Db, raw: QueueRunInput): Promise<QueueResult>
     const found = await db.select({ id: lenses.id }).from(lenses).where(and(inArray(lenses.id, input.lensIds), eq(lenses.active, true)));
     const unknown = input.lensIds.filter((l) => !found.some((f) => f.id === l));
     if (unknown.length) return { ok: false, reason: 'unknown_lens', detail: unknown.join(', ') };
+  }
+  if (input.seedType === 'finds') {
+    // The finds are fixed when the run is queued, so the run always works from the same finds (R20).
+    const seed = await resolveFindsSeed(db, input.findIds);
+    if (!seed.ok) return seed.detail ? { ok: false, reason: seed.reason, detail: seed.detail } : { ok: false, reason: seed.reason };
+    const config = defaultRunConfig({ marketId: MARKET_ID, ...input, findIds: seed.findIds });
+    const res = await db.transaction((tx) => insertQueued(tx, config));
+    return res.ok ? { ...res, findIds: seed.findIds } : res;
   }
   const config = defaultRunConfig({ marketId: MARKET_ID, ...input });
   return db.transaction((tx) => insertQueued(tx, config));

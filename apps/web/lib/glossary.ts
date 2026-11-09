@@ -42,7 +42,7 @@ export type GlossaryTerm =
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   seed: {
     label: 'Seed',
-    text: 'The starting point for a run. Open looks across every sector, Sectors and Lenses narrow it to the ones you tick, and Your idea builds a case for an idea you describe.',
+    text: 'The starting point for a run. Open looks across every sector, Sectors and Lenses narrow it to the ones you tick, Your idea builds a case for an idea you describe, and From my finds starts from the links you shared.',
   },
   lens: {
     label: 'Lenses',

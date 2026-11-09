@@ -1,6 +1,6 @@
-import { and, asc, cosineDistance, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, cosineDistance, desc, eq, inArray, notInArray, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
-import { knowledgeItems } from '../db/schema';
+import { finds, knowledgeItems } from '../db/schema';
 import { capField } from '../llm/untrusted';
 import { parseFacts, type KnowledgeKind } from './kinds';
 import { itemLive, liveSource } from './live';
@@ -11,13 +11,21 @@ export type CtxStartup = { id: string; name: string; whatItDoes: string; outcome
 export type CtxPricing = { id: string; product: string; pricePoints: { amount: number; currency: string; unit: string }[]; buyer: string; url: string };
 export type CtxChange = { id: string; kind: 'trend' | 'rule_change'; gist: string; keyFact: string; url: string };
 export type CtxMarket = { id: string; segment: string; geography: string; keyFact: string; url: string };
-export type IdeationContext = { alreadySold: CtxStartup[]; lessons: CtxStartup[]; pricing: CtxPricing[]; changing: CtxChange[]; markets: CtxMarket[] };
+/** A find (a link the owner shared): what it is, who pays and how it earns. The creator's claims are never shown. */
+export type CtxFind = { id: string; what: string; whoPays: string; howItEarns: string; url: string };
+export type IdeationContext = {
+  alreadySold: CtxStartup[]; lessons: CtxStartup[]; pricing: CtxPricing[]; changing: CtxChange[]; markets: CtxMarket[];
+  /** Finds seen in the wild: pinned finds first (a finds seed), then by similarity, ties to the most recent. At most FINDS_MAX. */
+  seenInTheWild: CtxFind[];
+};
 
 const DEFAULT_SOLD = 15;
 const DEFAULT_LESSONS = 8;
 const DEFAULT_PRICING = 15;
 const DEFAULT_CHANGING = 10;
 const DEFAULT_MARKETS = 6;
+/** Most finds shown to one ideate call (spec §C); also the default. */
+export const FINDS_MAX = 6;
 /** A rule change is imminent or recent when its effective date is within this many months of now (before or after). */
 const RULE_WINDOW_MONTHS = 18;
 const HARD_MAX = 50;
@@ -63,7 +71,14 @@ function startups(rows: { id: string; facts: unknown; url: string }[]): CtxStart
 export async function ideationContext(
   db: Db,
   queryVector: number[],
-  opts: { countries?: string[]; alreadySoldMax?: number; lessonsMax?: number; pricingMax?: number; changingMax?: number; marketsMax?: number; now?: Date },
+  opts: {
+    countries?: string[]; alreadySoldMax?: number; lessonsMax?: number; pricingMax?: number; changingMax?: number; marketsMax?: number;
+    /** At most FINDS_MAX (default FINDS_MAX). */
+    seenInTheWildMax?: number;
+    /** Find ids (rows of `finds`) shown first, in this order, when captured and live (a finds seed). */
+    pinnedFindIds?: string[];
+    now?: Date;
+  },
 ): Promise<IdeationContext> {
   const now = opts.now ?? new Date();
   const soldMax = clamp(opts.alreadySoldMax, DEFAULT_SOLD);
@@ -105,7 +120,66 @@ export async function ideationContext(
       markets.push({ id: r.id, segment: f.segment, geography: f.geography, keyFact: f.sizeClues.slice(0, 2).map((c) => `${c.metric} ${c.value} ${c.unit} (${c.year})`).join('; '), url: r.url });
     } catch { /* invalid facts: skipped */ }
   }
-  return { alreadySold: startups(soldRows).slice(0, soldMax), lessons, pricing: pricing.slice(0, pricingMax), changing, markets: markets.slice(0, marketsMax) };
+  const seenInTheWild = await seenFinds(db, queryVector, Math.min(clamp(opts.seenInTheWildMax, FINDS_MAX), FINDS_MAX), opts.pinnedFindIds ?? [], now);
+  return { alreadySold: startups(soldRows).slice(0, soldMax), lessons, pricing: pricing.slice(0, pricingMax), changing, markets: markets.slice(0, marketsMax), seenInTheWild };
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function toFinds(rows: { id: string; facts: unknown; url: string }[]): CtxFind[] {
+  const out: CtxFind[] = [];
+  for (const r of rows) {
+    try {
+      const f = parseFacts('find', r.facts) as { what: string; whoPays: string; howItEarns: string };
+      out.push({ id: r.id, what: f.what, whoPays: f.whoPays, howItEarns: f.howItEarns, url: r.url });
+    } catch { /* invalid facts: skipped */ }
+  }
+  return out;
+}
+
+/**
+ * The library entries of captured finds, in the given order (repeats dropped): active and live entries only, one
+ * bounded query. Used for a finds seed (the pinned finds, and the topics harvest researches).
+ */
+export async function findEntries(db: Db, findIds: readonly string[], now: Date = new Date()): Promise<CtxFind[]> {
+  const ids = [...new Set(findIds.filter((id) => UUID.test(id)).map((id) => id.toLowerCase()))].slice(0, HARD_MAX);
+  if (!ids.length) return [];
+  const rows = await db.select({ findId: finds.id, id: knowledgeItems.id, facts: knowledgeItems.facts, url: urlExpr(now) })
+    .from(finds).innerJoin(knowledgeItems, eq(knowledgeItems.id, finds.knowledgeItemId))
+    .where(and(inArray(finds.id, ids), eq(finds.status, 'done'), eq(knowledgeItems.status, 'active'), eq(knowledgeItems.kind, 'find'), itemLive(now)))
+    .limit(ids.length);
+  const byFind = new Map(rows.map((r) => [r.findId, r]));
+  const seen = new Set<string>();
+  const ordered: { id: string; facts: unknown; url: string }[] = [];
+  for (const id of ids) {
+    const r = byFind.get(id);
+    if (!r || seen.has(r.id)) continue; // two finds can share one library entry (merged)
+    seen.add(r.id);
+    ordered.push(r);
+  }
+  return toFinds(ordered);
+}
+
+/**
+ * Finds for one ideate call: pinned finds first, then the rest by similarity (ties to the most recent entry). Finds
+ * are proof that people pay somewhere, so the market's countries do not filter them (moving a find to a new market is
+ * one of the ways ideate.v14 may use it).
+ */
+async function seenFinds(db: Db, queryVector: number[], max: number, pinnedFindIds: string[], now: Date): Promise<CtxFind[]> {
+  if (max === 0) return []; // set to 0: no query
+  const pinned = (await findEntries(db, pinnedFindIds, now)).slice(0, max);
+  const left = max - pinned.length;
+  if (left === 0) return pinned;
+  const exclude = pinned.map((p) => p.id);
+  const rows = await db.select({ id: knowledgeItems.id, facts: knowledgeItems.facts, url: urlExpr(now) })
+    .from(knowledgeItems)
+    .where(and(
+      eq(knowledgeItems.status, 'active'), itemLive(now), eq(knowledgeItems.kind, 'find'), sql`${knowledgeItems.embedding} is not null`,
+      exclude.length ? notInArray(knowledgeItems.id, exclude) : undefined,
+    ))
+    .orderBy(asc(cosineDistance(knowledgeItems.embedding, queryVector)), desc(knowledgeItems.createdAt), asc(knowledgeItems.id))
+    .limit(left * OVERFETCH);
+  return [...pinned, ...toFinds(rows).slice(0, left)];
 }
 
 const isoDay = (d: Date): string => d.toISOString().slice(0, 10);
@@ -161,16 +235,20 @@ const pricingLine = (p: CtxPricing): string => {
 const changeLine = (c: CtxChange): string =>
   capField(`[${c.id}] ${c.kind === 'trend' ? 'trend' : 'rule change'}: ${capField(c.gist, 140)} | ${capField(c.keyFact, 100)} | ${capField(c.url, 80)}`, LINE_MAX);
 
+const findLine = (f: CtxFind): string =>
+  capField(`[${f.id}] ${capField(f.what, 140)} | who pays: ${capField(f.whoPays, 60)} | earns: ${capField(f.howItEarns, 60)} | ${capField(f.url, 80)}`, LINE_MAX);
+
 const marketLine = (m: CtxMarket): string =>
   capField(`[${m.id}] ${capField(m.segment, 80)} (${capField(m.geography, 40)}): ${capField(m.keyFact, 140)} | ${capField(m.url, 80)}`, LINE_MAX);
 
 /** Plain text, one capped line per entry. The caller wraps each block with wrapUntrusted. */
-export function renderIdeationContext(ctx: IdeationContext): { alreadySold: string; lessons: string; pricing: string; changing: string; markets: string } {
+export function renderIdeationContext(ctx: IdeationContext): { alreadySold: string; lessons: string; pricing: string; changing: string; markets: string; seenInTheWild: string } {
   return {
     alreadySold: section(ctx.alreadySold.map(startupLine)),
     lessons: section(ctx.lessons.map(startupLine)),
     pricing: section(ctx.pricing.map(pricingLine)),
     changing: section(ctx.changing.map(changeLine)),
     markets: section(ctx.markets.map(marketLine)),
+    seenInTheWild: section(ctx.seenInTheWild.map(findLine)),
   };
 }

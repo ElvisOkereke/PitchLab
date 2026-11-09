@@ -4,6 +4,7 @@ import { deleteFindAction, retryFindAction } from '@/actions/finds';
 import { formatDateTime, relativeTime } from '@/lib/time';
 import { AutoRefresh } from './auto-refresh';
 import { FindsPasteForm } from './finds-paste-form';
+import { FindsRunForm } from './finds-run-form';
 import { HelpTip } from './help-tip';
 
 const REFRESH_MS = 10_000;
@@ -66,11 +67,12 @@ function FindItem({ find, now }: { find: FindRow; now: Date }) {
 export type FindsViewProps = { finds: FindRow[]; telegramConnected: boolean; now: Date };
 
 /**
- * The Finds page: paste links, see each one's capture status. Everything is rendered as text (R13).
- * Hook for Task 4: when core's RunConfig supports seedType 'finds', render "Start a run from these finds" here.
+ * The Finds page: paste links, see each one's capture status, and start a run from the captured ones. Everything is
+ * rendered as text (R13).
  */
 export function FindsView({ finds, telegramConnected, now }: FindsViewProps) {
   const busy = finds.some((f) => f.status === 'queued' || f.status === 'capturing');
+  const captured = finds.some((f) => f.status === 'done');
   return (
     <main className="library-page">
       <div className="label-row">
@@ -82,6 +84,7 @@ export function FindsView({ finds, telegramConnected, now }: FindsViewProps) {
       <p>Share links to your Telegram bot or paste them here. PitchLab downloads each one, transcribes it, reads on-screen text and adds it to your library.</p>
       {telegramConnected ? null : <p className="muted">Telegram is not connected yet. The steps to connect your bot are in docs/OWNER-TODO.md.</p>}
       <FindsPasteForm />
+      {captured ? <FindsRunForm /> : null}
       <h2>Your finds</h2>
       {finds.length === 0 ? <p className="muted">No finds yet.</p> : <ul className="find-list">{finds.map((f) => <FindItem key={f.id} find={f} now={now} />)}</ul>}
       {busy ? <AutoRefresh everyMs={REFRESH_MS} /> : null}

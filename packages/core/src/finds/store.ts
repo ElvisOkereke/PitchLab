@@ -113,6 +113,46 @@ export async function listFinds(db: Db, o: { limit?: number; statuses?: FindStat
     .limit(limit);
 }
 
+/** A finds seed with no ids uses this many of the most recent captured finds. */
+export const FINDS_SEED_DEFAULT = 10;
+/** Most finds one run may start from. */
+export const FINDS_SEED_MAX = 20;
+
+export type FindsSeedResult =
+  | { ok: true; findIds: string[] }
+  | { ok: false; reason: 'no_finds' | 'unknown_find' | 'too_many_finds'; detail?: string };
+
+/** The ids of the most recent captured (`done`) finds, newest first. */
+export async function recentCapturedFindIds(db: Db, limit = FINDS_SEED_DEFAULT): Promise<string[]> {
+  const n = Math.min(Math.max(1, Math.floor(limit)), FINDS_SEED_MAX);
+  const rows = await db.select({ id: finds.id }).from(finds)
+    .where(eq(finds.status, 'done'))
+    .orderBy(desc(finds.createdAt), desc(finds.id))
+    .limit(n);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The finds a finds seed starts from. Given ids (repeats dropped, order kept) must each be a captured (`done`) find,
+ * at most FINDS_SEED_MAX; with none, the FINDS_SEED_DEFAULT most recent captured finds. `no_finds` when nothing is captured.
+ */
+export async function resolveFindsSeed(db: Db, findIds: readonly string[] | undefined): Promise<FindsSeedResult> {
+  const given = [...new Set((findIds ?? []).map((id) => String(id).trim().toLowerCase()).filter(Boolean))];
+  if (given.length === 0) {
+    const recent = await recentCapturedFindIds(db);
+    return recent.length ? { ok: true, findIds: recent } : { ok: false, reason: 'no_finds' };
+  }
+  if (given.length > FINDS_SEED_MAX) return { ok: false, reason: 'too_many_finds', detail: `at most ${FINDS_SEED_MAX}` };
+  const wellFormed = given.filter((id) => UUID.test(id));
+  const rows = wellFormed.length
+    ? await db.select({ id: finds.id }).from(finds).where(and(inArray(finds.id, wellFormed), eq(finds.status, 'done')))
+    : [];
+  const done = new Set(rows.map((r) => r.id));
+  const unknown = given.filter((id) => !done.has(id));
+  if (unknown.length) return { ok: false, reason: 'unknown_find', detail: unknown.map((id) => id.slice(0, 40)).join(', ') };
+  return { ok: true, findIds: given };
+}
+
 /** Puts a failed find back in the queue (error and warnings cleared). False when it is not failed or does not exist. */
 export async function retryFind(db: Db, id: string): Promise<boolean> {
   if (!UUID.test(id)) return false;

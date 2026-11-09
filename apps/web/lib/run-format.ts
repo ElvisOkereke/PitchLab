@@ -3,7 +3,7 @@ import { usd } from './time';
 
 const IDEA_SHOWN = 80;
 
-/** How a run was seeded, in a few words: `open`, `sector: HVAC, plumbing`, `lens: aggregator`, `idea: Daily test…`. */
+/** How a run was seeded, in a few words: `open`, `sector: HVAC, plumbing`, `lens: aggregator`, `idea: Daily test…`, `finds: 10`. */
 export function seedSummary(config: Partial<RunConfig> | null | undefined): string {
   const c = config ?? {};
   switch (c.seedType) {
@@ -17,6 +17,8 @@ export function seedSummary(config: Partial<RunConfig> | null | undefined): stri
     }
     case 'open':
       return 'open';
+    case 'finds':
+      return c.findIds?.length ? `finds: ${c.findIds.length}` : 'finds';
     default:
       return 'unknown';
   }

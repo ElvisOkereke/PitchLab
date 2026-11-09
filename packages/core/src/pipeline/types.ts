@@ -4,10 +4,12 @@ import type { SignalSource } from '../tools/sources/types';
 import type { fetchPage } from '../tools/fetch-page';
 
 export type RunConfig = {
-  seedType: 'open' | 'sector' | 'lens' | 'idea';
+  seedType: 'open' | 'sector' | 'lens' | 'idea' | 'finds';
   sectors?: string[];
   lensIds?: string[];
   ideaText?: string;
+  /** Finds seed: the finds (rows of `finds`, captured) the run starts from, in order. Queueing fills in the most recent ones when none are given. */
+  findIds?: string[];
   marketId: string;
   ideaCount: number;
   advanceCount: number;

@@ -6,6 +6,7 @@ vi.mock('@/actions/finds', () => ({
   addFindsAction: vi.fn(async () => ({})),
   retryFindAction: vi.fn(async () => {}),
   deleteFindAction: vi.fn(async () => {}),
+  startRunFromFindsAction: vi.fn(async () => ({})),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
@@ -85,8 +86,14 @@ describe('FindsView', () => {
     expect(container.querySelector('a[href^="javascript"]')).toBeNull();
   });
 
-  it('keeps the run-from-finds button out until core supports the finds seed', () => {
+  it('offers "Start a run from these finds" once a find is captured, saying it uses the 10 most recent', () => {
     view([find()]);
+    expect(screen.getByRole('button', { name: /start a run from these finds/i })).toBeTruthy();
+    expect(screen.getByTestId('finds-run-form').textContent).toMatch(/10 most recent captured finds/);
+  });
+
+  it('has no run button while no find is captured', () => {
+    view([find({ status: 'queued', knowledgeItemId: null }), find({ id: '33333333-3333-4333-8333-333333333333', status: 'failed', knowledgeItemId: null })]);
     expect(screen.queryByRole('button', { name: /start a run from these finds/i })).toBeNull();
   });
 });
