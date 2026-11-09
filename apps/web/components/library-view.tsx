@@ -309,6 +309,7 @@ export function LibraryView({ query, rows, total, coverage, fetches, item, missi
         <h1>Library</h1>
         <HelpTip term="library" />
       </div>
+      <p><Link href="/library/finds">Finds: links you shared from social media or the web</Link></p>
       <Filters query={query} coverage={coverage} />
       {item ? <LibraryItem item={item} query={query} /> : null}
       <Results query={query} rows={rows} total={total} now={now} empty={!filtered && total === 0} />

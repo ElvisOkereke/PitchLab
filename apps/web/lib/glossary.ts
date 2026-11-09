@@ -34,7 +34,9 @@ export type GlossaryTerm =
   | 'payingBuyers'
   | 'revenueCeiling'
   | 'upside'
-  | 'ownerKeeps';
+  | 'ownerKeeps'
+  | 'finds'
+  | 'seenInTheWild';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -181,5 +183,13 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   ownerKeeps: {
     label: 'Owner keeps',
     text: 'The share of the cases you decided on the Board that you kept. A case counts as decided once it leaves New, and as kept in Validating, Pilot or Live. A case you move back from Killed counts as kept.',
+  },
+  finds: {
+    label: 'Finds',
+    text: 'Links you shared from social media or the web, by Telegram or by pasting them on the Finds page. PitchLab downloads each one, transcribes it, reads the on-screen text and adds it to your library.',
+  },
+  seenInTheWild: {
+    label: 'Seen in the wild',
+    text: 'Up to 6 recent finds shown to the idea generator as proof that people want something. It may not copy a find; it has to make the idea much better, serve the people doing it, move it to a new market or solve the harder problem underneath.',
   },
 };

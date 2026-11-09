@@ -34,6 +34,15 @@ describe('docs/glossary.md', () => {
     }
   });
 
+  it('defines the finds terms, each in at most 3 sentences', () => {
+    const labels = Object.values(GLOSSARY).map((g) => g.label);
+    for (const t of ['Finds', 'Seen in the wild']) {
+      expect(labels).toContain(t);
+      expect(headings).toContain(`### ${t}`);
+    }
+    for (const { label, text } of Object.values(GLOSSARY)) expect(text.split(/(?<=[.!?])\s+/).length, label).toBeLessThanOrEqual(3);
+  });
+
   it('covers the pipeline and validation terms', () => {
     const terms = ['harvest', 'signal', 'voice', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'claim', 'verify', 'score', 'validation pack', 'prospect', 'draft', 'landing page', 'run', 'notional spend'];
     const lower = headings.map((h) => h.toLowerCase());

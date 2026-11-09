@@ -10,7 +10,10 @@ import { benchmarkPasses } from '@bcg/core/db/schema';
 import { ensureExample, hideExample } from '@bcg/core/example/example';
 import { setSetting } from '@bcg/core/validation/settings';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { finds } from '@bcg/core/db/schema';
+import { addFinds } from '@bcg/core/finds/store';
 import { rejectItem } from '@bcg/core/library/store';
+import { eq } from 'drizzle-orm';
 import { createTestDb, seedLibraryItem, seedCase, seedFailedRun, seedGatedOutIdea, seedProspect, snapshotDb } from '../helpers/db';
 import { TEST_SECRET, resetRequest, useTestEnv } from '../helpers/next-mocks';
 
@@ -118,6 +121,19 @@ const SPECS: Record<string, Spec> = {
   },
   'library.ts#saveResearchSettingsAction': {
     seed: async () => ({ background: 'on', dailyCapUsd: '4' }),
+  },
+  'finds.ts#addFindsAction': {
+    seed: async () => ({ links: 'https://example.com/shared-post a note' }),
+  },
+  'finds.ts#retryFindAction': {
+    seed: async (db) => {
+      const { results } = await addFinds(db, [{ url: 'https://example.com/v', source: 'paste' }]);
+      await db.update(finds).set({ status: 'failed', error: 'x' }).where(eq(finds.id, results[0]!.id!));
+      return { id: results[0]!.id! };
+    },
+  },
+  'finds.ts#deleteFindAction': {
+    seed: async (db) => ({ id: (await addFinds(db, [{ url: 'https://example.com/v', source: 'paste' }])).results[0]!.id! }),
   },
   'tour.ts#saveTourStateAction': {
     seed: async () => ({}),

@@ -163,3 +163,9 @@ Whether the idea earns money for the buyer or only saves them time, risk or mone
 
 ### Owner keeps
 The share of the cases you decided on the Board that you kept. A case counts as decided once it leaves New, and as kept in Validating, Pilot or Live. A case you move back from Killed counts as kept.
+
+### Finds
+Links you shared from social media or the web, by Telegram or by pasting them on the Finds page. PitchLab downloads each one, transcribes it, reads the on-screen text and adds it to your library.
+
+### Seen in the wild
+Up to 6 recent finds shown to the idea generator as proof that people want something. It may not copy a find; it has to make the idea much better, serve the people doing it, move it to a new market or solve the harder problem underneath.
