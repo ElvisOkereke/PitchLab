@@ -7,15 +7,17 @@ export type { CaptureOptions, CaptureResult, CaptureStats, CaptureFallback } fro
 export { detectPlatform, isHttpUrl, type Platform } from './platform';
 export { sanitizeError, sanitizeText, toolPaths, TOOLS, type SpawnLike, type ToolEntry } from './tools';
 export { tesseractOcr, dedupeLines, type Ocr } from './ocr';
+export { captureBrowserDirs } from './paths';
+import { captureBrowserDirs } from './paths';
 
 /** The repo root (this file is packages/capture/src/index.ts). */
 export const REPO_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
 
-/** The standard locations: `.tools/`, `.data/capture-profile`, and a temp parent for work folders. */
+/** The standard locations: `.tools/`, the capture browser's profile `.data/capture/browser/Default`, and a temp parent for work folders. */
 export function defaultCaptureDirs(root = REPO_ROOT) {
   return {
     toolsDir: join(root, '.tools'),
-    profileDir: join(root, '.data', 'capture-profile'),
+    profileDir: captureBrowserDirs(root).profileDir,
     tmpDir: join(tmpdir(), 'bcg-capture'),
   };
 }

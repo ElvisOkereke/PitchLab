@@ -13,7 +13,7 @@ beforeEach(() => {
   resetCapturePacing();
   root = mkdtempSync(join(tmpdir(), 'bcg-capture-test-'));
   toolsDir = join(root, '.tools');
-  profileDir = join(root, '.data', 'capture-profile');
+  profileDir = join(root, '.data', 'capture', 'browser', 'Default');
   tmpDir = join(root, 'tmp');
   mkdirSync(tmpDir, { recursive: true });
 });
@@ -112,7 +112,7 @@ describe('captureLink', () => {
     const dl = [...yt, '--no-playlist', '--no-warnings', '--no-progress', '--max-filesize', '200M', '--ffmpeg-location', toolsDir];
     expect(calls[1].args).toEqual([...dl, '-f', 'bestaudio/best', '-o', join(work, 'audio.%(ext)s'), '--', url]);
     expect(calls[2].args).toEqual([...dl, '-f', 'bv*[height<=480]/b[height<=480]/worst', '-o', join(work, 'video.%(ext)s'), '--', url]);
-    const ff = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
+    const ff = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe'];
     expect(calls[3].args).toEqual([...ff, '-i', join(work, 'audio.m4a'), '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', join(work, 'audio.wav')]);
     expect(calls[4].args).toEqual(['-m', model(), '-f', join(work, 'audio.wav'), '-l', 'auto', '-oj', '-of', join(work, 'transcript'), '-np']);
     expect(calls[5].args).toEqual([...ff, '-i', join(work, 'video.mp4'), '-vf', 'fps=1/2', '-frames:v', '20', join(work, 'frame-%03d.png')]);
@@ -132,11 +132,11 @@ describe('captureLink', () => {
     expect(JSON.stringify(res)).not.toMatch(/someone/i);
   });
 
-  it('passes the capture-profile cookies only for Instagram and Facebook, and only to yt-dlp', async () => {
+  it('passes the capture browser cookies (its Default profile) only for Instagram, Facebook and TikTok, and only to yt-dlp', async () => {
     const cases: [string, boolean][] = [
       ['https://www.instagram.com/reel/abc/', true],
       ['https://www.facebook.com/reel/123', true],
-      ['https://www.tiktok.com/@a/video/1', false],
+      ['https://www.tiktok.com/@a/video/1', true],
       ['https://www.youtube.com/shorts/x', false],
       ['https://www.threads.net/@a/post/1', false],
     ];
@@ -149,7 +149,8 @@ describe('captureLink', () => {
         const has = c.args.includes('--cookies-from-browser');
         expect(has).toBe(cookies && c.command === ytdlp());
         if (has) {
-          expect(valueAfter(c.args, '--cookies-from-browser')).toBe(`chromium:${profileDir}`);
+          // yt-dlp takes the profile path's parent as the browser's user data dir (where Local State lives).
+          expect(valueAfter(c.args, '--cookies-from-browser')).toBe(`chromium:${join(root, '.data', 'capture', 'browser', 'Default')}`);
           expect(c.args.slice(-2)).toEqual(['--', url]);
         }
       }
@@ -220,7 +221,7 @@ describe('captureLink', () => {
     const res = await captureLink('https://www.instagram.com/reel/abc/', opts({ spawn: tools({ meta: { code: 1, stderr: leak } }).spawn, log }));
     expect(res.ok).toBe(false);
     const all = [!res.ok ? res.error : '', ...log.mock.calls.map((c) => String(c[0]))].join('\n');
-    for (const s of [profileDir, 'capture-profile', '.data', '99887766554433', 'qwerty', 'abcdef0123456789', root]) expect(all).not.toContain(s);
+    for (const s of [profileDir, 'browser', 'Default', '.data', '99887766554433', 'qwerty', 'abcdef0123456789', root]) expect(all).not.toContain(s);
 
     resetCapturePacing();
     const res2 = await captureLink(

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { finds } from '../../src/db/schema';
-import { TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, ensurePairingCode } from '../../src/dashboard/telegram';
+import {
+  MAX_GUESS_CHATS, MAX_PAIRING_GUESSES, TELEGRAM_GUESSES_KEY, TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, ensurePairingCode, resetTelegramPairing,
+} from '../../src/dashboard/telegram';
 import { addFinds } from '../../src/finds/store';
 import { messageParts, pollTelegram, sendTelegram } from '../../src/finds/telegram';
 import { getSetting, setSetting } from '../../src/validation/settings';
@@ -182,25 +184,55 @@ describe('pollTelegram', () => {
     }
   });
 
-  it('rotates the pairing code after 10 wrong /start <code> guesses (counted across passes), logging it once', async () => {
+  it("a stranger's 50 wrong guesses never change the code; the owner still pairs with the displayed code", async () => {
     const db = await testDb();
     const code = (await ensurePairingCode(db))!;
     const wrong = code.slice(0, 7) + (code[7] === 'A' ? 'B' : 'A');
-    const logs: string[] = [];
     const guesses = (from: number, count: number) => Array.from({ length: count }, (_, i) => update(from + i, { chatId: STRANGER, text: `/start ${wrong}` }));
-    await poll(db, [guesses(1, 5)], logs);
-    await poll(db, [[update(6, { chatId: STRANGER, text: '/start' }), ...guesses(7, 4)]], logs); // a bare /start is not a guess
+    await poll(db, [guesses(1, 25)]);
+    await poll(db, [guesses(26, 25)]);
     expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBe(code);
-    await poll(db, [guesses(11, 1)], logs);
-    const rotated = await getSetting(db, TELEGRAM_PAIRING_KEY);
-    expect(rotated).toMatch(/^[A-Z2-9]{8}$/);
-    expect(rotated).not.toBe(code);
-    expect(logs.filter((l) => l === 'telegram: pairing code rotated after too many wrong guesses')).toHaveLength(1);
-    // The old code no longer pairs; the new one does.
-    await poll(db, [[update(12, { chatId: STRANGER, text: `/start ${code}` })]], logs);
-    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBeNull();
-    await poll(db, [[update(13, { chatId: OWNER, text: `/start ${rotated}` })]], logs);
+    // Counted per chat, capped at the lockout (a locked chat is no longer counted).
+    expect(await getSetting(db, TELEGRAM_GUESSES_KEY)).toEqual({ [String(STRANGER)]: MAX_PAIRING_GUESSES });
+    await poll(db, [[update(60, { chatId: OWNER, text: `/start ${code}` })]]);
     expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(OWNER);
+    expect(await getSetting(db, TELEGRAM_GUESSES_KEY)).toBeNull();
+  });
+
+  it('a chat with 10 wrong guesses (across passes) is ignored from then on, even with the right code; a bare /start is not a guess', async () => {
+    const db = await testDb();
+    const code = (await ensurePairingCode(db))!;
+    const wrong = code.slice(0, 7) + (code[7] === 'A' ? 'B' : 'A');
+    const guesses = (from: number, count: number) => Array.from({ length: count }, (_, i) => update(from + i, { chatId: STRANGER, text: `/start ${wrong}` }));
+    await poll(db, [guesses(1, 5)]);
+    await poll(db, [[update(6, { chatId: STRANGER, text: '/start' }), ...guesses(7, 4)]]);
+    expect(await getSetting(db, TELEGRAM_GUESSES_KEY)).toEqual({ [String(STRANGER)]: 9 });
+    await poll(db, [guesses(11, 1)]);
+    const out = await poll(db, [[update(12, { chatId: STRANGER, text: `/start ${code}` })]]);
+    expect(out.r).toMatchObject({ received: 1, ignored: 1 });
+    expect(replies(out.calls)).toEqual([]);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBeNull();
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBe(code);
+    // gen telegram reset clears the counters (and makes a new code).
+    const fresh = await resetTelegramPairing(db);
+    expect(await getSetting(db, TELEGRAM_GUESSES_KEY)).toBeNull();
+    await poll(db, [[update(13, { chatId: STRANGER, text: `/start ${fresh}` })]]);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(STRANGER);
+  });
+
+  it('keeps wrong-guess counters for at most 200 chats, dropping the lowest counts first (locked chats are kept)', async () => {
+    const db = await testDb();
+    const code = (await ensurePairingCode(db))!;
+    const wrong = code.slice(0, 7) + (code[7] === 'A' ? 'B' : 'A');
+    const seeded: Record<string, number> = { [String(STRANGER)]: MAX_PAIRING_GUESSES };
+    for (let i = 0; i < MAX_GUESS_CHATS - 1; i++) seeded[String(900_000 + i)] = 1;
+    await setSetting(db, TELEGRAM_GUESSES_KEY, seeded);
+    await poll(db, [[update(1, { chatId: 5555, text: `/start ${wrong}` })]]);
+    const after = (await getSetting(db, TELEGRAM_GUESSES_KEY)) as Record<string, number>;
+    expect(Object.keys(after)).toHaveLength(MAX_GUESS_CHATS);
+    expect(after['5555']).toBe(1);
+    expect(after[String(STRANGER)]).toBe(MAX_PAIRING_GUESSES);
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBe(code);
   });
 
   it('skips an update that fails 3 times in a row (offset advanced, logged once) and carries on', async () => {

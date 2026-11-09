@@ -53,6 +53,7 @@ const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
 
 /** Pairing state shown under the Telegram row once the worker has the token. */
 function TelegramPairing({ telegram }: { telegram: TelegramStatus }) {
+  if (telegram.pinned) return <span className="muted small"> pinned by TELEGRAM_OWNER_CHAT_ID; the pairing code isn&apos;t used</span>;
   const state = telegram.paired ? (
     <span className="muted small"> paired with your chat</span>
   ) : telegram.pairingCode ? (

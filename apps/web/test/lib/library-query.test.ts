@@ -16,6 +16,9 @@ describe('parseLibraryQuery', () => {
 
   it('uses the first of repeated values and caps the search text', () => {
     expect(parseLibraryQuery({ kind: ['problem', 'pricing'] }).kind).toBe('problem');
+    // Finds can be filtered like any other kind.
+    expect(parseLibraryQuery({ kind: 'find' }).kind).toBe('find');
+    expect(libraryFilter(parseLibraryQuery({ kind: 'find' })).kinds).toEqual(['find']);
     expect(parseLibraryQuery({ q: 'x'.repeat(500) }).q).toHaveLength(100);
   });
 });

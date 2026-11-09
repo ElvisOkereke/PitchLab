@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { pageParam } from './case-query';
 
 // Allow-lists for the query string (plain literals; the values mirror the core enums).
-export const LIBRARY_KINDS = ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market'] as const;
+export const LIBRARY_KINDS = ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market', 'find'] as const;
 export const LIBRARY_AUDIENCES = ['business', 'consumer', 'both'] as const;
 export const LIBRARY_VOICES = ['operator', 'neutral', 'vendor'] as const;
 export const LIBRARY_STATUSES = ['active', 'rejected', 'all'] as const;

@@ -148,6 +148,8 @@ describe('LibraryView entry detail', () => {
         { ...base, id: 'a2', url: 'https://b.example/p', via: 'browser' as const },
         { ...base, id: 'a3', url: 'https://www.youtube.com/watch?v=abc', sourceType: 'youtube', expiresAt: new Date('2026-11-19T12:00:00Z') },
         { ...base, id: 'a4', url: 'https://c.example/p' },
+        { ...base, id: 'a5', url: 'https://d.example/p', via: 'real_browser' as const },
+        { ...base, id: 'a6', url: 'https://e.example/p', via: 'scraper' as const },
       ],
     };
     const { getByTestId } = render(<LibraryView {...props({ item: withSources, query: { q: '', status: 'active', page: 1, item: ID } })} />);
@@ -155,7 +157,9 @@ describe('LibraryView entry detail', () => {
     expect(lis[0]).toMatch(/from an archived copy \(.*2025.*\)/);
     expect(lis[1]).toContain('rendered in the local browser');
     expect(lis[2]).toMatch(/expires on .*2026/);
-    expect(lis[3]).not.toMatch(/archived|local browser|expires/);
+    expect(lis[3]).not.toMatch(/archived|local browser|expires|through the/);
+    expect(lis[4]).toContain('through the real browser');
+    expect(lis[5]).toContain('through the scraping service');
   });
 
   it('renders trend, rule change and market facts as readable text', () => {
@@ -264,6 +268,12 @@ describe('LibraryView missions', () => {
     cleanup();
     const some = render(<LibraryView {...props({ typicalCost: 0.5 })} />);
     expect(some.getByTestId('library-missions').textContent).toContain('Typical cost of recent missions: $0.50');
+  });
+
+  it('the kind filter offers finds ("Seen in the wild")', () => {
+    const { container } = render(<LibraryView {...props()} />);
+    const opts = [...container.querySelectorAll<HTMLOptionElement>('#lib-kind option')].map((o) => [o.value, o.textContent]);
+    expect(opts).toContainEqual(['find', 'Seen in the wild']);
   });
 
   it('the form has topic, one checkbox per kind, countries, audience and budget', () => {

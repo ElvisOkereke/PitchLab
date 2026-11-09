@@ -86,7 +86,7 @@ export function makeReadPage(ctx: ReadPageCtx): (url: string) => Promise<{ capti
 export type OpenCaptureDeps = {
   db: Db;
   log: (m: string) => void;
-  /** The repo root: tools in `.tools`, the profile in `.data/capture-profile`, work folders under `.data/capture-tmp`. */
+  /** The repo root: tools in `.tools`, the capture browser profile in `.data/capture/browser/Default`, work folders under `.data/capture-tmp`. */
   root: string;
   importer?: () => Promise<CaptureModule>;
   startProxy?: typeof startGuardedProxy;
@@ -139,7 +139,8 @@ export async function openCapture(deps: OpenCaptureDeps): Promise<OpenedCapture 
   // Anything that throws from here on must not leave the proxy listening.
   try {
     const toolsDir = join(deps.root, '.tools');
-    const profileDir = join(deps.root, '.data', 'capture-profile');
+    // The capture browser's Default profile: yt-dlp takes its parent (.data/capture/browser, with Local State) as the browser folder.
+    const profileDir = join(deps.root, '.data', 'capture', 'browser', 'Default');
     const tmpDir = join(deps.root, '.data', 'capture-tmp');
     const exists = deps.exists ?? existsSync;
     try {

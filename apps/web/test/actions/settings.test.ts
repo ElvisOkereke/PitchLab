@@ -63,6 +63,14 @@ describe('resetTelegramPairingAction', () => {
     expect(await getSetting(state.db, 'telegram.pairingCode')).toMatch(/^[A-Z2-9]{8}$/);
     expect(request.revalidated).toEqual(expect.arrayContaining(['/settings', '/library/finds']));
   });
+
+  it('does nothing while TELEGRAM_OWNER_CHAT_ID pins the owner (the code would not be used)', async () => {
+    await setSetting(state.db, 'telegram.ownerChatId', 1111);
+    await setSetting(state.db, 'telegram.pinnedByEnv', true);
+    await resetTelegramPairingAction();
+    expect(await getSetting(state.db, 'telegram.ownerChatId')).toBe(1111);
+    expect(await getSetting(state.db, 'telegram.pairingCode')).toBeNull();
+  });
 });
 
 describe('saveHoldoutAction', () => {

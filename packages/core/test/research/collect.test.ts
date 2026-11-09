@@ -281,6 +281,45 @@ describe('collectPage escalation (direct, real browser, scraping service, archiv
     expect(await collectPage(URL_, noChallenge.ctx)).toEqual({ failed: 'http_403' });
   });
 
+  it('a headless render that comes back as a challenge is not kept: the page escalates to the real browser', async () => {
+    const browser: BrowserRenderer = { kind: 'headless', render: vi.fn(async () => ({ html: CHALLENGE, finalUrl: URL_ })) };
+    const realBrowser = real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 }));
+    const s = await setup({ direct: okPage('tiny'), browser, realBrowser });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'real_browser', title: 'R' });
+    expect(await s.rows()).toEqual(['browser:challenge', 'direct:thin_text', 'real_browser:ok']);
+  });
+
+  it('a headless challenge with every later step failing keeps the thin direct text, never the challenge page', async () => {
+    const browser: BrowserRenderer = { kind: 'headless', render: vi.fn(async () => ({ html: CHALLENGE, finalUrl: URL_ })) };
+    const s = await setup({ direct: okPage('tiny'), browser, archive: { snapshot: vi.fn(async () => null) } });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'direct', text: 'tiny' });
+    expect(await s.rows()).toEqual(['archive:http_404', 'browser:challenge', 'direct:thin_text', 'scraper:skipped']);
+  });
+
+  it.each([[429, 'http_4xx'], [503, 'http_5xx']] as const)('a direct %i escalates like a 403: real browser, scraper, archive', async (status, outcome) => {
+    const ok = await setup({ direct: bad(status), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 })) });
+    expect(await collectPage(URL_, ok.ctx)).toMatchObject({ via: 'real_browser' });
+    expect(await ok.rows()).toEqual([`direct:${outcome}`, 'real_browser:ok']);
+    const order: string[] = [];
+    const s = await setup({
+      direct: bad(status),
+      realBrowser: real(async () => { order.push('browser'); return null; }),
+      scraper: scraperOf(async () => { order.push('scraper'); return bad(500); }),
+      archive: { snapshot: vi.fn(async () => { order.push('archive'); return SNAP; }) },
+    });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'archive' });
+    expect(order).toEqual(['browser', 'scraper', 'archive']);
+  });
+
+  it('a direct 500 is not escalated to the browser or the scraper (archive only)', async () => {
+    const browser = real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 }));
+    const scraper = scraperOf(async () => okPage());
+    const s = await setup({ direct: bad(500), realBrowser: browser, scraper });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'archive' });
+    expect(browser.render).not.toHaveBeenCalled();
+    expect(scraper.scrape).not.toHaveBeenCalled();
+  });
+
   it('a 404 is not escalated to the browser or the scraper', async () => {
     const browser = real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 }));
     const scraper = scraperOf(async () => okPage());

@@ -66,8 +66,10 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 - **Telegram bot:** optional, for sharing links from your phone. Once `TELEGRAM_BOT_TOKEN` is in `.env` and the worker
   restarted, the **Telegram bot** row shows a pairing code while the bot has no owner: send `/start <code>` to your bot
   in Telegram. Only that chat becomes the owner; anyone else who messages the bot is ignored and nothing they send is
-  kept. After 10 wrong codes the code changes on its own (look here for the new one). **Reset pairing** forgets the
-  paired chat and makes a new code, for example after you change phones.
+  kept. A chat that sends 10 wrong codes is ignored from then on, even with the right code; the code itself never
+  changes because of wrong tries. **Reset pairing** (or `gen telegram reset`) forgets the paired chat, clears those
+  lockouts and makes a new code, for example after you change phones. When `TELEGRAM_OWNER_CHAT_ID` is set in `.env`
+  the owner is pinned, the code isn't used and Reset pairing is hidden.
 - **Capture tools (for finds):** installed or not installed. Finds wait in the queue until you run
   `npm run capture:setup` (and restart the worker).
 - **Feeds:** the list under Connections shows each automatic feed (Reddit, Bluesky, Hacker News, arXiv, Hugging Face,
@@ -148,8 +150,8 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
   queued, capturing, done or failed, with its views, likes and length, your note, and a link to the library entry. A
   link you already shared is reported as "already in your finds" ("Already captured" in Telegram) and not added twice.
 - **If one fails:** the error says why (a private post, a login wall, a page with no video). Press **Retry** to try it
-  again, or **Delete** to remove it (its library entry stays). Instagram needs the throwaway account logged in once
-  with `npm run capture:login`.
+  again, or **Delete** to remove it (its library entry stays). Instagram (and some TikToks) need the throwaway accounts
+  logged in once with `npm run capture:login`; close that window before the worker captures.
 - **Telegram hint:** if the Finds page says your bot is not paired yet, send it the `/start <code>` line it shows.
 
 ### Pick a seed

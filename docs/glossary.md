@@ -174,7 +174,7 @@ Up to 6 recent finds shown to the idea generator as proof that people want somet
 Sources the worker reads on its own every 6 hours: Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub trending, newsletters and launch feeds, and YouTube Shorts. What they find goes into the library, for at most $2 a day. Settings shows each source's last run and errors.
 
 ### Pairing code
-A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and the code changes after 10 wrong tries. Reset pairing makes a new one.
+A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and a chat that sends 10 wrong codes is ignored from then on. Reset pairing makes a new one.
 
 ### Real browser
 A visible Chromium window the worker uses only for sites that block it or show a "verify you are human" page. It keeps its cookies between visits and goes slowly, one page at a time. It never fakes its identity or solves puzzles.

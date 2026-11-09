@@ -55,6 +55,8 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
               {s.sourceType} · {s.publishedAt ? `published ${formatDateTime(s.publishedAt)}` : `fetched ${formatDateTime(s.fetchedAt)}`}
               {s.via === 'archive' ? ` · from an archived copy (${formatDate(s.snapshotAt)})` : ''}
               {s.via === 'browser' ? ' · rendered in the local browser' : ''}
+              {s.via === 'real_browser' ? ' · through the real browser' : ''}
+              {s.via === 'scraper' ? ' · through the scraping service' : ''}
               {s.expiresAt ? ` · expires on ${formatDate(s.expiresAt)}` : ''}
             </span>
           </li>

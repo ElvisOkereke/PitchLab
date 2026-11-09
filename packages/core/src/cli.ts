@@ -50,7 +50,7 @@ import { addFinds, FINDS_SEED_MAX, listFinds, resolveFindsSeed } from './finds/s
 import { captureToolsPresent, openCapture } from './finds/capture';
 import { pollTelegram, sendTelegram } from './finds/telegram';
 import { createFindsExecutor, runQueuedFinds, type RunFindsDeps } from './finds/run';
-import { TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, resetTelegramPairing } from './dashboard/telegram';
+import { TELEGRAM_OWNER_KEY, ensurePairingCode, markTelegramPinned, pinTelegramOwner, resetTelegramPairing } from './dashboard/telegram';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -224,6 +224,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     const telegramToken = env.TELEGRAM_BOT_TOKEN;
     if (telegramToken) {
       // TELEGRAM_OWNER_CHAT_ID pins the owner; otherwise the bot pairs only with `/start <code>` (shown once per start).
+      await markTelegramPinned(db, Boolean(env.TELEGRAM_OWNER_CHAT_ID));
       if (env.TELEGRAM_OWNER_CHAT_ID) await pinTelegramOwner(db, env.TELEGRAM_OWNER_CHAT_ID);
       else {
         const code = await ensurePairingCode(db);

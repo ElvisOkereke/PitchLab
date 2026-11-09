@@ -202,7 +202,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   pairingCode: {
     label: 'Pairing code',
-    text: 'A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and the code changes after 10 wrong tries. Reset pairing makes a new one.',
+    text: 'A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and a chat that sends 10 wrong codes is ignored from then on. Reset pairing makes a new one.',
   },
   realBrowser: {
     label: 'Real browser',

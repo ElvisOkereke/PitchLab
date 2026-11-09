@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { WORKER_STATUS_KEY } from '../../src/dashboard/settings';
 import {
-  TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, ensurePairingCode, pinTelegramOwner, resetTelegramPairing, telegramStatus,
+  TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, ensurePairingCode, markTelegramPinned, pinTelegramOwner, resetTelegramPairing, telegramStatus,
 } from '../../src/dashboard/telegram';
 import { getSetting, setSetting } from '../../src/validation/settings';
 import { testDb } from '../helpers/db';
@@ -43,11 +43,19 @@ describe('Telegram pairing', () => {
 
   it('telegramStatus reports connected (worker has the token), paired, and the code only while unpaired', async () => {
     const db = await testDb();
-    expect(await telegramStatus(db)).toEqual({ connected: false, paired: false, pairingCode: null });
+    expect(await telegramStatus(db)).toEqual({ connected: false, paired: false, pairingCode: null, pinned: false });
     await setSetting(db, WORKER_STATUS_KEY, heartbeat(true));
     const code = await ensurePairingCode(db);
-    expect(await telegramStatus(db)).toEqual({ connected: true, paired: false, pairingCode: code });
+    expect(await telegramStatus(db)).toEqual({ connected: true, paired: false, pairingCode: code, pinned: false });
     await setSetting(db, TELEGRAM_OWNER_KEY, 1234);
-    expect(await telegramStatus(db)).toEqual({ connected: true, paired: true, pairingCode: null });
+    expect(await telegramStatus(db)).toEqual({ connected: true, paired: true, pairingCode: null, pinned: false });
+  });
+
+  it('telegramStatus says when TELEGRAM_OWNER_CHAT_ID pins the owner (marked by the worker at start, cleared when unset)', async () => {
+    const db = await testDb();
+    await markTelegramPinned(db, true);
+    expect((await telegramStatus(db)).pinned).toBe(true);
+    await markTelegramPinned(db, false);
+    expect((await telegramStatus(db)).pinned).toBe(false);
   });
 });

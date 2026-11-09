@@ -132,6 +132,14 @@ describe('SettingsView', () => {
     expect(off.getByTestId('conn-capture').textContent).toContain('npm run capture:setup');
   });
 
+  it('Telegram pinned by TELEGRAM_OWNER_CHAT_ID: says so and hides Reset pairing', () => {
+    const w = data().worker!;
+    const pinned = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, telegram: true } }, telegram: { connected: true, paired: true, pairingCode: null, pinned: true } })} />);
+    const t = pinned.getByTestId('conn-telegram').textContent!;
+    expect(t).toContain("pinned by TELEGRAM_OWNER_CHAT_ID; the pairing code isn't used");
+    expect(pinned.queryByRole('button', { name: 'Reset pairing' })).toBeNull();
+  });
+
   it('Local browser: installed, or not installed with the install command and where to run it', () => {
     const w = data().worker!;
     const on = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, browser: true } } })} />);

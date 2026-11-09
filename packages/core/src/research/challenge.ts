@@ -54,7 +54,7 @@ function titleOf(s: string): string {
 function openTag(s: string, tag: string, from: number): number {
   for (let i = s.indexOf(`<${tag}`, from); i >= 0; i = s.indexOf(`<${tag}`, i + 1)) {
     const next = s.charAt(i + tag.length + 1);
-    if (next === '>' || next === '/' || next === '' || /s/.test(next)) return i;
+    if (next === '>' || next === '/' || next === '' || /\s/.test(next)) return i;
   }
   return -1;
 }

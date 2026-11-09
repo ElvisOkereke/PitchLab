@@ -1,11 +1,13 @@
 // npm run capture:login
-// Opens a headed Chromium on .data/capture-profile with Instagram and TikTok tabs so the owner can log in to the
-// throwaway accounts once. yt-dlp later reads that profile's cookies (Instagram and Facebook only). Uses the optional
+// Opens a headed Chromium on the user data dir .data/capture/browser with Instagram and TikTok tabs so the owner can log
+// in to the throwaway accounts once. yt-dlp later reads the cookies of its Default profile (Instagram, Facebook and
+// TikTok only), passed as .data/capture/browser/Default so yt-dlp finds Local State in the parent. Uses the optional
 // playwright-core; when it or its Chromium is missing, prints how to install it. Close the window when done.
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { captureBrowserDirs } from '../src/paths';
 
 interface PageLike {
   goto(url: string): Promise<unknown>;
@@ -25,7 +27,8 @@ const INSTALL_HINT = 'Install the browser with `npx playwright-core install chro
 export const LOGIN_URLS = ['https://www.instagram.com/', 'https://www.tiktok.com/'];
 
 export interface LoginOptions {
-  profileDir: string;
+  /** Chromium's persistent user data dir (`.data/capture/browser`); the logins land in its `Default` profile. */
+  userDataDir: string;
   importer?: () => Promise<unknown>;
   log?: (line: string) => void;
 }
@@ -59,10 +62,10 @@ export async function runLogin(opts: LoginOptions): Promise<boolean> {
     log(`Chromium for playwright-core is not installed. ${INSTALL_HINT}`);
     return false;
   }
-  await mkdir(opts.profileDir, { recursive: true });
+  await mkdir(opts.userDataDir, { recursive: true });
   let context: ContextLike;
   try {
-    context = await chromium.launchPersistentContext(opts.profileDir, { headless: false, viewport: null });
+    context = await chromium.launchPersistentContext(opts.userDataDir, { headless: false, viewport: null });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const locked = /ProcessSingleton|already in use|lock/i.test(msg);
@@ -86,7 +89,7 @@ export async function runLogin(opts: LoginOptions): Promise<boolean> {
 
 async function main() {
   const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
-  const ok = await runLogin({ profileDir: join(root, '.data', 'capture-profile') });
+  const ok = await runLogin({ userDataDir: captureBrowserDirs(root).userDataDir });
   process.exit(ok ? 0 : 1);
 }
 

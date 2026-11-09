@@ -21,6 +21,8 @@ export type BrowserRenderer = {
 
 /** Statuses a challenge interstitial is served with: a page under one counts only if the first load was a challenge. */
 const CHALLENGE_STATUSES: ReadonlySet<number> = new Set([403, 429, 503]);
+/** Direct statuses that escalate like a block (real browser, scraper, archive): bot walls answer with these. */
+const BLOCKED_STATUSES: ReadonlySet<number> = CHALLENGE_STATUSES;
 
 /** The logged outcome for a browser page with an error status. */
 const statusOutcome = (status: number): FetchOutcome =>
@@ -65,8 +67,8 @@ const len = (s: string) => s.trim().length;
 type Page = { text: string; title: string; finalUrl: string; via: FetchVia };
 
 /**
- * One web page. Order: direct guarded fetch; thin text goes to the headless renderer (as before); a 403 or a challenge
- * page goes to the real headed browser, then (still blocked) the scraping service (when a key is set and the monthly
+ * One web page. Order: direct guarded fetch; thin text goes to the headless renderer (as before); a 403, 429 or 503,
+ * or a challenge page (from the direct fetch or the headless render, which is then never kept) goes to the real headed browser, then (still blocked) the scraping service (when a key is set and the monthly
  * budget remains), then the Internet Archive, which also takes pages that are gone. Thin text alone never opens the
  * real browser or spends a scraper page. A real-browser page with an error status is content only when the status is
  * a challenge status (403, 429, 503) and its first load was a challenge that then cleared. robots.txt is checked unless `respectRobots` is false; never-fetch and banned hosts are refused first, always.
@@ -87,7 +89,7 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
   }
   const direct = await ctx.fetchPage(url, { userAgent: USER_AGENT, blockHosts: BANNED_DOMAINS });
 
-  /** Why the page is still blocked (403 or challenge), or null when it is not. */
+  /** Why the page is still blocked (403, 429, 503 or a challenge), or null when it is not. */
   let blocked: FetchOutcome | null = null;
   /** The best readable result so far (thin text). */
   let best: Page | null = null;
@@ -119,7 +121,7 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
   } else {
     const outcome = classifyFetch(direct);
     await record(url, outcome, 'direct', direct.status || undefined);
-    if (outcome === 'http_403') blocked = outcome;
+    if (direct.reason === 'http_error' && BLOCKED_STATUSES.has(direct.status)) blocked = outcome;
     else if (ARCHIVE_OUTCOMES.has(outcome)) return fromArchive(url, outcome, ctx, allows, record);
     else return { failed: outcome };
   }
@@ -130,15 +132,19 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
       const via: FetchVia = ctx.browser.kind === 'real' ? 'real_browser' : 'browser';
       const r = await renderSafely(ctx.browser, url, renderFrom, ctx, allows);
       if (!r) await record(renderFrom, 'network', via); // tried: declined, dropped or failed
-      else {
+      else if (looksLikeChallenge(r.html)) {
+        // The rendered page is a bot wall: never kept; the page escalates like a blocked one.
+        await record(r.finalUrl, 'challenge', via);
+        blocked = 'challenge';
+      } else {
         await record(r.finalUrl, len(r.text) < THIN_TEXT_CHARS ? 'thin_text' : 'ok', via);
         if (!best || len(r.text) > len(best.text)) return { text: r.text, title: r.title, finalUrl: r.finalUrl, via };
       }
     }
-    return best ?? { failed: 'thin_text' };
+    if (!blocked) return best ?? { failed: 'thin_text' };
   }
 
-  // 2b. Blocked (403 or challenge): the real browser.
+  // 2b. Blocked (403, 429, 503, or a challenge from the direct fetch or the headless render): the real browser.
   if (ctx.realBrowser) {
     const via: FetchVia = ctx.realBrowser.kind === 'headless' ? 'browser' : 'real_browser';
     const r = await renderSafely(ctx.realBrowser, url, renderFrom, ctx, allows);
@@ -167,8 +173,9 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
     return { text: scraped.text, title: scraped.title, finalUrl: url, via: 'scraper' };
   } else await record(url, scraped.ok ? 'thin_text' : classifyFetch(scraped), 'scraper', scraped.status || undefined);
 
-  // 4. The archive.
-  return fromArchive(url, blocked, ctx, allows, record);
+  // 4. The archive. When it has nothing either, thin direct text (a page whose headless render was a challenge) still counts.
+  const archived = await fromArchive(url, blocked, ctx, allows, record);
+  return 'failed' in archived && best ? best : archived;
 }
 
 async function fromArchive(

@@ -59,7 +59,7 @@ describe('openCapture', () => {
     await c!.capture('https://www.tiktok.com/@a/video/1');
     const opts = (captureLink.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
     expect(opts).toMatchObject({
-      toolsDir: join('R:/repo', '.tools'), profileDir: join('R:/repo', '.data', 'capture-profile'), tmpDir: join('R:/repo', '.data', 'capture-tmp'), proxyUrl: 'http://127.0.0.1:4567',
+      toolsDir: join('R:/repo', '.tools'), profileDir: join('R:/repo', '.data', 'capture', 'browser', 'Default'), tmpDir: join('R:/repo', '.data', 'capture-tmp'), proxyUrl: 'http://127.0.0.1:4567',
     });
     expect(typeof opts.checkUrl).toBe('function');
     expect(typeof opts.readPage).toBe('function');

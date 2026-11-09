@@ -52,6 +52,20 @@ describe('looksLikeChallenge', () => {
     expect(looksLikeChallenge(html)).toBe(false);
   });
 
+  it('strips script, style, noscript and head blocks that carry attributes before measuring readable text', () => {
+    const json = JSON.stringify({ props: { pageProps: { items: Array.from({ length: 80 }, (_, i) => ({ id: i, name: `item ${i}` })) } } });
+    const thin = `<html><head lang="en"><title>example.com</title><meta name="x" content="${'y'.repeat(900)}"></head><body>`
+      + `<script id="__NEXT_DATA__" type="application/json">${json}</script>`
+      + `<style media="screen">${'.a{color:red}'.repeat(100)}</style><noscript data-x="1">${'Turn on JavaScript. '.repeat(60)}</noscript>`
+      + '<p>Please verify you are human.</p></body></html>';
+    expect(json.length).toBeGreaterThan(THIN_TEXT_CHARS);
+    expect(looksLikeChallenge(thin)).toBe(true);
+    const article = `<html><head lang="en"><title>Guide</title><script type="text/javascript">window._pxAppId="PXabc";</script></head><body>`
+      + `<script id="__NEXT_DATA__" type="application/json">${json}</script>`
+      + `<article>${'<p>Owners told us invoicing eats a full day every week. </p>'.repeat(60)}</article></body></html>`;
+    expect(looksLikeChallenge(article)).toBe(false);
+  });
+
   it('weak markers count only under the thin-text threshold collectPage uses (THIN_TEXT_CHARS)', () => {
     const page = (chars: number) => `<html><head><title>Security check</title></head><body><p>${'x'.repeat(chars)}</p></body></html>`;
     expect(looksLikeChallenge(page(THIN_TEXT_CHARS - 1))).toBe(true);

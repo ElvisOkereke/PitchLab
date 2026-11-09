@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { Db } from '../db/client';
 import {
-  TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, readPairingCode, recordWrongPairingGuess,
+  TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, ensurePairingCode, pairingLockedOut, pinTelegramOwner, readPairingCode, recordWrongPairingGuess,
 } from '../dashboard/telegram';
 import { request, SourceError } from '../research/http';
 import { scrubSecrets } from '../tools/scrub';
@@ -12,7 +12,8 @@ import { addFinds as defaultAddFinds } from './store';
  * The private Telegram bot (worker-side, outbound only): getUpdates on api.telegram.org, never a webhook. The owner is
  * bound only by `/start <code>` with the one-time pairing code (setting telegram.pairingCode, shown in Settings and the
  * worker log; compared in constant time and cleared once used), or pinned by TELEGRAM_OWNER_CHAT_ID. Every other chat,
- * a bare /start and a wrong code are ignored silently, and nothing from them is stored. Links in the owner's messages become finds; the rest of the text is the note. Replies are plain
+ * a bare /start and a wrong code are ignored silently, and nothing from them is stored; a chat with 10 wrong codes is
+ * ignored from then on (per chat, setting telegram.wrongGuesses; the shared code is never rotated by guesses). Links in the owner's messages become finds; the rest of the text is the note. Replies are plain
  * text (no parse mode).
  *
  * The token appears only in the request url path. Request errors never carry the url (http.ts), and every message this
@@ -187,11 +188,16 @@ export async function pollTelegram(deps: TelegramDeps): Promise<{ received: numb
     const start = /^\/start(?:@\w+)?(?:\s+(\S+))?\s*$/i.exec(text);
     const isStart = /^\/start(?:@\w+)?(?:\s|$)/i.test(text);
     if (unpaired()) {
+      // A chat that used up its wrong guesses is ignored from then on, even with the right code (gen telegram reset clears it).
+      if (await pairingLockedOut(db, chatId)) {
+        out.ignored++;
+        return;
+      }
       const code = await readPairingCode(db);
       if (!start?.[1] || !code || !codeMatches(start[1], code)) {
         out.ignored++; // nobody owns the bot yet: only /start with the right code counts, and nothing is said back
-        // A wrong code counts toward the guess cap; at the cap the code is replaced (shown again in Settings).
-        if (start?.[1] && code && (await recordWrongPairingGuess(db))) deps.log('telegram: pairing code rotated after too many wrong guesses');
+        // A wrong code counts against this chat only; the shared code never changes because of guesses.
+        if (start?.[1] && code && (await recordWrongPairingGuess(db, chatId))) deps.log('telegram: a chat was locked out after too many wrong pairing codes');
         return;
       }
       await pinTelegramOwner(db, chatId);

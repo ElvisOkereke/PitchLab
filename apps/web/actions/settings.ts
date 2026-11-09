@@ -2,7 +2,7 @@
 
 import { HOLDOUT_REFUSAL, holdoutSet } from '@bcg/core/audit/holdout';
 import { EDITABLE_SETTING_KEYS, SettingsInputSchema, saveSettings, type EditableSettingKey } from '@bcg/core/dashboard/settings';
-import { resetTelegramPairing } from '@bcg/core/dashboard/telegram';
+import { resetTelegramPairing, telegramPinned } from '@bcg/core/dashboard/telegram';
 import { revalidatePath } from 'next/cache';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
@@ -34,7 +34,10 @@ export async function saveSettingsAction(_prev: FormState, fd: FormData): Promis
 /** Settings → Connections "Reset pairing": forgets the Telegram bot's owner and makes a new pairing code. */
 export async function resetTelegramPairingAction(): Promise<void> {
   await requireOwnerAction();
-  await resetTelegramPairing(getDb());
+  const db = getDb();
+  // TELEGRAM_OWNER_CHAT_ID pins the owner on the worker: a new code would never be used, so nothing is reset.
+  if (await telegramPinned(db)) return;
+  await resetTelegramPairing(db);
   revalidatePath('/settings');
   revalidatePath('/library/finds');
 }

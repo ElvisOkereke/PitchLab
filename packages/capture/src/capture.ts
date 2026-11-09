@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { dedupeLines, tesseractOcr, type Ocr } from './ocr';
 import { detectPlatform, isHttpUrl, type Platform } from './platform';
 import { defaultSpawn, runTool, sanitizeError, sanitizeText, toolPaths, type SpawnLike, type ToolRun } from './tools';
@@ -11,7 +11,8 @@ export const TOOL_TIMEOUT_MS = 180_000;
 export const PACED_GAP_MS = 20_000;
 export const MAX_FRAMES = 20;
 const PACED: Platform[] = ['instagram', 'tiktok'];
-const COOKIE_PLATFORMS: Platform[] = ['instagram', 'facebook'];
+/** Platforms whose links may need a login: yt-dlp reads the capture browser's cookies for them (throwaway accounts). */
+const COOKIE_PLATFORMS: Platform[] = ['instagram', 'facebook', 'tiktok'];
 const MAX_CAPTION = 20_000;
 const MAX_TRANSCRIPT = 50_000;
 const MAX_SCREEN_TEXT = 10_000;
@@ -48,7 +49,10 @@ export type CaptureResult =
 export interface CaptureOptions {
   /** Where `npm run capture:setup` put the tools (`.tools/`). */
   toolsDir: string;
-  /** The capture browser profile (`.data/capture-profile`); the only cookie source. */
+  /**
+   * The capture browser's profile folder (`.data/capture/browser/Default`); the only cookie source. yt-dlp takes its
+   * parent (the user data dir, holding `Local State`) as the browser folder.
+   */
   profileDir: string;
   /** Parent of the per-capture work folder, which is always deleted afterwards. */
   tmpDir: string;
@@ -234,7 +238,8 @@ function scrubResult(res: CaptureResult, handles: string[]): CaptureResult {
 }
 
 async function capture(url: string, platform: Platform, opts: CaptureOptions, handles: string[]): Promise<CaptureResult> {
-  const dirs = { profileDir: opts.profileDir, tmpDir: opts.tmpDir, toolsDir: opts.toolsDir };
+  // The whole capture browser folder (the profile's parent) is scrubbed from tool output, not only the profile.
+  const dirs = { profileDir: dirname(opts.profileDir), tmpDir: opts.tmpDir, toolsDir: opts.toolsDir };
   const log = (m: string) => opts.log?.(scrubHandles(sanitizeText(m, dirs), handles));
   // Never read yt-dlp config files or plugins from this machine (a config could add options such as --exec).
   const yt = ['--ignore-config', '--no-plugin-dirs', ...(opts.proxyUrl ? ['--proxy', opts.proxyUrl] : [])];
@@ -302,7 +307,8 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions, ha
     const videoErr = failure('yt-dlp (video)', videoRun);
     if (videoErr) warn(videoErr);
 
-    const ff = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y'];
+    // Inputs are only the local files yt-dlp just wrote: no network, concat or other protocols for a crafted media file.
+    const ff = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-protocol_whitelist', 'file,pipe'];
     let transcript = '';
     let language: string | undefined;
     const audio = await findFile('audio');
