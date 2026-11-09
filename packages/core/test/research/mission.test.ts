@@ -195,7 +195,7 @@ describe('runMission', () => {
     // The page was fetched (after robots.txt) with the research identity.
     const pageFetch = page.calls.find((c) => c.url === PAGE_URL)!;
     expect(pageFetch.opts.userAgent).toBe(USER_AGENT);
-    expect(pageFetch.opts.blockHosts).toEqual(expect.arrayContaining(['reddit.com', 'g2.com']));
+    expect(pageFetch.opts.blockHosts).toEqual(expect.arrayContaining(['bing.com']));
     const robotsFetch = page.calls.find((c) => c.url.endsWith('/robots.txt'))!;
     expect(robotsFetch.opts.userAgent).toBe(USER_AGENT);
     expect(page.calls.findIndex((c) => c.url.endsWith('/robots.txt'))).toBeLessThan(page.calls.findIndex((c) => c.url === PAGE_URL));
@@ -295,7 +295,7 @@ describe('runMission', () => {
     const { deps } = happy(db);
     const router = mockRouter(db, {
       plan: { queries: [{ source: 'hn', q: 'invoices' }, { source: 'web', q: 'x' }] },
-      research: [{ text: '', sources: [{ url: 'https://www.reddit.com/r/x/comments/1/' }, { url: 'https://www.g2.com/products/x/reviews' }] }],
+      research: [{ text: '', sources: [{ url: 'https://www.bing.com/search?q=x' }, { url: 'https://shop.gamersgetaway.ca/x' }] }],
     });
     const page = mockFetchPage({});
     expect(await runMission({ ...deps, router, fetchPage: page.fn }, id)).toBe('succeeded');
@@ -678,10 +678,10 @@ describe('runMission', () => {
       const id = await insertMission(db);
       const { deps } = happy(db);
       const start = 'https://hop.example/a';
-      const net = guarded({ [start]: () => redirect('https://www.g2.com/products/x/reviews') });
+      const net = guarded({ [start]: () => redirect('https://www.bing.com/search?q=x') });
       const router = mockRouter(db, { plan: { queries: [{ source: 'hn', q: 'i' }, { source: 'web', q: 'w' }] }, research: [{ text: '', sources: [{ url: start }] }] });
       expect(await runMission({ ...deps, router, fetchPage: net.fn }, id)).toBe('succeeded');
-      expect(net.requested.some((u) => u.includes('g2.com'))).toBe(false);
+      expect(net.requested.some((u) => u.includes('bing.com'))).toBe(false);
       expect((await mission(db, id)).warnings).toEqual(['web: hop.example blocked address']);
       expect((await db.select().from(knowledgeSources)).map((s) => s.domain)).toEqual(['news.ycombinator.com']);
     });

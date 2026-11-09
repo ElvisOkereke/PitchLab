@@ -53,7 +53,7 @@ describe('rssFeed', () => {
     const items = await rssFeed('https://example.com/feed', { fetchPage: p.fetchPage });
     expect(p.calls[0]!.url).toBe('https://example.com/feed');
     expect(p.calls[0]!.opts).toMatchObject({ accept: 'feed', userAgent: 'pitchlab-research/0.1' });
-    expect(p.calls[0]!.opts.blockHosts).toContain('reddit.com');
+    expect(p.calls[0]!.opts.blockHosts).toContain('bing.com');
     expect(items.map((i) => i.url)).toEqual(['https://example.com/a', 'https://example.com/b']);
     expect(items[0]).toMatchObject({ source: 'rss', title: 'Startup & funding' });
     expect(items[0]!.publishedAt).toEqual(new Date('2026-11-03T10:00:00Z'));

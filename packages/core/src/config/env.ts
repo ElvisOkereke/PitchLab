@@ -34,6 +34,10 @@ const schema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
   /** Optional: pins the bot's owner chat id (skips the /start <code> pairing). */
   TELEGRAM_OWNER_CHAT_ID: z.string().regex(/^-?\d{1,20}$/).optional(),
+  /** Optional: a scraping service for pages still blocked after the real browser. Used only when both are set. */
+  SCRAPER_PROVIDER: z.enum(['scrapingbee', 'zenrows', 'apify']).optional(),
+  /** The provider's key. Only ever put in the provider request; never logged or stored. */
+  SCRAPER_API_KEY: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

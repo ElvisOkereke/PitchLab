@@ -68,6 +68,11 @@ export async function fetchStats(db: Db, { days = 30 }: { days?: number } = {}):
   let ok = 0;
   for (const r of rows) {
     const n = Number(r.n);
+    // A skipped step (no scraper key, budget used up) was not a fetch: shown in byOutcome, left out of the rates.
+    if (r.outcome === 'skipped') {
+      byOutcome[r.outcome] = (byOutcome[r.outcome] ?? 0) + n;
+      continue;
+    }
     total += n;
     byVia[r.via].total += n;
     byOutcome[r.outcome] = (byOutcome[r.outcome] ?? 0) + n;
@@ -78,7 +83,7 @@ export async function fetchStats(db: Db, { days = 30 }: { days?: number } = {}):
     failures: count(),
     topOutcome: sql<string>`mode() within group (order by ${pageFetches.outcome}::text)`,
   }).from(pageFetches)
-    .where(and(inWindow, sql`${pageFetches.outcome} <> 'ok'`))
+    .where(and(inWindow, sql`${pageFetches.outcome} not in ('ok', 'skipped')`))
     .groupBy(pageFetches.urlDomain)
     .orderBy(sql`count(*) desc`, pageFetches.urlDomain)
     .limit(TOP_FAILING);

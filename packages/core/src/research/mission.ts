@@ -17,11 +17,11 @@ import { createHnSource } from '../tools/sources/hn';
 import { createStackExchangeSource } from '../tools/sources/stackexchange';
 import type { RawItem, SignalSource } from '../tools/sources/types';
 import { createArchiveClient, type ArchiveClient } from './archive';
-import { collectPage, type BrowserRenderer } from './collect';
+import { collectPage, type BrowserRenderer, type ScraperStep } from './collect';
 import type { FetchOutcome, FetchVia } from './fetch-log';
 import { SourceError, USER_AGENT, type CallHook } from './http';
 import { capQuote, scrubPersonal } from './privacy';
-import { robotsAllows } from './robots';
+import { respectRobotsSetting, robotsAllows } from './robots';
 import { appPriceToDraft, appReviews, COUNTRIES as APP_STORE_COUNTRIES, type AppInfo } from './sources/appreviews';
 import { federalRegisterSearch, isoDateOrNull } from './sources/federalregister';
 import { hnTrend } from './sources/hntrend';
@@ -197,8 +197,10 @@ export type MissionDeps = {
   fetchPage: typeof fetchPageFn;
   /** Internet Archive fallback for gone pages (off when absent). */
   archive?: ArchiveClient | 'default';
-  /** Renders thin pages (off when absent or null). */
+  /** Renders blocked or thin pages (off when absent or null): the real browser when the worker opened it in real mode. */
   browser?: BrowserRenderer | null;
+  /** The scraping-service step for pages still blocked (skipped and logged when absent or not configured). */
+  scraper?: ScraperStep | null;
   collectors: Collectors;
   log: (m: string) => void;
   now?: () => Date;
@@ -335,6 +337,8 @@ function outcomeReason(o: FetchOutcome): string {
       return 'not a web page';
     case 'blocked_host':
       return 'blocked address';
+    case 'challenge':
+      return 'shows a bot check';
     default:
       return 'could not connect';
   }
@@ -798,6 +802,8 @@ export async function runMission(deps: MissionDeps, missionId: string): Promise<
       ? createArchiveClient({ fetchPage: guardedFetch, http: { onCall } })
       : deps.archive;
     const webState = { archiveDisabled: false };
+    // Setting fetch.respectRobots (default true): off skips robots.txt; never-fetch and banned hosts stay refused.
+    const respectRobots = await respectRobotsSetting(db);
     const addItems = (items: (RawItem & { via?: FetchVia; snapshotAt?: Date })[]) => {
       for (const it of items) {
         const text = (it.text ?? '').trim();
@@ -854,7 +860,7 @@ ${text}` : it.url;
         const host = hostOf(url);
         const page = await collectPage(url, {
           db, fetchPage: guardedFetch, robotsAllows: (u) => robotsAllows(u, { fetchPage: guardedFetch }), archive: archive,
-          browser: deps.browser, missionId, log: warn, state: webState,
+          browser: deps.browser, scraper: deps.scraper, respectRobots, missionId, log: warn, state: webState,
         });
         await logDataCall(db, { runId: null, missionId, provider: 'web', endpoint: host, ok: !('failed' in page) });
         if ('failed' in page) {

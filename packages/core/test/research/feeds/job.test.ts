@@ -157,15 +157,16 @@ describe('runFeedsJob', () => {
     expect(r.bySource.rss!.errors[0]).toContain('a.example');
   });
 
-  it('keeps reddit.com posts (owner ruling) but still refuses other banned hosts', async () => {
+  it('keeps reddit.com posts from any source (bans lifted) but refuses banned and never-fetch hosts', async () => {
     const db = await testDb();
     const reddit = { ...item('reddit', 1), url: 'https://www.reddit.com/r/smallbusiness/comments/abc123/slug/' };
-    const g2 = { ...item('rss', 2), url: 'https://www.g2.com/products/x' };
-    const fakeReddit = { ...item('rss', 3), url: 'https://www.reddit.com/r/x/comments/zzz999/slug/' }; // only the reddit source gets the allowance
-    const c = collectors({ ...NONE, reddit: (q) => (q.startsWith('r/') ? [reddit] : []), rss: () => [g2, fakeReddit] });
+    const linked = { ...item('rss', 2), url: 'https://www.reddit.com/r/x/comments/zzz999/slug/' };
+    const bing = { ...item('rss', 3), url: 'https://www.bing.com/news/x' };
+    const pilot = { ...item('rss', 4), url: 'https://shop.gamersgetaway.ca/sale' };
+    const c = collectors({ ...NONE, reddit: (q) => (q.startsWith('r/') ? [reddit] : []), rss: () => [linked, bing, pilot] });
     const r = await runFeedsJob(deps(db, router(db), c.collectors));
     expect(r.bySource.reddit).toMatchObject({ items: 1, added: 1 });
-    expect(r.bySource.rss!.items).toBe(0);
+    expect(r.bySource.rss!.items).toBe(1);
   });
 
   it('skips Shorts without a YouTube key and says so', async () => {

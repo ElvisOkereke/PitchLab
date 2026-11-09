@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { Db } from '../db/client';
 import { startGuardedProxy, type GuardedProxy } from '../research/browser/proxy';
 import { collectPage } from '../research/collect';
-import { robotsAllows as defaultRobotsAllows } from '../research/robots';
+import { respectRobotsSetting, robotsAllows as defaultRobotsAllows } from '../research/robots';
 import { isNeverFetchHost } from '../tools/banned-sources';
 import { fetchPage as defaultFetchPage, isAllowedIp } from '../tools/fetch-page';
 import { errorMessage } from '../tools/scrub';
@@ -74,7 +74,8 @@ export function makeReadPage(ctx: ReadPageCtx): (url: string) => Promise<{ capti
   const fetchPage = ctx.fetchPage ?? defaultFetchPage;
   const robotsAllows = ctx.robotsAllows ?? ((u: string) => defaultRobotsAllows(u, { fetchPage }));
   return async (url) => {
-    const page = await collectPage(url, { db: ctx.db, fetchPage, robotsAllows, log: ctx.log, state: { archiveDisabled: true } });
+    const respectRobots = await respectRobotsSetting(ctx.db);
+    const page = await collectPage(url, { db: ctx.db, fetchPage, robotsAllows, respectRobots, log: ctx.log, state: { archiveDisabled: true } });
     if ('failed' in page) return null;
     const text = page.text.trim().slice(0, PAGE_TEXT_MAX);
     if (!text && !page.title) return null;

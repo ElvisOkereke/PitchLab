@@ -27,3 +27,16 @@ test('BLUESKY_HANDLE and BLUESKY_APP_PASSWORD are optional and empty counts as u
   expect(e.BLUESKY_APP_PASSWORD).toBeUndefined();
   expect(loadEnv({ LLM_API_KEY: 'k', BLUESKY_HANDLE: 'me.bsky.social', BLUESKY_APP_PASSWORD: 'abcd-efgh' })).toMatchObject({ BLUESKY_HANDLE: 'me.bsky.social', BLUESKY_APP_PASSWORD: 'abcd-efgh' });
 });
+
+test('SCRAPER_PROVIDER and SCRAPER_API_KEY are optional; the provider is one of three', () => {
+  const e = loadEnv({ LLM_API_KEY: 'k', SCRAPER_PROVIDER: '', SCRAPER_API_KEY: '' });
+  expect(e.SCRAPER_PROVIDER).toBeUndefined();
+  expect(e.SCRAPER_API_KEY).toBeUndefined();
+  for (const p of ['scrapingbee', 'zenrows', 'apify']) expect(loadEnv({ LLM_API_KEY: 'k', SCRAPER_PROVIDER: p, SCRAPER_API_KEY: 'x' }).SCRAPER_PROVIDER).toBe(p);
+  expect(() => loadEnv({ LLM_API_KEY: 'k', SCRAPER_PROVIDER: 'brightdata', SCRAPER_API_KEY: 'sekrit' })).toThrow(/SCRAPER_PROVIDER/);
+  try {
+    loadEnv({ LLM_API_KEY: 'k', SCRAPER_PROVIDER: 'nope', SCRAPER_API_KEY: 'sekrit-value' });
+  } catch (e) {
+    expect(String(e)).not.toContain('sekrit-value');
+  }
+});

@@ -81,7 +81,7 @@ describe('verify', () => {
 
   it('marks a banned-domain claim unsupported without fetching or judging', async () => {
     const { db, run, kase } = await setup();
-    const [a] = await mk(db, kase.id, [{ text: 'Customers hate it', sourceUrl: 'https://uk.trustpilot.com/review/acme.com', quote: 'one two three four five six' }]);
+    const [a] = await mk(db, kase.id, [{ text: 'Customers hate it', sourceUrl: 'https://www.bing.com/search?q=acme', quote: 'one two three four five six' }]);
     const fetchPage = vi.fn(async () => page('one two three four five six'));
     const router = fakeRouter({});
     await verify({ db, router, fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
@@ -96,7 +96,7 @@ describe('verify', () => {
     const { db, run, kase } = await setup();
     const [a] = await mk(db, kase.id, [{ text: 'Owners complain', sourceUrl: 'https://short.example/x', quote: 'short' }]);
     const fetchPage = vi.fn(async (): Promise<PageResult> => ({
-      ok: true, status: 200, finalUrl: 'https://www.reddit.com/r/smallbusiness/comments/1', title: 't', text: 'short',
+      ok: true, status: 200, finalUrl: 'https://www.bing.com/search?q=x', title: 't', text: 'short',
     }));
     const router = fakeRouter({});
     await verify({ db, router, fetchPage, log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
@@ -202,7 +202,7 @@ describe('verify', () => {
 
     it('still marks a competitor claim on a banned domain unsupported without judging', async () => {
       const { db, run, kase } = await setup();
-      const [a] = await db.insert(claims).values({ caseId: kase.id, section: 'competitor', text: 'Acme', sourceUrl: 'https://www.reddit.com/r/x', quote: null }).returning();
+      const [a] = await db.insert(claims).values({ caseId: kase.id, section: 'competitor', text: 'Acme', sourceUrl: 'https://www.bing.com/x', quote: null }).returning();
       const router = fakeRouter({});
       await verify({ db, router, fetchPage: vi.fn(), log: () => {} } as unknown as StageDeps, run, { caseIds: [kase.id] });
       const [row] = await db.select().from(claims).where(eq(claims.id, a!.id));

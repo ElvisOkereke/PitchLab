@@ -425,7 +425,8 @@ export const knowledgeKind = pgEnum('knowledge_kind', ['problem', 'startup', 'pr
 export const knowledgeStatus = pgEnum('knowledge_status', ['active', 'rejected']);
 export const missionOrigin = pgEnum('mission_origin', ['owner', 'background']);
 
-export const FETCH_OUTCOMES = ['ok', 'http_403', 'http_404', 'http_410', 'http_4xx', 'http_5xx', 'timeout', 'blocked_robots', 'blocked_host', 'too_large', 'not_html', 'thin_text', 'network'] as const;
+/** `challenge`: a bot wall or interstitial page; `skipped`: an escalation step not run (no scraper key, or its monthly budget used up). */
+export const FETCH_OUTCOMES = ['ok', 'http_403', 'http_404', 'http_410', 'http_4xx', 'http_5xx', 'timeout', 'blocked_robots', 'blocked_host', 'too_large', 'not_html', 'thin_text', 'network', 'challenge', 'skipped'] as const;
 export const FETCH_VIAS = ['direct', 'archive', 'browser', 'real_browser', 'scraper'] as const;
 export const fetchOutcome = pgEnum('fetch_outcome', FETCH_OUTCOMES);
 export const fetchVia = pgEnum('fetch_via', FETCH_VIAS);

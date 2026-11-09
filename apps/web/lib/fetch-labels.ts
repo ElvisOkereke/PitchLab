@@ -15,13 +15,15 @@ export const OUTCOME_LABEL: Record<string, string> = {
   not_html: 'not a web page',
   thin_text: 'too little text (needs JavaScript)',
   network: 'could not connect',
+  challenge: 'bot check page',
+  skipped: 'step skipped (not set up, or monthly budget used)',
 };
 
 export const VIA_LABEL: Record<string, string> = {
   direct: 'Directly',
   archive: 'From an archived copy',
   browser: 'In the local browser',
-  real_browser: 'In the signed-in browser',
+  real_browser: 'In the real browser',
   scraper: 'Through the scraping service',
 };
 

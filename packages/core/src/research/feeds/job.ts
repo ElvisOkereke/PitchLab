@@ -96,12 +96,6 @@ const FEED_OF_SOURCE_TYPE: Record<string, FeedSource> = {
   reddit: 'reddit', bluesky: 'bluesky', hn: 'hnshow', arxiv: 'arxiv', huggingface: 'huggingface', githubtrending: 'githubtrending', rss: 'rss', youtube: 'ytshorts',
 };
 
-/**
- * The owner ruled Reddit in ("add this"), overriding the pipeline's reddit.com ban for this source only. Every other banned
- * or never-fetch host is still refused. NOTE: later stages (harvest, verify) still apply isBannedSource to stored urls.
- */
-const redditAllowed = (it: RawItem): boolean => it.source === 'reddit' && hostOf(it.url) === 'www.reddit.com';
-
 const hashOf = (key: string): string => createHash('sha1').update(key).digest('hex').slice(0, 16);
 const hostOf = (url: string): string => {
   try {
@@ -223,7 +217,7 @@ export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
           const text = (it.text ?? '').trim();
           // YouTube items share their video's url, so those are told apart by their text.
           const key = it.source === 'youtube' ? `${it.url}\n${text}` : it.url;
-          if (!text || keys.has(key) || (isBannedSource(it.url) && !redditAllowed(it)) || seen.has(hashOf(key))) continue;
+          if (!text || keys.has(key) || isBannedSource(it.url) || seen.has(hashOf(key))) continue;
           keys.add(key);
           items.push(it);
         }

@@ -2,14 +2,14 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeRenderer, createRenderer, loadBrowser, openMissionBrowser, sweepStaleProfiles, type BrowserLike } from '../../../src/research/browser/render';
 import { USER_AGENT } from '../../../src/research/http';
 
 type Handler = (route: any) => unknown;
 
-function mockRoute(method: string, resourceType: string) {
-  return { request: () => ({ method: () => method, resourceType: () => resourceType }), abort: vi.fn(async () => {}), continue: vi.fn(async () => {}) };
+function mockRoute(method: string, resourceType: string, url = 'https://spa.example/x') {
+  return { request: () => ({ method: () => method, resourceType: () => resourceType, url: () => url }), abort: vi.fn(async () => {}), continue: vi.fn(async () => {}) };
 }
 
 function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; html?: string; finalUrl?: string } = {}) {
@@ -137,7 +137,7 @@ describe('createRenderer', () => {
   it('declines banned, never-fetch and non-http urls without launching', async () => {
     const m = mockBrowser();
     const r = make(m.browser);
-    for (const u of ['https://www.reddit.com/r/x', 'https://gamersgetaway.ca/', 'file:///etc/passwd', 'http://127.0.0.1/', 'not a url']) {
+    for (const u of ['https://www.bing.com/search?q=x', 'https://gamersgetaway.ca/', 'file:///etc/passwd', 'http://127.0.0.1/', 'not a url']) {
       expect(await r.render(u), u).toBeNull();
     }
     expect(m.launches).toHaveLength(0);
@@ -233,6 +233,121 @@ describe('createRenderer hardening', () => {
   });
 });
 
+describe('createRenderer real-browser mode', () => {
+  const realMake = (b: BrowserLike, o: { profileDir: string; sleep?: (ms: number) => Promise<void>; random?: () => number }) => {
+    const r = createRenderer(b, proxy, { mode: 'real', sleep: async () => {}, ...o });
+    renderers.push(r);
+    return r;
+  };
+  let profileRoot: string;
+  beforeEach(() => { profileRoot = mkdtempSync(join(tmpdir(), 'fetch-profile-test-')); });
+  afterEach(() => rmSync(profileRoot, { recursive: true, force: true }));
+
+  it('is headed, on the persistent profile, through the guarded proxy, with the browser\'s own user agent', async () => {
+    const m = mockBrowser();
+    const profileDir = join(profileRoot, 'fetch-profile');
+    const r = realMake(m.browser, { profileDir });
+    expect(r.kind).toBe('real');
+    expect(make(mockBrowser().browser).kind).toBe('headless');
+    await r.render('https://walled.example/a');
+    const { dir, options } = m.launches[0]!;
+    expect(dir).toBe(profileDir);
+    expect(existsSync(profileDir)).toBe(true);
+    expect(options).toMatchObject({ headless: false, proxy: { server: 'http://127.0.0.1:54321', bypass: '' }, acceptDownloads: false, serviceWorkers: 'block' });
+    expect('userAgent' in options).toBe(false);
+    expect(JSON.stringify(options)).not.toContain(USER_AGENT);
+    expect(options.args).toEqual(expect.arrayContaining(['--proxy-bypass-list=<-loopback>', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--disable-quic']));
+    // No stealth: no fingerprint or automation-flag tampering.
+    expect(options.args.join(' ')).not.toMatch(/AutomationControlled|user-agent|fingerprint/i);
+  });
+
+  it('waits 3 to 8 seconds per page', async () => {
+    for (const [random, ms] of [[0, 3000], [0.5, 5500], [0.99999, 8000]] as const) {
+      const sleep = vi.fn(async () => {});
+      const r = realMake(mockBrowser().browser, { profileDir: join(profileRoot, `p${random}`), sleep, random: () => random });
+      await r.render('https://walled.example/a');
+      expect(sleep).toHaveBeenCalledWith(ms);
+    }
+  });
+
+  it('uses one tab at a time', async () => {
+    let active = 0;
+    let peak = 0;
+    const m = mockBrowser({
+      gotoImpl: async () => {
+        active++;
+        peak = Math.max(peak, active);
+        await new Promise((res) => setTimeout(res, 5));
+        active--;
+        return { status: () => 200 };
+      },
+    });
+    const r = realMake(m.browser, { profileDir: join(profileRoot, 'p') });
+    await Promise.all([1, 2, 3].map((i) => r.render(`https://walled.example/${i}`)));
+    expect(peak).toBe(1);
+  });
+
+  it('returns an error-status page with its status (the caller decides whether it is still blocked)', async () => {
+    const m = mockBrowser({ gotoImpl: async () => ({ status: () => 403 }), html: '<p>after the check</p>' });
+    const r = realMake(m.browser, { profileDir: join(profileRoot, 'p') });
+    expect(await r.render('https://walled.example/a')).toEqual({ html: '<p>after the check</p>', finalUrl: 'https://walled.example/a', status: 403 });
+  });
+
+  it('declines banned and never-fetch urls without launching', async () => {
+    const m = mockBrowser();
+    const r = realMake(m.browser, { profileDir: join(profileRoot, 'p') });
+    for (const u of ['https://www.bing.com/x', 'https://gamersgetaway.ca/', 'https://shop.gamersgetaway.ca/', 'http://127.0.0.1/']) expect(await r.render(u)).toBeNull();
+    expect(m.launches).toHaveLength(0);
+  });
+
+  it('keeps GET-only except the challenge page\'s own check (POST to /cdn-cgi/challenge-platform/)', async () => {
+    const m = mockBrowser();
+    await realMake(m.browser, { profileDir: join(profileRoot, 'p') }).render('https://walled.example/a');
+    const handle = async (method: string, type: string, url: string) => {
+      const route = mockRoute(method, type, url);
+      for (const h of m.routes) await h(route);
+      return route;
+    };
+    expect((await handle('POST', 'xhr', 'https://walled.example/cdn-cgi/challenge-platform/h/b/flow/ov1/x')).continue).toHaveBeenCalled();
+    for (const [method, url] of [['POST', 'https://walled.example/api/comment'], ['POST', 'https://walled.example/x?u=/cdn-cgi/challenge-platform/'], ['PUT', 'https://walled.example/cdn-cgi/challenge-platform/x'], ['DELETE', 'https://walled.example/a']] as const) {
+      const route = await handle(method, 'xhr', url);
+      expect(route.abort, `${method} ${url}`).toHaveBeenCalled();
+      expect(route.continue).not.toHaveBeenCalled();
+    }
+    // The headless renderer still refuses every POST.
+    const h = mockBrowser();
+    await make(h.browser).render('https://spa.example/a');
+    const route = mockRoute('POST', 'xhr', 'https://spa.example/cdn-cgi/challenge-platform/h/b/flow/ov1/x');
+    for (const fn of h.routes) await fn(route);
+    expect(route.abort).toHaveBeenCalled();
+  });
+
+  it('close() shuts the browser but keeps the persistent profile (cookies)', async () => {
+    const m = mockBrowser();
+    const profileDir = join(profileRoot, 'p');
+    const r = createRenderer(m.browser, proxy, { mode: 'real', profileDir, sleep: async () => {} });
+    await r.render('https://walled.example/a');
+    await r.close();
+    expect(m.context.close).toHaveBeenCalled();
+    expect(existsSync(profileDir)).toBe(true);
+  });
+
+  it('openMissionBrowser in real mode opens it behind the guarded proxy and closes it after the mission', async () => {
+    const m = mockBrowser();
+    const proxyClose = vi.fn(async () => {});
+    const s = await openMissionBrowser({
+      load: async () => m.browser, mode: 'real', profileDir: join(profileRoot, 'p'), sleep: async () => {},
+      startProxy: async () => ({ port: 4343, address: '127.0.0.1' as const, close: proxyClose }),
+    });
+    expect(s!.renderer.kind).toBe('real');
+    await s!.renderer.render('https://walled.example/');
+    expect(m.launches[0]!.options).toMatchObject({ headless: false, proxy: { server: 'http://127.0.0.1:4343' } });
+    await s!.close();
+    expect(m.context.close).toHaveBeenCalled();
+    expect(proxyClose).toHaveBeenCalled();
+  });
+});
+
 describe('sweepStaleProfiles', () => {
   it('removes pitchlab-browser-* directories older than an hour and keeps everything else', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sweep-test-'));
@@ -309,7 +424,8 @@ describe('openMissionBrowser', () => {
     const s = await openMissionBrowser({ load: async () => m.browser, startProxy });
     expect(s).not.toBeNull();
     expect(startProxy).toHaveBeenCalledWith(expect.not.objectContaining({ allowLoopbackForTests: true }));
-    expect(blocked!('www.reddit.com')).toBe(true);
+    expect(blocked!('www.bing.com')).toBe(true);
+    expect(blocked!('www.reddit.com')).toBe(false); // terms-of-service bans lifted
     expect(blocked!('shop.gamersgetaway.ca')).toBe(true);
     expect(blocked!('93.184.216.34')).toBe(true);
     expect(blocked!('example.com')).toBe(false);

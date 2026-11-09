@@ -102,7 +102,7 @@ export async function request(
 export async function requestText(
   source: string,
   url: string,
-  init: { headers?: Record<string, string>; timeoutMs?: number; maxBytes?: number },
+  init: { headers?: Record<string, string>; timeoutMs?: number; maxBytes?: number; onHeaders?: (headers: Headers) => void },
   opts: HttpOpts = {},
 ): Promise<string> {
   return (await send(source, url, init, opts, (text) => text)) as string;
@@ -111,7 +111,7 @@ export async function requestText(
 async function send(
   source: string,
   url: string,
-  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; errorReason?: boolean },
+  init: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number; maxBytes?: number; errorReason?: boolean; onHeaders?: (headers: Headers) => void },
   opts: HttpOpts,
   parse: (text: string) => unknown,
 ): Promise<unknown> {
@@ -134,6 +134,7 @@ async function send(
       if (res.status === 401 || res.status === 403) throw new SourceError('auth', source, `${source}: HTTP ${res.status}`, reason);
       throw new SourceError('http_error', source, `${source}: HTTP ${res.status}`, reason);
     }
+    init.onHeaders?.(res.headers);
     const text = await readCapped(res, init.maxBytes ?? 2_000_000);
     const parsed = parse(text);
     ok = true;

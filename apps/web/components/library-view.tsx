@@ -181,7 +181,7 @@ function FetchDiagnostics({ fetches }: { fetches: FetchStats }) {
             Pages read: <strong>{ofTotal(fetches.ok, fetches.total)}</strong>
           </p>
           <ul className="plain stack">
-            {/* The signed-in browser and scraping-service routes are listed only once they have been used. */}
+            {/* The real-browser and scraping-service routes are listed only once they have been used. */}
             {(Object.keys(VIA_LABEL) as (keyof FetchStats['byVia'])[])
               .filter((v) => fetches.byVia[v] && (fetches.byVia[v].total > 0 || v === 'direct' || v === 'archive' || v === 'browser'))
               .map((v) => (

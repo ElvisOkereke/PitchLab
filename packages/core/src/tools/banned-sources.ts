@@ -1,9 +1,11 @@
 import { parse } from 'tldts';
 
-/** Registrable domains the pipeline must never use as a source (Global Constraint). */
-export const BANNED_DOMAINS = [
-  'reddit.com', 'redd.it', 'g2.com', 'capterra.com', 'trustpilot.com', 'upwork.com', 'indeed.com', 'linkedin.com', 'bing.com',
-] as const;
+/**
+ * Registrable domains the pipeline must never use as a source. The owner lifted the terms-of-service bans on 2026-11-08
+ * ("I don't care about rules and terms of service"; Reddit, G2, Capterra and Trustpilot wanted), so only bing.com is left
+ * (search-engine result pages are not sources). The never-fetch hosts below stay absolute.
+ */
+export const BANNED_DOMAINS = ['bing.com'] as const;
 
 const BANNED = new Set<string>(BANNED_DOMAINS);
 

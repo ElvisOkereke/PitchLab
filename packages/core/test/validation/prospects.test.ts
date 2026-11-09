@@ -53,7 +53,7 @@ describe('prospectDomain / normalizeCandidates', () => {
       cand('https://www.linkedin.com/company/acme', 'Banned'),
       cand('https://www.yelp.com/biz/acme', 'Directory'),
       cand('https://facebook.com/acme', 'Facebook'),
-      cand('northline-logistics.ca', 'Northline', { fitReason: 'x'.repeat(5000), sourceUrls: ['https://news.com/a', 'https://reddit.com/r/x', 'javascript:1'] }),
+      cand('northline-logistics.ca', 'Northline', { fitReason: 'x'.repeat(5000), sourceUrls: ['https://news.com/a', 'https://www.bing.com/x', 'javascript:1'] }),
       cand('https://blank.com/', '   '),
     ], { limit: 25, log: (m) => logs.push(m) });
     expect(out.map((c) => [c.name, c.website, c.domain])).toEqual([

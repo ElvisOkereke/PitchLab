@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { NEVER_FETCH_HOSTS, isBannedSource, isNeverFetchHost } from '../../src/tools/banned-sources';
+import { BANNED_DOMAINS, NEVER_FETCH_HOSTS, isBannedSource, isNeverFetchHost } from '../../src/tools/banned-sources';
 import { NEVER_FETCH_HOSTS as FetchPageHosts, isNeverFetchHost as fetchPageIsNeverFetchHost } from '../../src/tools/fetch-page';
 
 describe('never-fetch hosts (P3-R8)', () => {
@@ -30,8 +30,16 @@ describe('never-fetch hosts (P3-R8)', () => {
 });
 
 describe('isBannedSource', () => {
-  it('bans every listed domain, including subdomains', () => {
+  it('bans only bing.com now, including subdomains (owner ruling 2026-11-08: terms-of-service bans lifted)', () => {
+    expect(BANNED_DOMAINS).toEqual(['bing.com']);
+    for (const url of ['https://www.bing.com/search?q=x', 'https://bing.com/', 'HTTPS://WWW.BING.COM/x']) {
+      expect(isBannedSource(url), url).toBe(true);
+    }
+  });
+
+  it('allows reddit, G2, Capterra, Trustpilot, Upwork, Indeed and LinkedIn, and other domains', () => {
     for (const url of [
+      'https://news.ycombinator.com/item?id=1',
       'https://www.reddit.com/r/webdev/comments/1',
       'https://old.reddit.com/r/x',
       'https://redd.it/abc',
@@ -41,22 +49,17 @@ describe('isBannedSource', () => {
       'https://www.upwork.com/jobs/x',
       'https://ca.indeed.com/viewjob?jk=1',
       'https://www.linkedin.com/posts/x',
-      'https://www.bing.com/search?q=x',
-      'HTTPS://WWW.REDDIT.COM/r/x',
-    ]) {
-      expect(isBannedSource(url), url).toBe(true);
-    }
-  });
-
-  it('allows other domains, including look-alikes', () => {
-    for (const url of [
-      'https://news.ycombinator.com/item?id=1',
-      'https://notreddit.com/x',
-      'https://reddit.com.evil.example/x',
-      'https://example.com/?ref=reddit.com',
+      'https://notbing.com/x',
+      'https://bing.com.evil.example/x',
+      'https://example.com/?ref=bing.com',
     ]) {
       expect(isBannedSource(url), url).toBe(false);
     }
+  });
+
+  it('the never-fetch pilot site stays refused whatever the banned list says', () => {
+    expect(isBannedSource('https://gamersgetaway.ca/')).toBe(true);
+    expect(isBannedSource('https://shop.gamersgetaway.ca/x')).toBe(true);
   });
 
   it('fails closed: unparseable, non-http(s) and IP-literal urls count as banned', () => {

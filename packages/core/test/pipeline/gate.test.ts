@@ -205,8 +205,10 @@ describe('gate', () => {
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const prompt = router.calls.find((c) => c.kind === 'research')!.prompt;
-    expect(prompt).toContain('capterra.com');
-    expect(prompt).toContain('g2.com');
+    expect(prompt).toContain('bing.com');
+    // Terms-of-service bans lifted (owner 2026-11-08): G2 and Capterra are citable for competitors now.
+    expect(prompt).not.toContain('capterra.com');
+    expect(prompt).not.toContain('g2.com');
   });
 
   it('propagates StructuredOutputError when the judge omits a check', async () => {
@@ -262,7 +264,7 @@ describe('gate', () => {
   it('countEvidence exposes the urls that earned a unit (community platforms: only the counted threads)', () => {
     const r = countEvidence([
       'https://news.ycombinator.com/item?id=1', 'https://news.ycombinator.com/item?id=1#c', 'https://news.ycombinator.com/item?id=2',
-      'https://news.ycombinator.com/item?id=3', 'http://1.2.3.4/x', 'https://www.reddit.com/r/x/1', 'https://a.com/1',
+      'https://news.ycombinator.com/item?id=3', 'http://1.2.3.4/x', 'https://www.bing.com/x/1', 'https://a.com/1',
     ]);
     expect(r.units).toBe(3);
     expect(r.countedUrls).toEqual([
@@ -418,7 +420,7 @@ describe('gate', () => {
       expect(ev.reasoning).toBe('1 independent sources: a.com');
     });
     it('excludes banned urls', async () => {
-      const ev = await evidence(['https://www.reddit.com/r/x/1', 'https://a.com/1'], 1);
+      const ev = await evidence(['https://www.bing.com/x/1', 'https://a.com/1'], 1);
       expect(ev.reasoning).toBe('1 independent sources: a.com');
     });
   });

@@ -74,4 +74,22 @@ describe('fetchStats', () => {
     expect(s.topFailing[0]).toEqual({ domain: 'bad.example', failures: 3, topOutcome: 'http_403' });
     expect((await fetchStats(db, { days: 60 })).total).toBe(20);
   });
+  it('records the real_browser and scraper routes; a skipped step is shown but not counted as a failed fetch', async () => {
+    const db = await testDb();
+    await recordFetch(db, { url: 'https://walled.example/a', outcome: 'challenge', via: 'direct' });
+    await recordFetch(db, { url: 'https://walled.example/a', outcome: 'ok', via: 'real_browser' });
+    await recordFetch(db, { url: 'https://walled.example/b', outcome: 'http_403', via: 'direct' });
+    await recordFetch(db, { url: 'https://walled.example/b', outcome: 'skipped', via: 'scraper' });
+    await recordFetch(db, { url: 'https://walled.example/c', outcome: 'ok', via: 'scraper' });
+    const rows = (await db.select().from(pageFetches)).map((r) => `${r.via}:${r.outcome}`).sort();
+    expect(rows).toEqual(['direct:challenge', 'direct:http_403', 'real_browser:ok', 'scraper:ok', 'scraper:skipped']);
+    const s = await fetchStats(db, {});
+    expect(s.total).toBe(4);
+    expect(s.ok).toBe(2);
+    expect(s.byVia.real_browser).toEqual({ total: 1, ok: 1 });
+    expect(s.byVia.scraper).toEqual({ total: 1, ok: 1 });
+    expect(s.byOutcome.skipped).toBe(1);
+    expect(s.byOutcome.challenge).toBe(1);
+    expect(s.topFailing).toEqual([{ domain: 'walled.example', failures: 2, topOutcome: expect.any(String) }]);
+  });
 });

@@ -87,7 +87,7 @@ describe('harvest', () => {
 
   it('drops banned-domain sources and tells the researcher never to cite them', async () => {
     const db = await testDb();
-    const reddit = 'https://www.reddit.com/r/smallbusiness/comments/1';
+    const reddit = 'https://www.bing.com/search?q=invoices'; // the one banned domain left (owner lifted the others 2026-11-08)
     const router = fakeRouter({
       research: { harvest: [{ text: '', sources: [
         { url: reddit, title: 'R', citedText: 'We lose hours every week re-keying invoices by hand.' },
@@ -101,9 +101,9 @@ describe('harvest', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', ideaText: 'invoice re-keying' }));
     const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run);
     const researchPrompt = router.calls.find((c) => c.kind === 'research')!.prompt;
-    expect(researchPrompt).toContain('reddit.com');
-    expect(researchPrompt).toContain('trustpilot.com');
-    expect(router.calls.find((c) => c.kind === 'structured')!.prompt).not.toContain('reddit.com');
+    expect(researchPrompt).toContain('bing.com');
+    expect(researchPrompt).not.toContain('trustpilot.com');
+    expect(router.calls.find((c) => c.kind === 'structured')!.prompt).not.toContain('bing.com');
     expect(out.signalIds).toHaveLength(1);
     expect((await db.select().from(signals)).map((s) => s.url)).toEqual(['https://x.test/a']);
   });
@@ -184,7 +184,7 @@ describe('harvest', () => {
           'local news, owner interviews) and by neutral bodies (associations, regulators, statistics offices). Vendor blogs and product pages ' +
           'tell you what already exists, not how much the problem hurts: use them only to learn what is already sold, and expect them to be tagged as vendor.',
       );
-      expect(p).toContain('reddit.com');
+      expect(p).toContain('bing.com');
       expect(p).toContain('trade forums, associations, trade publications, local business news, review pages');
       expect(p).not.toContain('industry blogs');
     });
@@ -206,7 +206,7 @@ describe('harvest', () => {
     const db = await testDb();
     const src: SignalSource = {
       id: 'hn',
-      search: async () => [{ source: 'hn', url: 'https://www.linkedin.com/posts/x', title: 'T', text: 'Our contact form silently stopped sending email.', publishedAt: null }],
+      search: async () => [{ source: 'hn', url: 'https://www.bing.com/news/x', title: 'T', text: 'Our contact form silently stopped sending email.', publishedAt: null }],
     };
     const router = fakeRouter({ research: { harvest: [{ text: '', sources: [] }] }, structured: {} });
     const run = await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['web design agencies'] }));

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isBannedSource } from '../../tools/banned-sources';
@@ -18,6 +18,14 @@ import { startGuardedProxy, type GuardedProxy } from './proxy';
  * nothing but GET leaves the browser, even inside a wss:// tunnel). Pages the renderer did not open are closed.
  * No stealth: the PitchLab user agent, no logins.
  *
+ * Real-browser mode (`mode: 'real'`, the escalation step for blocked pages): headed Chromium on the persistent profile
+ * `.data/fetch-profile` (cookies kept between missions, never deleted), the browser's own user agent (no PitchLab
+ * override, and no other change: no fingerprint spoofing, no stealth plugins, no CAPTCHA solving), one tab at a time and
+ * a 3-8 s wait per page (human pace, and time for a challenge page's own script to finish). Same guarded proxy, same
+ * routes, with one exception: a POST to the page's own `/cdn-cgi/challenge-platform/` path (Cloudflare's check) is let
+ * through, since the interstitial cannot clear without it. Error-status pages are returned with their status so the
+ * caller can tell a cleared challenge from a block.
+ *
  * Remaining gap (accepted; the proxy is the security boundary and only reaches checked public, non-banned hosts):
  * requests Playwright's routing does not see, such as navigator.sendBeacon / keepalive fetches sent while a page is
  * unloading and traffic from dedicated or shared workers, are not method-filtered here; over https they travel inside
@@ -26,6 +34,7 @@ import { startGuardedProxy, type GuardedProxy } from './proxy';
 export interface RequestLike {
   method(): string;
   resourceType(): string;
+  url(): string;
 }
 export interface RouteLike {
   request(): RequestLike;
@@ -57,7 +66,8 @@ export interface ContextLike {
 export type LaunchOptions = {
   headless: boolean;
   proxy: { server: string; bypass: string };
-  userAgent: string;
+  /** Set in headless mode only (the research identity); real mode keeps the browser's own. */
+  userAgent?: string;
   acceptDownloads: boolean;
   javaScriptEnabled: boolean;
   serviceWorkers: 'block';
@@ -68,7 +78,21 @@ export interface BrowserLike {
   launchPersistentContext(userDataDir: string, options: LaunchOptions): Promise<ContextLike>;
 }
 
-export type Renderer = BrowserRenderer & { close(): Promise<void> };
+export type Renderer = BrowserRenderer & { kind: 'headless' | 'real'; close(): Promise<void> };
+
+export type RendererOpts = {
+  /** 'real': headed, persistent profile, own user agent, one tab, 3-8 s per page. Default 'headless'. */
+  mode?: 'headless' | 'real';
+  /** Real mode: the persistent profile directory (`.data/fetch-profile`). Required for real mode. */
+  profileDir?: string;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+};
+
+/** Real mode's per-page wait: 3 to 8 seconds. */
+export const REAL_PACE_MIN_MS = 3_000;
+export const REAL_PACE_MAX_MS = 8_000;
+const CHALLENGE_PATH = '/cdn-cgi/challenge-platform/';
 
 export const NAV_TIMEOUT_MS = 20_000;
 /** Best-effort extra wait for client-side rendering after `load` (inside no more than this). */
@@ -134,8 +158,13 @@ function isHttpUrl(url: string): boolean {
  * A renderer for one mission. Chromium starts on the first render (a temporary profile directory, one context) and
  * `close()` shuts it and deletes the profile. Returns null for anything it declines or cannot render; never throws.
  */
-export function createRenderer(browser: BrowserLike, proxy: { port: number }): Renderer {
-  const limit = semaphore(MAX_PAGES);
+export function createRenderer(browser: BrowserLike, proxy: { port: number }, opts: RendererOpts = {}): Renderer {
+  const real = opts.mode === 'real';
+  if (real && !opts.profileDir) throw new Error('real-browser mode needs a profile directory');
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const random = opts.random ?? Math.random;
+  const paceMs = () => REAL_PACE_MIN_MS + Math.floor(Math.min(Math.max(random(), 0), 0.999999) * (REAL_PACE_MAX_MS - REAL_PACE_MIN_MS + 1));
+  const limit = semaphore(real ? 1 : MAX_PAGES);
   let closed = false;
   let profileDir: string | null = null;
   let contextPromise: Promise<ContextLike> | null = null;
@@ -144,11 +173,18 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
   const creating = new Set<Promise<unknown>>();
 
   async function launch(): Promise<ContextLike> {
-    profileDir = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
-    const context = await browser.launchPersistentContext(profileDir, {
-      headless: true,
+    let dir: string;
+    if (real) {
+      dir = opts.profileDir!;
+      await mkdir(dir, { recursive: true });
+    } else {
+      dir = await mkdtemp(join(tmpdir(), PROFILE_PREFIX));
+      profileDir = dir; // temporary: deleted on close
+    }
+    const context = await browser.launchPersistentContext(dir, {
+      headless: !real,
       proxy: { server: `http://127.0.0.1:${proxy.port}`, bypass: '' },
-      userAgent: USER_AGENT,
+      ...(real ? {} : { userAgent: USER_AGENT }),
       acceptDownloads: false,
       javaScriptEnabled: true,
       serviceWorkers: 'block',
@@ -163,6 +199,7 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
     // Every request from every page (pop-ups included, until they close): GET only, no images, media or fonts.
     await context.route('**/*', (route) => {
       const req = route.request();
+      if (real && req.method() === 'POST' && isChallengeCheck(req.url())) return route.continue();
       if (req.method() !== 'GET' || BLOCKED_TYPES.has(req.resourceType())) return route.abort('blockedbyclient');
       return route.continue();
     });
@@ -177,7 +214,7 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
     return context;
   }
 
-  async function renderOne(url: string): Promise<{ html: string; finalUrl: string } | null> {
+  async function renderOne(url: string): Promise<{ html: string; finalUrl: string; status?: number } | null> {
     if (closed) return null;
     contextPromise ??= launch();
     const context = await contextPromise;
@@ -197,18 +234,23 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
     try {
       page.on('popup', (popup) => void popup.close().catch(() => {}));
       const res = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: 'load' });
-      if (res && (res.status() < 200 || res.status() >= 300)) return null; // a block or error page stays a failure
+      const status = res ? res.status() : undefined;
+      const errorStatus = status !== undefined && (status < 200 || status >= 300);
+      if (errorStatus && !real) return null; // headless: a block or error page stays a failure
+      if (real) await sleep(paceMs());
       await page.waitForLoadState('networkidle', { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
       const finalUrl = page.url();
       if (!isHttpUrl(finalUrl)) return null;
       const html = await page.content();
-      return { html: html.length > HTML_MAX_BYTES ? html.slice(0, HTML_MAX_BYTES) : html, finalUrl };
+      const capped = html.length > HTML_MAX_BYTES ? html.slice(0, HTML_MAX_BYTES) : html;
+      return real && status !== undefined ? { html: capped, finalUrl, status } : { html: capped, finalUrl };
     } finally {
       await page.close().catch(() => {});
     }
   }
 
   return {
+    kind: real ? 'real' : 'headless',
     async render(url) {
       if (closed || !isHttpUrl(url) || isBannedSource(url)) return null;
       try {
@@ -229,6 +271,15 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }): R
       }
     },
   };
+}
+
+/** A POST to the page's own Cloudflare challenge path (real mode lets only this one through). */
+function isChallengeCheck(url: string): boolean {
+  try {
+    return new URL(url).pathname.startsWith(CHALLENGE_PATH);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -256,7 +307,7 @@ export async function sweepStaleProfiles(opts: { dir?: string; now?: () => numbe
   return removed;
 }
 
-/** Closes the mission's browser context and deletes its temporary profile. */
+/** Closes the mission's browser context and deletes its temporary profile (a real-mode profile is kept). */
 export function closeRenderer(renderer: Renderer): Promise<void> {
   return renderer.close();
 }
@@ -266,7 +317,7 @@ export function closeRenderer(renderer: Renderer): Promise<void> {
  * then keep thin pages as they are). `close()` shuts the renderer (profile deleted), then the proxy. Never throws.
  */
 export async function openMissionBrowser(
-  deps: { load?: () => Promise<BrowserLike | null>; startProxy?: typeof startGuardedProxy } = {},
+  deps: { load?: () => Promise<BrowserLike | null>; startProxy?: typeof startGuardedProxy } & RendererOpts = {},
 ): Promise<{ renderer: Renderer; close(): Promise<void> } | null> {
   const browser = await (deps.load ?? loadBrowser)().catch(() => null);
   if (!browser) return null;
@@ -277,7 +328,13 @@ export async function openMissionBrowser(
   } catch {
     return null;
   }
-  const renderer = createRenderer(browser, proxy);
+  let renderer: Renderer;
+  try {
+    renderer = createRenderer(browser, proxy, { mode: deps.mode, profileDir: deps.profileDir, sleep: deps.sleep, random: deps.random });
+  } catch {
+    await proxy.close().catch(() => {});
+    return null;
+  }
   return {
     renderer,
     async close() {

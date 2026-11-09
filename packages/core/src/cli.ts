@@ -43,6 +43,7 @@ import { listMissions, MissionInputSchema, queueMission } from './dashboard/miss
 import { buildCollectors, runMission } from './research/mission';
 import { runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
+import { createScraperStep } from './research/scraper';
 import { fileURLToPath } from 'node:url';
 import { addFinds, FINDS_SEED_MAX, listFinds, resolveFindsSeed } from './finds/store';
 import { captureToolsPresent, openCapture } from './finds/capture';
@@ -275,12 +276,14 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       },
       executeMission: async (missionId) => {
         busy = true;
-        // Optional local Chromium behind the guarded proxy, for this mission only (null when not installed).
+        // The real browser (headed, persistent .data/fetch-profile) behind the guarded proxy, for this mission only and
+        // closed after it (null when Chromium is not installed). Then the scraping service when its key is set.
         let browser: Awaited<ReturnType<typeof openMissionBrowser>> = null;
         try {
-          browser = await openMissionBrowser();
+          browser = await openMissionBrowser({ mode: 'real', profileDir: join(REPO_ROOT, '.data', 'fetch-profile') });
+          const scraper = createScraperStep({ db, provider: env.SCRAPER_PROVIDER, key: env.SCRAPER_API_KEY, log: out });
           return await runMission({
-            db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default', browser: browser?.renderer ?? null,
+            db, router: buildRouter(env, db), fetchPage, log: out, archive: 'default', browser: browser?.renderer ?? null, scraper,
             collectors: buildCollectors({ productHuntToken: env.PRODUCTHUNT_TOKEN, stackexchangeKey: env.STACKEXCHANGE_KEY, githubToken: env.GITHUB_TOKEN, youtubeApiKey: env.YOUTUBE_API_KEY }),
           }, missionId);
         } finally {

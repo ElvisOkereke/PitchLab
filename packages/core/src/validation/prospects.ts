@@ -54,6 +54,8 @@ export const DIRECTORY_DOMAINS = [
   'crunchbase.com', 'zoominfo.com', 'apollo.io', 'rocketreach.co', 'dnb.com', 'opencorporates.com', 'bloomberg.com',
   'glassdoor.com', 'glassdoor.ca', 'ziprecruiter.com', 'clutch.co', 'angi.com', 'homeadvisor.com', 'thumbtack.com',
   'houzz.com', 'wikipedia.org', 'medium.com', 'amazon.com',
+  // Formerly banned as sources (lifted 2026-11-08); still never a prospect's own website.
+  'linkedin.com', 'reddit.com', 'redd.it', 'g2.com', 'capterra.com', 'trustpilot.com', 'upwork.com', 'indeed.com',
 ] as const;
 const DIRECTORY = new Set<string>(DIRECTORY_DOMAINS);
 

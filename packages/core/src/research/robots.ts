@@ -1,4 +1,6 @@
+import type { Db } from '../db/client';
 import { fetchPage, type FetchPageOpts, type PageResult } from '../tools/fetch-page';
+import { getSetting } from '../validation/settings';
 import { ROBOTS_TOKEN, USER_AGENT } from './http';
 
 export interface RobotsOpts {
@@ -9,6 +11,14 @@ export interface RobotsOpts {
   fetchPage?: (url: string, opts: FetchPageOpts) => Promise<PageResult>;
   userAgent?: string;
   now?: () => number;
+}
+
+/** Setting: whether research fetches check robots.txt (default true). Never-fetch and banned hosts are refused either way. */
+export const RESPECT_ROBOTS_KEY = 'fetch.respectRobots';
+
+/** The `fetch.respectRobots` setting: false only when explicitly set to false. */
+export async function respectRobotsSetting(db: Db): Promise<boolean> {
+  return (await getSetting(db, RESPECT_ROBOTS_KEY)) !== false;
 }
 
 type Rule = { allow: boolean; path: string };

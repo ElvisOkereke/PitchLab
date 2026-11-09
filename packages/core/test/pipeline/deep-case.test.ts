@@ -194,11 +194,11 @@ describe('deepCase', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const idea = await insertIdea(db, run.id, { signalIds: [], status: 'advanced' });
     const d = draft();
-    for (const c of d.evidence.claims) c.sourceUrl = 'https://www.reddit.com/r/x/1';
+    for (const c of d.evidence.claims) c.sourceUrl = 'https://www.bing.com/x/1';
     d.competitors.list = d.competitors.list.map((c: Record<string, string>) => ({ ...c, url: 'not a url' }));
     const ban = (o: any): void => {
       if (!o || typeof o !== 'object') return;
-      if (o.source && typeof o.source.url === 'string') o.source.url = 'https://www.linkedin.com/x';
+      if (o.source && typeof o.source.url === 'string') o.source.url = 'https://www.bing.com/y';
       Object.values(o).forEach(ban);
     };
     ban(d.numbers.inputs);
@@ -213,9 +213,9 @@ describe('deepCase', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const idea = await ideaWithSignal(db, run.id);
     const d = draft();
-    d.evidence.claims[0].sourceUrl = 'https://www.reddit.com/r/webdev/comments/1';
-    d.competitors.list[0].url = 'https://www.g2.com/products/uptime/reviews';
-    d.numbers.inputs.reachableBuyers.source.url = 'https://www.linkedin.com/company/x';
+    d.evidence.claims[0].sourceUrl = 'https://www.bing.com/search?q=webdev';
+    d.competitors.list[0].url = 'https://www.bing.com/shop/uptime';
+    d.numbers.inputs.reachableBuyers.source.url = 'https://bing.com/company/x';
     await deepCase(deps(db, recordingRouter([d])), run, { passed: [idea.id], advisory: [] });
 
     const row = await caseFor(db, idea.id);
@@ -223,7 +223,7 @@ describe('deepCase', () => {
     expect(row.sections.competitors.list.map((c) => c.name)).toEqual([d.competitors.list[1].name]);
     expect(row.sections.numbers.inputs.reachableBuyers).toEqual({ value: 3000, assumption: 'source removed: banned domain' });
     const rows = await db.select().from(claims).where(eq(claims.caseId, row.id));
-    expect(rows.some((c) => /reddit|g2\.com|linkedin/.test(c.sourceUrl))).toBe(false);
+    expect(rows.some((c) => /bing\.com/.test(c.sourceUrl))).toBe(false);
     expect(rows.some((c) => c.text.startsWith('reachableBuyers'))).toBe(false);
   });
 
@@ -357,7 +357,7 @@ describe('deepCase', () => {
       marketId: 'ca-us', source: 'hn', url: `https://news.example/used/${k}`, title: 't', quote: `quote ${k}`, quoteHash: `used${k}`,
     }))).returning({ id: signals.id, url: signals.url, quote: signals.quote });
     const [banned] = await db.insert(signals).values({
-      marketId: 'ca-us', source: 'web', url: 'https://www.reddit.com/r/x/comments/1', title: 't', quote: 'banned quote', quoteHash: 'usedbanned',
+      marketId: 'ca-us', source: 'web', url: 'https://www.bing.com/r/x/comments/1', title: 't', quote: 'banned quote', quoteHash: 'usedbanned',
     }).returning({ id: signals.id, url: signals.url });
     const idea = await insertIdea(db, run.id, { signalIds: [...sigs.map((s) => s.id), banned!.id], status: 'advanced' });
     const d = draft();
@@ -651,5 +651,17 @@ describe('consumer pitch (case-write.v4): no cold email to individuals', () => {
     expect(row.sections.pitch.emails).toEqual([]);
     expect(row.sections.pitch.channels).toHaveLength(2);
     expect(CaseSectionsSchema.safeParse(row.sections).success).toBe(true);
+  });
+});
+
+describe('case-research prompt (terms-of-service bans lifted 2026-11-08)', () => {
+  it('v2 no longer bans Reddit, G2, Capterra or Trustpilot; v1 is kept unchanged', () => {
+    const p = loadPrompt('case-research');
+    expect(p.version).toBe('case-research.v2');
+    const v2 = readFileSync(new URL('../../prompts/case-research.v2.md', import.meta.url), 'utf8');
+    expect(v2).not.toMatch(/Do not use Reddit/);
+    expect(v2).toMatch(/search-engine result pages/);
+    const v1 = readFileSync(new URL('../../prompts/case-research.v1.md', import.meta.url), 'utf8');
+    expect(v1).toMatch(/Do not use Reddit, G2, Capterra/);
   });
 });
