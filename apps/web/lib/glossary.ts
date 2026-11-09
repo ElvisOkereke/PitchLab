@@ -36,7 +36,11 @@ export type GlossaryTerm =
   | 'upside'
   | 'ownerKeeps'
   | 'finds'
-  | 'seenInTheWild';
+  | 'seenInTheWild'
+  | 'feeds'
+  | 'pairingCode'
+  | 'realBrowser'
+  | 'scrapingService';
 
 /** In-app help text. docs/glossary.md has a `### <label>` heading for each entry (a test keeps them in sync). */
 export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
@@ -126,7 +130,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   pagesRead: {
     label: 'Pages read',
-    text: 'How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, or in the local browser). The sites that fail most are listed with their main reason.',
+    text: 'How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, in the local browser, in the real browser or through a scraping service). The sites that fail most are listed with their main reason.',
   },
   trend: {
     label: 'Trend',
@@ -191,5 +195,21 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   seenInTheWild: {
     label: 'Seen in the wild',
     text: 'Up to 6 recent finds shown to the idea generator as proof that people want something. It may not copy a find; it has to make the idea much better, serve the people doing it, move it to a new market or solve the harder problem underneath.',
+  },
+  feeds: {
+    label: 'Feeds',
+    text: 'Sources the worker reads on its own every 6 hours: Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub trending, newsletters and launch feeds, and YouTube Shorts. What they find goes into the library, for at most $2 a day. Settings shows each source\'s last run and errors.',
+  },
+  pairingCode: {
+    label: 'Pairing code',
+    text: 'A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and the code changes after 10 wrong tries. Reset pairing makes a new one.',
+  },
+  realBrowser: {
+    label: 'Real browser',
+    text: 'A visible Chromium window the worker uses only for sites that block it or show a "verify you are human" page. It keeps its cookies between visits and goes slowly, one page at a time. It never fakes its identity or solves puzzles.',
+  },
+  scrapingService: {
+    label: 'Scraping service',
+    text: 'An optional paid service (ScrapingBee, ZenRows or Apify) that loads a page from its own network when a site still blocks PitchLab. It needs your key and is capped at 900 pages a month by default, which fits the free tiers.',
   },
 };

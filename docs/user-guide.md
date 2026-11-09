@@ -63,6 +63,19 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 - **Good:** LLM API connected. If it says not set, put your key in `LLM_API_KEY` in `.env` and restart the worker.
   For YouTube, put a free key in `YOUTUBE_API_KEY` and restart the worker. For the local browser, run
   `npx playwright-core install chromium` in `packages/core`.
+- **Telegram bot:** optional, for sharing links from your phone. Once `TELEGRAM_BOT_TOKEN` is in `.env` and the worker
+  restarted, the **Telegram bot** row shows a pairing code while the bot has no owner: send `/start <code>` to your bot
+  in Telegram. Only that chat becomes the owner; anyone else who messages the bot is ignored and nothing they send is
+  kept. After 10 wrong codes the code changes on its own (look here for the new one). **Reset pairing** forgets the
+  paired chat and makes a new code, for example after you change phones.
+- **Capture tools (for finds):** installed or not installed. Finds wait in the queue until you run
+  `npm run capture:setup` (and restart the worker).
+- **Feeds:** the list under Connections shows each automatic feed (Reddit, Bluesky, Hacker News, arXiv, Hugging Face,
+  GitHub trending, newsletters and launch feeds, YouTube Shorts) with its last run, items found, entries added and any
+  errors. They run on their own every 6 hours while the worker is up, within $2 a day. "Skipped: no YouTube API key"
+  is normal without a key. If Bluesky says search needs sign-in, add `BLUESKY_HANDLE` and a Bluesky app password as
+  `BLUESKY_APP_PASSWORD` to `.env`. A newsletter that keeps failing can be replaced: ask Claude (the list, the schedule
+  and the cap are settings without a screen yet).
 
 ### Fill in who your emails come from
 
@@ -108,7 +121,13 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 - **Background research:** Off until you turn it on in **Settings → Research**. When on, the worker starts one small
   $1 mission at a time, until the daily cap is spent (the day ends at midnight in Toronto).
 - **Where pages came from:** An entry's sources say when a page came from an archived copy (with the date of the copy),
-  was rendered in the local browser, or, for YouTube comments, when it will be deleted (they are kept for 30 days).
+  was rendered in the local browser (hidden, or the visible real browser for a site that blocked the first try), came
+  through the scraping service, or, for YouTube comments, when it will be deleted (they are kept for 30 days). YouTube
+  links you shared as finds are not deleted.
+- **Sites that block bots:** when a site answers "blocked" or shows a "Just a moment" or "verify you are human" page,
+  the worker opens it in a real Chromium window (you may see it appear and close; leave it alone), then, if you set
+  `SCRAPER_PROVIDER` and `SCRAPER_API_KEY`, sends it through the scraping service (up to 900 pages a month), then tries
+  the Internet Archive. Nothing fakes a fingerprint or solves CAPTCHAs.
 - **Page fetching:** The **Page fetching, last 30 days** card shows how many pages came through, overall and by route,
   the sites that fail most and why ("blocked (403)", "too little text (needs JavaScript)"). It stays empty until your
   next mission. The Coverage card also shows the **social share**: how much of the library comes from community sites.
@@ -117,10 +136,31 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 - **Fix mistakes:** Open an entry and press **Reject** to take it out of search and out of runs. It stays rejected if it
   is collected again. Show rejected entries with Status, then press **Restore** to bring one back.
 
+### Share finds
+
+- **What:** When you scroll past a Reel, TikTok, Short or post with an idea worth stealing, share it to your PitchLab
+  Telegram bot (share → Telegram → your bot). Add a few words after the link if you want a note. On the computer, open
+  **Library → Finds** and paste links, one per line, with an optional note after a space (up to 50 at a time).
+- **Why:** What people already pay for, or already do by hand, is proof of demand. PitchLab reads each find (caption,
+  speech, on-screen text, views and likes) so the idea generator can build something better on top of it.
+- **What happens:** The bot answers "Got it". The worker captures one link at a time (Instagram and TikTok at least 20
+  seconds apart) and the bot then says "Captured: <title> — added to your library". The Finds page shows each link as
+  queued, capturing, done or failed, with its views, likes and length, your note, and a link to the library entry. A
+  link you already shared is reported as "already in your finds" ("Already captured" in Telegram) and not added twice.
+- **If one fails:** the error says why (a private post, a login wall, a page with no video). Press **Retry** to try it
+  again, or **Delete** to remove it (its library entry stays). Instagram needs the throwaway account logged in once
+  with `npm run capture:login`.
+- **Telegram hint:** if the Finds page says your bot is not paired yet, send it the `/start <code>` line it shows.
+
 ### Pick a seed
 
 - **What:** Open **Runs** and choose a seed. **Open** looks across every sector. **Sectors** and **Lenses** narrow
   the run to the ones you tick. **Your idea** builds a case for an idea you describe in at least 50 characters.
+  **From my finds** starts from your captured finds: pick it here, press **Start a run from these finds** on the Finds
+  page, or run `npm run gen -- run --finds`. It uses your 10 most recent captured finds, researches the problem behind the first
+  three and shows up to six to the idea generator, which must not copy them but go one better: a much better version,
+  a tool for the people doing it, the same thing in a new market, or the harder problem underneath. It costs the same
+  as any run.
 - **Why:** The seed decides where the run looks for pain. Open is best for discovery. Sectors suits a market you know
   or can reach. A lens is a pattern for spotting an idea, such as "a silent failure nobody monitors". Your idea is for
   testing something you already have in mind.

@@ -191,6 +191,11 @@ Web app variables are validated at startup by `apps/web/lib/env.ts`; the error n
 | `STACKEXCHANGE_KEY` | No | unset | Worker/CLI only. |
 | `GOOGLE_PLACES_API_KEY` | No | unset | Worker/CLI only. Enables the Places prospect source. |
 | `PRODUCTHUNT_TOKEN` | No | unset | Worker/CLI only. A free Product Hunt developer token for research missions (non-commercial use; email hello@producthunt.com for commercial permission). Without it Product Hunt is skipped. |
+| `YOUTUBE_API_KEY` | No | unset | Worker/CLI only. YouTube comments in missions and YouTube Shorts in the feeds; data kept 30 days. |
+| `BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD` | No | unset | Worker/CLI only. Used only if Bluesky search answers "sign-in needed"; an app password, never the account password. |
+| `TELEGRAM_BOT_TOKEN` | No | unset | Worker/CLI only. The private Telegram bot for finds (from @BotFather). Pair it with `/start <code>` from Settings → Connections. |
+| `TELEGRAM_OWNER_CHAT_ID` | No | unset | Worker/CLI only. A numeric chat id that pins the bot's owner (the pairing code is then not used). |
+| `SCRAPER_PROVIDER`, `SCRAPER_API_KEY` | No | unset | Worker/CLI only. `scrapingbee`, `zenrows` or `apify` and its key, for pages still blocked after the real browser; at most `fetch.scraperMonthlyPages` (900) pages a month. |
 
 Empty values in `.env` count as unset. There are no `NEXT_PUBLIC_*` variables: no setting reaches the browser bundle.
 

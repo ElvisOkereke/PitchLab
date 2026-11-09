@@ -120,7 +120,7 @@ A saved copy of a web page from the Internet Archive (the Wayback Machine). Pitc
 The share of sources in the library that come from community sites, such as Hacker News, Stack Exchange, GitHub, Product Hunt, app stores and YouTube comments, where people describe problems in their own words. A higher share means more real voices and fewer company pages.
 
 ### Pages read
-How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, or in the local browser). The sites that fail most are listed with their main reason.
+How many of the pages PitchLab tried to read over the last 30 days came through with usable text, overall and by route (directly, from an archived copy, in the local browser, in the real browser or through a scraping service). The sites that fail most are listed with their main reason.
 
 ### Trend
 A topic that people are searching for or posting about more, less or about the same as before, shown with the numbers behind it. Pageview and Hacker News counts are measured by PitchLab, and a figure from an article is kept only when its quote contains the number.
@@ -169,3 +169,15 @@ Links you shared from social media or the web, by Telegram or by pasting them on
 
 ### Seen in the wild
 Up to 6 recent finds shown to the idea generator as proof that people want something. It may not copy a find; it has to make the idea much better, serve the people doing it, move it to a new market or solve the harder problem underneath.
+
+### Feeds
+Sources the worker reads on its own every 6 hours: Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub trending, newsletters and launch feeds, and YouTube Shorts. What they find goes into the library, for at most $2 a day. Settings shows each source's last run and errors.
+
+### Pairing code
+A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and the code changes after 10 wrong tries. Reset pairing makes a new one.
+
+### Real browser
+A visible Chromium window the worker uses only for sites that block it or show a "verify you are human" page. It keeps its cookies between visits and goes slowly, one page at a time. It never fakes its identity or solves puzzles.
+
+### Scraping service
+An optional paid service (ScrapingBee, ZenRows or Apify) that loads a page from its own network when a site still blocks PitchLab. It needs your key and is capped at 900 pages a month by default, which fits the free tiers.

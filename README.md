@@ -18,6 +18,8 @@ A recap of the whole path, in the order you meet it. Unfamiliar terms are explai
 flowchart LR
     M[Research missions] --> L[(Research library)]
     B[Background research] --> L
+    F[Finds you share: Telegram or paste] --> L
+    A[Automatic feeds: Reddit, Bluesky, HN, newsletters...] --> L
     L --> R[Run: harvest, ideate, dedupe, screen, gate]
     W[Live web search] --> R
     R --> C[Case: write, verify, score]
@@ -38,14 +40,18 @@ flowchart LR
   calls a model: its buttons only queue rows that the worker picks up.
 - **Keys** (in `.env`, see [Quick start](#quick-start)): `LLM_API_KEY` plus the two `LLM_*_BASE_URL` values are
   required for the worker. Optional: `GITHUB_TOKEN`, `STACKEXCHANGE_KEY`, `GOOGLE_PLACES_API_KEY`,
-  `PRODUCTHUNT_TOKEN`, `YOUTUBE_API_KEY`. The dashboard needs `OWNER_PASSWORD_HASH` and `SESSION_SECRET`.
+  `PRODUCTHUNT_TOKEN`, `YOUTUBE_API_KEY`, `TELEGRAM_BOT_TOKEN` (and `TELEGRAM_OWNER_CHAT_ID`), `SCRAPER_PROVIDER` with
+  `SCRAPER_API_KEY`, `BLUESKY_HANDLE` with `BLUESKY_APP_PASSWORD`. The dashboard needs `OWNER_PASSWORD_HASH` and
+  `SESSION_SECRET`.
 - **When the worker starts** it runs the database migrations, seeds the defaults (market, lenses, settings) and makes
   sure the built-in example case exists. Every `gen` command that opens the database does the same.
 - **Heartbeat.** Each loop the worker writes a heartbeat: which keys are set (yes or no, never the values) and the
   model for each stage. The **Command center** (Generator card) and **Settings** (Connections, Models per stage) show
   it. While a task runs, the heartbeat repeats every interval (default 10 s, `--interval`, minimum 2).
 - **Order of work, oldest first in each queue:** queued runs, then validation jobs, then research missions. Only when
-  all three are empty does it top up background research (if on), then sleep for the interval. After each run it
+  all three are empty does it capture one queued find, top up background research (if on), run the automatic feeds when
+  they are due, then sleep for the interval. With a Telegram bot token it also checks the bot for new links on every
+  pass. The feeds step stops early when a run is queued. After each run it
   freezes any finished benchmark pass. Ctrl+C stops after the current task; a second Ctrl+C exits at once, and a run
   left `running` is recovered with `gen resume <runId>`. A mission still `running` after 2 hours is marked failed.
 - **Queue caps:** at most 3 queued runs, 3 queued validation jobs and 3 queued owner research missions.
@@ -75,10 +81,10 @@ missions** card.
   2. **Free sources first:** Hacker News, Stack Exchange, GitHub, app store reviews, Product Hunt, YouTube comments (only
      with `YOUTUBE_API_KEY`) and the Y Combinator company list cost no model budget, so they run before any web search.
   3. **Web search, capped:** pricing-page queries first, then the rest. Each query does up to 3 model web searches and
-     fetches up to 5 cited pages, obeying robots.txt and refusing banned domains on every redirect. A page that comes
-     back blocked, gone, down or too slow is tried once from the Internet Archive (an **archived copy** no more than
-     3 years old, marked as such on the entry), and a page with almost no text can be rendered in an optional local
-     browser. Web collection
+     fetches up to 5 cited pages, obeying robots.txt (a setting) and refusing banned domains on every redirect. A page
+     that blocks bots goes through the steps under **Getting past blocks** below; a page that is gone, down
+     or too slow is tried once from the Internet Archive (an **archived copy** no more than 3 years old, marked as such
+     on the entry), and a page with almost no text can be rendered in an optional local browser. Web collection
      stops once the mission has spent **60% of its budget**; the rest pays for extraction.
   4. **Extract:** the model turns fetched text into entries, 8 sources per batch, at most 3 entries per source per
      batch. Entries that fail their kind's schema are dropped. Product Hunt, YC and paid App Store prices become
@@ -106,9 +112,11 @@ missions** card.
   queries run, and World Bank runs once for each named country (not `global`) when `market` is chosen. A 429 stops that
   source for the mission with a warning. Rule changes published over 3 years ago, or in force over 2 years ago, are
   dropped with a count in the mission warnings. Background research adds one of these three kinds to each topic in turn.
-- **Sources not used:** Reddit is deliberately off (its terms need a contract for commercial use and its public API is
-  closing; the collector code stays unused). Product Hunt is used only when `PRODUCTHUNT_TOKEN` is set (non-commercial
-  use under its free API terms).
+- **Terms of service:** you lifted the terms-of-service bans on 2026-11-08 for this private prototype, so Reddit, G2,
+  Capterra, Trustpilot, LinkedIn, Upwork and Indeed pages are allowed. Only Bing result pages stay banned (a search page
+  is not a source), and your pilot site is **never** fetched, whatever the settings. Reddit comes in through the
+  automatic feeds, not missions. Product Hunt is used only when `PRODUCTHUNT_TOKEN` is set (non-commercial use under
+  its free API terms).
 - **YouTube (optional):** with `YOUTUBE_API_KEY` set, missions also read public YouTube comments through the official API
   (a free key; at most 5 searches per mission, and PitchLab stops at 90 searches or 9,000 quota units per Pacific day).
   No channel or author names are stored, and the URL is the plain video URL. **YouTube comments and video text are kept
@@ -116,14 +124,50 @@ missions** card.
   runs and cases (signals, claim quotes, evidence and number-input quotes) is replaced by "[expired YouTube data]" once its
   library source has expired, and at most 30 days after the case was written; the case's own wording and numbers stay.
   Without the key, YouTube is skipped.
-- **Archive fallback:** after a direct fetch fails with 403, 404, 410, a 5xx error or a timeout, and only if robots.txt
-  allowed the page, PitchLab asks the Internet Archive (Wayback Machine) for a snapshot, at most 1 request per second. A
-  429 from the archive turns it off for the rest of that mission.
+- **Archive fallback:** after a direct fetch fails with 403, 404, 410, a 5xx error or a timeout (and after the other
+  steps for a blocked page), and only if robots.txt allowed the page, PitchLab asks the Internet Archive (Wayback
+  Machine) for a snapshot, at most 1 request per second. A 429 from the archive turns it off for the rest of that
+  mission.
 - **Local browser (optional):** pages that fetch fine but hold under 800 readable characters (usually pages that need
   JavaScript) can be rendered in a local Chromium. Install it once with `npx playwright-core install chromium`, run in
   `packages/core` (about 150 to 300 MB). It identifies itself as PitchLab, sends GET requests only, blocks images, media
   and fonts, waits at most 20 seconds, and can only reach the network through a local guard that refuses private
   addresses. Without it, missions run as before. Settings → Connections shows whether it is installed.
+- **Getting past blocks:** when a site answers 403 or shows a bot check ("Just a moment",
+  "verify you are human"), PitchLab tries, in order:
+  1. **A real browser:** the same Chromium, but with a window, on a profile that keeps its cookies (`.data/fetch-profile`),
+     one page at a time, 3 to 8 seconds per page, with the browser's own identity. Many checks clear on their own
+     this way. It never fakes a fingerprint and never solves CAPTCHAs.
+  2. **A scraping service (optional):** ScrapingBee, ZenRows or Apify, if you set `SCRAPER_PROVIDER` and
+     `SCRAPER_API_KEY`. At most `fetch.scraperMonthlyPages` pages a month (default 900, which fits the free tiers).
+     Without a key, or once the month's pages are used, this step is skipped and logged.
+  3. **The Internet Archive**, as above.
+
+  A page with little text but no block still uses only the hidden browser; it never opens the window or spends
+  scraper pages. **robots.txt** is obeyed by default; set `fetch.respectRobots` to false to stop checking it (your pilot
+  site and banned hosts stay refused either way).
+- **Automatic feeds:** while the worker runs, every `feeds.everyHours` hours (default 6) it reads these sources about the
+  market's sectors, your lenses and rising trends (10 to 20 topics a day) and turns what it finds into library entries,
+  spending at most `feeds.dailyUsd` a day on extraction (default $2):
+
+  | Source | What | Needs |
+  |---|---|---|
+  | Reddit | posts and top comments from searches and a rotating list of subreddits | nothing (public pages, 1 request per 2 s) |
+  | Bluesky | posts matching the topics | nothing, unless the search asks for sign-in: then `BLUESKY_HANDLE` and an app password in `BLUESKY_APP_PASSWORD` |
+  | Hacker News | new Show HN and Ask HN posts | nothing |
+  | arXiv | new papers | nothing |
+  | Hugging Face | trending models and spaces | nothing |
+  | GitHub | trending repositories | nothing |
+  | Newsletters and launches | AlphaSignal, TLDR, Ben's Bites, Trends.vc, TechCrunch startups, Crunchbase News, BetaList, Indie Hackers (setting `feeds.rss`) | nothing |
+  | YouTube Shorts | short videos and their comments | `YOUTUBE_API_KEY` |
+
+  Each source keeps at most 200 items a run; a source that rate-limits or answers with the wrong kind of page stops for
+  that run with a warning, and items already paid for are never paid for again. **Settings → Connections → Feeds**
+  shows each source's last run, items, entries added and errors. `npm run gen -- feeds run` does one run now.
+- **Finds:** links you share (Reels, TikToks, Shorts, posts, any web page) become library entries; see
+  [Finds](#finds) below.
+- **Settings without a screen:** `fetch.respectRobots`, `fetch.scraperMonthlyPages`, `feeds.everyHours`,
+  `feeds.dailyUsd` and `feeds.rss` live in the database with no editing screen yet. Ask Claude to change them.
 - **Fetch diagnostics:** every page fetch is logged by site and outcome (never the full URL). The Library page shows the
   last 30 days: success overall and by route, the sites that fail most and why, and the social share of sources.
 - **Maintenance:** expired YouTube data, old fetch logs and old quota counters are cleaned up at the start of every
@@ -138,6 +182,32 @@ missions** card.
 - **What runs use:** only active entries with a verified quote feed a run's evidence (`problem` and `pricing`, best 3
   per domain, with a small bonus for operator or neutral voice and a penalty for age over 2 years). Startup and pricing
   entries feed ideate and the gate as context.
+
+#### Finds
+
+A **find** is a link you share because the idea behind it looks good: an Instagram Reel, a TikTok, a YouTube Short, a
+post, or any web page.
+
+- **Sharing:** send links to your private **Telegram bot** from your phone (share → Telegram → your bot; any text after
+  the link becomes your note), or paste them on **Library → Finds** (one link per line, a note after a space, up to 50
+  at a time), or run `gen finds add <url> [note]`. The bot answers "Got it", or "Already captured" for a link you sent
+  before, and "Captured: <title> — added to your library" once it is done. Only your chat can use the bot: it pairs
+  with the one-time code shown in Settings → Connections (send `/start <code>`), ignores everyone else, and gets a new
+  code after 10 wrong guesses. **Reset pairing** in Settings (or `gen telegram reset`) pairs it again.
+- **Capture:** the worker downloads each link with free local tools installed by `npm run capture:setup`: the caption,
+  views, likes and length, a speech transcript, and the text on screen. Instagram needs a throwaway account logged in
+  once with `npm run capture:login`; TikTok and YouTube usually do not. A page that is not a video is read as a page.
+  Videos are deleted after capture; only text and numbers are kept. One link at a time, at least 20 seconds apart for
+  Instagram and TikTok.
+- **What you get:** one library entry of kind `find` per link: what it is, who pays, how it earns, why it works, and the
+  creator's claims (kept as unverified). Creator names are replaced by "the creator". A link that fails shows its error
+  on the Finds page with a **Retry** button.
+- **Ideas from finds:** every run shows the idea generator up to 6 finds under **Seen in the wild**, with the rule
+  "do not copy it: make it 10x better, serve the people doing it, move it to a new market, or solve the harder problem
+  underneath". **Start a run from these finds** on the Finds page (or `gen run --finds`) starts a run from your 10 most
+  recent captured finds.
+- YouTube links you share are your own finds, not YouTube API data, so they are **not** deleted after 30 days, and case
+  quotes that cite them stay.
 
 ### 3. A run
 
@@ -334,7 +404,12 @@ follow its progress.
   Postgres in `docker-compose.yml`. The CLI alone can use a built-in embedded database (PGlite) with no setup.
 - Optional: `GITHUB_TOKEN`, `STACKEXCHANGE_KEY` (more signal sources), `GOOGLE_PLACES_API_KEY` (a second prospect
   source) and `PRODUCTHUNT_TOKEN` (Product Hunt as a research-mission source) and `YOUTUBE_API_KEY` (YouTube comments as a
-  research-mission source).
+  research-mission source, and YouTube Shorts in the feeds).
+- Optional, for finds: a Telegram bot token (`TELEGRAM_BOT_TOKEN`, free from @BotFather), the capture tools
+  (`npm run capture:setup`, about 400 MB) and throwaway Instagram and TikTok accounts (`npm run capture:login`). Finds can
+  also be pasted on the Finds page without Telegram.
+- Optional, for blocked sites: a ScrapingBee, ZenRows or Apify key (`SCRAPER_PROVIDER`, `SCRAPER_API_KEY`). Optional for
+  the feeds: a Bluesky app password (`BLUESKY_HANDLE`, `BLUESKY_APP_PASSWORD`), only if Bluesky search asks for sign-in.
 
 ## Quick start
 
@@ -360,7 +435,7 @@ password (12 or more characters), updates `OWNER_PASSWORD_HASH` in `.env`, signs
 `SESSION_SECRET` (add `-- --keep-sessions` to keep them signed in), and keeps the old file as `.env.bak`.
 
 Updating PitchLab: stop the web app, run `npm run gen -- runs` (or start the worker) once so the database is migrated,
-then start the web app again (releases add migrations; the newest is 0010). A web app on an older database shows errors on every page.
+then start the web app again (releases add migrations; the newest is 0015). A web app on an older database shows errors on every page.
 
 Then:
 
@@ -382,9 +457,12 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 |---|---|
 | `gen run --seed open` | One full run across every sector. `--seed sector --sectors "A,B"`, `--seed lens --lenses id1,id2` or `--seed idea --file idea.txt` narrow it. `--ideas` (default 12) and `--advance` (default 3) set the counts. |
 | `gen validate <case-slug>` | Builds the validation pack and writes it to `output/validation/<slug>/`. `--skip-prospects` skips the paid prospect search; `--refresh` regenerates the pack and landing page; `--redraft` rewrites drafts for prospects you have not contacted. |
+| `gen finds add <url> [note]` | Queues a link as a find (`gen finds list` shows them, `gen finds run` captures the queued ones now). `gen run --finds [ids...]` starts a run from your finds (default the 10 most recent captured). |
+| `gen feeds run` | One automatic-feeds run now, within the daily cap; exits 1 when every source failed and nothing was added. |
+| `gen telegram reset` | Forgets the Telegram bot's owner and prints a new pairing code (Settings → Connections has a **Reset pairing** button too). |
 | `gen research "<topic>"` | Queues a research mission that adds to the library (the worker runs it). `--budget` (0.5–25, default 2), `--kinds`, `--countries`, `--audience`. `gen research status` lists recent missions. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
-| `gen worker` | What `npm run worker` runs: executes queued runs, then validation packs, then research missions; when all are empty it queues background research if that is on. |
+| `gen worker` | What `npm run worker` runs: executes queued runs, then validation packs, then research missions; when all are empty it captures finds, queues background research if that is on, and runs the feeds when due. `--once --feeds` also runs the feeds in a single pass. |
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |
 | `gen bench run` | Queues the 5 benchmark runs of bench-v2 (about $15–35 in model calls); the worker executes them. |
 | `gen bench report [passId]` | Prints the scorecard and writes it to `output/bench/`. `--recompute` freezes a new snapshot of a pass with today's data first (the Progress page's Recompute button does the same). |
@@ -404,10 +482,15 @@ LLM spend is **notional**: PitchLab works it out from token counts and a price t
 | One validation pack | $0.60–1.50, of which prospect search is about $0.45–0.60. "Skip new prospect search" (`--skip-prospects`) avoids that part. |
 | One research mission | Up to its budget (default $2, $0.50–25). Background missions are $1 each, up to the daily cap (default $5). |
 | One benchmark pass (bench-v2) | about $15–35 (5 runs) |
+| Automatic feeds | at most `feeds.dailyUsd` a day (default $2), extraction only; the sources themselves are free |
+| One find | one small extraction call (cents); the capture tools are free and run on your computer |
+| Scraping service | free within `fetch.scraperMonthlyPages` (default 900 pages a month, inside the free tiers) |
 | Hosting | $0 with a free Supabase database and the app on your own computer |
 
-Nothing spends money unless you press **Queue run**, **Generate validation pack**, **Start research mission** or
-**Run benchmark**, turn on Background research, or run a `gen` command yourself. The tour never submits those forms.
+Nothing spends money unless you press **Queue run**, **Generate validation pack**, **Start research mission**,
+**Start a run from these finds** or **Run benchmark**, share or paste a find, turn on Background research, or run a
+`gen` command yourself. The one exception is the automatic feeds: while the worker runs they spend up to
+`feeds.dailyUsd` a day (default $2). The tour never submits those forms.
 
 ## Safety stance
 
@@ -418,7 +501,11 @@ Nothing spends money unless you press **Queue run**, **Generate validation pack*
 - **Treats web text as untrusted.** Anything fetched from the web or written by a model is neutralised before it goes
   into a prompt, and it is always shown as plain text, never as HTML.
 - **Fetches pages carefully.** Only public internet addresses are fetched (no local or private networks), and every
-  redirect is checked again.
+  redirect is checked again. Blocked sites get a real browser and, if you add a key, a scraping service, but never a
+  faked fingerprint or a solved CAPTCHA. Your pilot site is never fetched.
+- **Captures links in a box.** The capture tools run with fixed arguments (no shell), time limits and a size cap; every
+  download goes through the same address guard; videos are deleted afterwards; errors never show tokens, cookies or
+  file paths. The Telegram bot answers only your chat.
 - **Verifies database TLS.** Remote database connections use verified TLS, and no setting turns the check off.
 - **Keeps the dashboard private.** One owner, a hashed password, a signed session cookie, a rate-limited login,
   origin checks on every form, and no secrets in the browser. The dashboard never calls an LLM itself.
@@ -439,7 +526,10 @@ The reasons behind each rule are in [architecture](docs/architecture.md#security
 ## Development
 
 ```bash
+npm test -w packages/capture
+npx tsc --noEmit -p packages/capture
 npm test -w packages/core
+npx tsc --noEmit -p packages/core
 npm test -w apps/web
 npm run typecheck -w apps/web
 npm run build -w apps/web          # needs the web variables in .env (dummy values are fine)
