@@ -103,7 +103,7 @@ describe('scrapeViaProvider', () => {
 
   it('refuses banned, never-fetch, IP-literal and non-http targets without calling the provider', async () => {
     const net = capture(() => htmlRes(ARTICLE));
-    for (const u of ['https://www.bing.com/search?q=x', 'https://gamersgetaway.ca/', 'https://shop.gamersgetaway.ca/x', 'http://127.0.0.1/', 'http://10.0.0.5/admin', 'file:///etc/passwd', 'not a url']) {
+    for (const u of ['https://www.bing.com/search?q=x', 'https://gamersgetaway.ca/', 'https://shop.gamersgetaway.ca/x', 'http://127.0.0.1/', 'http://10.0.0.5/admin', 'file:///etc/passwd', 'not a url', 'http://localhost:8080/', 'https://x.internal/admin', 'http://intranet/']) {
       expect(await scrapeViaProvider(u, { provider: 'scrapingbee', key: KEY, fetch: net.fetch })).toMatchObject({ ok: false, reason: 'blocked_host' });
     }
     expect(net.calls).toHaveLength(0);

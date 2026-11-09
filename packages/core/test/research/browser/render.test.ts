@@ -8,11 +8,16 @@ import { USER_AGENT } from '../../../src/research/http';
 
 type Handler = (route: any) => unknown;
 
-function mockRoute(method: string, resourceType: string, url = 'https://spa.example/x') {
-  return { request: () => ({ method: () => method, resourceType: () => resourceType, url: () => url }), abort: vi.fn(async () => {}), continue: vi.fn(async () => {}) };
+function mockRoute(method: string, resourceType: string, url = 'https://spa.example/x', frames?: string[]) {
+  // frames: the frame chain from the request's own frame up to the top document (absent: no frame info).
+  const frameAt = (i: number): any => (frames && i < frames.length ? { url: () => frames[i], parentFrame: () => (i + 1 < frames.length ? frameAt(i + 1) : null) } : null);
+  return {
+    request: () => ({ method: () => method, resourceType: () => resourceType, url: () => url, ...(frames ? { frame: () => frameAt(0) } : {}) }),
+    abort: vi.fn(async () => {}), continue: vi.fn(async () => {}),
+  };
 }
 
-function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; html?: string; finalUrl?: string } = {}) {
+function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; html?: string; htmls?: string[]; finalUrl?: string; navStatus?: unknown } = {}) {
   const routes: Handler[] = [];
   const pages: any[] = [];
   const launches: { dir: string; options: any }[] = [];
@@ -36,7 +41,8 @@ function mockBrowser(opts: { gotoImpl?: (url: string, o: any) => Promise<any>; h
           return r;
         }),
         waitForLoadState: vi.fn(async () => {}),
-        content: vi.fn(async () => opts.html ?? '<html><body><p>rendered</p></body></html>'),
+        content: vi.fn(async () => (opts.htmls && opts.htmls.length > 1 ? opts.htmls.shift()! : opts.htmls?.[0] ?? opts.html ?? '<html><body><p>rendered</p></body></html>')),
+        evaluate: vi.fn(async () => opts.navStatus),
         url: () => current,
         close: vi.fn(async () => {}),
         emit: (ev: string, x: any) => (listeners[ev] ?? []).forEach((f) => f(x)),
@@ -287,10 +293,22 @@ describe('createRenderer real-browser mode', () => {
     expect(peak).toBe(1);
   });
 
-  it('returns an error-status page with its status (the caller decides whether it is still blocked)', async () => {
-    const m = mockBrowser({ gotoImpl: async () => ({ status: () => 403 }), html: '<p>after the check</p>' });
+  it('returns an error-status page with its status and whether the first load was a challenge', async () => {
+    const m = mockBrowser({ gotoImpl: async () => ({ status: () => 403 }), html: '<p>Forbidden</p>' });
     const r = realMake(m.browser, { profileDir: join(profileRoot, 'p') });
-    expect(await r.render('https://walled.example/a')).toEqual({ html: '<p>after the check</p>', finalUrl: 'https://walled.example/a', status: 403 });
+    expect(await r.render('https://walled.example/a')).toEqual({ html: '<p>Forbidden</p>', finalUrl: 'https://walled.example/a', status: 403, challenged: false });
+  });
+
+  it('prefers the final document status (navigation entry) over the first response, and flags a first-load challenge', async () => {
+    const challenge = '<html><head><title>Just a moment...</title></head><body><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>';
+    const m = mockBrowser({ gotoImpl: async () => ({ status: () => 403 }), htmls: [challenge, '<p>the real page</p>'], navStatus: 200 });
+    const r = realMake(m.browser, { profileDir: join(profileRoot, 'p') });
+    expect(await r.render('https://walled.example/a')).toEqual({ html: '<p>the real page</p>', finalUrl: 'https://walled.example/a', status: 200, challenged: true });
+    // A missing or zero navigation status falls back to the first response's status.
+    for (const navStatus of [undefined, 0, 'x']) {
+      const f = mockBrowser({ gotoImpl: async () => ({ status: () => 503 }), html: '<p>x</p>', navStatus });
+      expect(await realMake(f.browser, { profileDir: join(profileRoot, `f${String(navStatus)}`) }).render('https://walled.example/a')).toMatchObject({ status: 503 });
+    }
   });
 
   it('declines banned and never-fetch urls without launching', async () => {
@@ -300,20 +318,36 @@ describe('createRenderer real-browser mode', () => {
     expect(m.launches).toHaveLength(0);
   });
 
-  it('keeps GET-only except the challenge page\'s own check (POST to /cdn-cgi/challenge-platform/)', async () => {
+  it('keeps GET-only except the challenge page\'s own same-origin check (POST to /cdn-cgi/challenge-platform/)', async () => {
     const m = mockBrowser();
     await realMake(m.browser, { profileDir: join(profileRoot, 'p') }).render('https://walled.example/a');
-    const handle = async (method: string, type: string, url: string) => {
-      const route = mockRoute(method, type, url);
+    const TOP = ['https://walled.example/a'];
+    const handle = async (method: string, type: string, url: string, frames: string[] | null = TOP) => {
+      const route = mockRoute(method, type, url, frames ?? undefined);
       for (const h of m.routes) await h(route);
       return route;
     };
     expect((await handle('POST', 'xhr', 'https://walled.example/cdn-cgi/challenge-platform/h/b/flow/ov1/x')).continue).toHaveBeenCalled();
-    for (const [method, url] of [['POST', 'https://walled.example/api/comment'], ['POST', 'https://walled.example/x?u=/cdn-cgi/challenge-platform/'], ['PUT', 'https://walled.example/cdn-cgi/challenge-platform/x'], ['DELETE', 'https://walled.example/a']] as const) {
-      const route = await handle(method, 'xhr', url);
-      expect(route.abort, `${method} ${url}`).toHaveBeenCalled();
+    const denied: [string, string, string[] | null][] = [
+      ['POST', 'https://walled.example/api/comment', TOP],
+      ['POST', 'https://walled.example/x?u=/cdn-cgi/challenge-platform/', TOP],
+      ['PUT', 'https://walled.example/cdn-cgi/challenge-platform/x', TOP],
+      ['DELETE', 'https://walled.example/a', TOP],
+      // Cross-origin: another site's challenge path, from a walled.example page or from an iframe of that site.
+      ['POST', 'https://evil.example/cdn-cgi/challenge-platform/h/b/x', TOP],
+      ['POST', 'https://evil.example/cdn-cgi/challenge-platform/h/b/x', ['https://evil.example/frame', 'https://walled.example/a']],
+      // Turnstile's own host is not allowed either (the scraper covers those sites).
+      ['POST', 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/x', ['https://challenges.cloudflare.com/turnstile', 'https://walled.example/a']],
+      ['POST', 'http://walled.example/cdn-cgi/challenge-platform/h/b/x', TOP], // different scheme, different origin
+      ['POST', 'https://walled.example/cdn-cgi/challenge-platform/h/b/x', null], // no frame information: refused
+    ];
+    for (const [method, url, frames] of denied) {
+      const route = await handle(method, 'xhr', url, frames);
+      expect(route.abort, `${method} ${url} from ${frames?.join(' < ')}`).toHaveBeenCalled();
       expect(route.continue).not.toHaveBeenCalled();
     }
+    // A same-origin iframe of the page may run the check too (the top document decides the origin).
+    expect((await handle('POST', 'xhr', 'https://walled.example/cdn-cgi/challenge-platform/h/b/y', ['https://walled.example/frame', 'https://walled.example/a'])).continue).toHaveBeenCalled();
     // The headless renderer still refuses every POST.
     const h = mockBrowser();
     await make(h.browser).render('https://spa.example/a');
@@ -332,19 +366,24 @@ describe('createRenderer real-browser mode', () => {
     expect(existsSync(profileDir)).toBe(true);
   });
 
-  it('openMissionBrowser in real mode opens it behind the guarded proxy and closes it after the mission', async () => {
+  it('openMissionBrowser gives a headless renderer and, with a profile, a real one, both behind one guarded proxy and closed after the mission', async () => {
     const m = mockBrowser();
     const proxyClose = vi.fn(async () => {});
     const s = await openMissionBrowser({
-      load: async () => m.browser, mode: 'real', profileDir: join(profileRoot, 'p'), sleep: async () => {},
+      load: async () => m.browser, realProfileDir: join(profileRoot, 'p'), sleep: async () => {},
       startProxy: async () => ({ port: 4343, address: '127.0.0.1' as const, close: proxyClose }),
     });
-    expect(s!.renderer.kind).toBe('real');
-    await s!.renderer.render('https://walled.example/');
+    expect(s!.renderer.kind).toBe('headless');
+    expect(s!.realRenderer!.kind).toBe('real');
+    expect(m.launches).toHaveLength(0); // nothing opens (no window) until a page needs it
+    await s!.realRenderer!.render('https://walled.example/');
     expect(m.launches[0]!.options).toMatchObject({ headless: false, proxy: { server: 'http://127.0.0.1:4343' } });
     await s!.close();
     expect(m.context.close).toHaveBeenCalled();
     expect(proxyClose).toHaveBeenCalled();
+    const plain = await openMissionBrowser({ load: async () => mockBrowser().browser, startProxy: async () => ({ port: 1, address: '127.0.0.1' as const, close: async () => {} }) });
+    expect(plain!.realRenderer).toBeNull();
+    await plain!.close();
   });
 });
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isBannedSource } from '../../tools/banned-sources';
 import { HTML_MAX_BYTES } from '../../tools/fetch-page';
+import { looksLikeChallenge } from '../challenge';
 import type { BrowserRenderer } from '../collect';
 import { USER_AGENT } from '../http';
 import { startGuardedProxy, type GuardedProxy } from './proxy';
@@ -22,19 +23,26 @@ import { startGuardedProxy, type GuardedProxy } from './proxy';
  * `.data/fetch-profile` (cookies kept between missions, never deleted), the browser's own user agent (no PitchLab
  * override, and no other change: no fingerprint spoofing, no stealth plugins, no CAPTCHA solving), one tab at a time and
  * a 3-8 s wait per page (human pace, and time for a challenge page's own script to finish). Same guarded proxy, same
- * routes, with one exception: a POST to the page's own `/cdn-cgi/challenge-platform/` path (Cloudflare's check) is let
- * through, since the interstitial cannot clear without it. Error-status pages are returned with their status so the
- * caller can tell a cleared challenge from a block.
+ * routes, with one exception: a POST to `/cdn-cgi/challenge-platform/` on the same origin as the tab's top document
+ * (Cloudflare's own check) is let through, since the interstitial cannot clear without it. Cross-origin POSTs, including
+ * Turnstile's challenges.cloudflare.com, stay blocked (the scraping service covers those sites). Error-status pages are
+ * returned with the final document status and whether the first load was a challenge, so the caller can tell a cleared
+ * challenge from a block. Missions use it only for blocked pages (403 or challenge); thin pages use the headless one.
  *
  * Remaining gap (accepted; the proxy is the security boundary and only reaches checked public, non-banned hosts):
  * requests Playwright's routing does not see, such as navigator.sendBeacon / keepalive fetches sent while a page is
  * unloading and traffic from dedicated or shared workers, are not method-filtered here; over https they travel inside
  * an opaque CONNECT tunnel. Service workers are blocked outright.
  */
+export interface FrameLike {
+  url(): string;
+  parentFrame(): FrameLike | null;
+}
 export interface RequestLike {
   method(): string;
   resourceType(): string;
   url(): string;
+  frame?(): FrameLike | null;
 }
 export interface RouteLike {
   request(): RequestLike;
@@ -49,6 +57,8 @@ export interface PageLike {
   goto(url: string, options: { timeout: number; waitUntil: 'load' | 'domcontentloaded' | 'networkidle' }): Promise<ResponseLike | null>;
   waitForLoadState(state: 'networkidle', options: { timeout: number }): Promise<void>;
   content(): Promise<string>;
+  /** Real mode reads the navigation entry's final status. */
+  evaluate?<T>(fn: () => T): Promise<T>;
   url(): string;
   close(): Promise<void>;
 }
@@ -199,7 +209,7 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }, op
     // Every request from every page (pop-ups included, until they close): GET only, no images, media or fonts.
     await context.route('**/*', (route) => {
       const req = route.request();
-      if (real && req.method() === 'POST' && isChallengeCheck(req.url())) return route.continue();
+      if (real && req.method() === 'POST' && isSameOriginChallengeCheck(req)) return route.continue();
       if (req.method() !== 'GET' || BLOCKED_TYPES.has(req.resourceType())) return route.abort('blockedbyclient');
       return route.continue();
     });
@@ -214,7 +224,7 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }, op
     return context;
   }
 
-  async function renderOne(url: string): Promise<{ html: string; finalUrl: string; status?: number } | null> {
+  async function renderOne(url: string): Promise<{ html: string; finalUrl: string; status?: number; challenged?: boolean } | null> {
     if (closed) return null;
     contextPromise ??= launch();
     const context = await contextPromise;
@@ -234,16 +244,24 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }, op
     try {
       page.on('popup', (popup) => void popup.close().catch(() => {}));
       const res = await page.goto(url, { timeout: NAV_TIMEOUT_MS, waitUntil: 'load' });
-      const status = res ? res.status() : undefined;
-      const errorStatus = status !== undefined && (status < 200 || status >= 300);
+      const firstStatus = res ? res.status() : undefined;
+      const errorStatus = firstStatus !== undefined && (firstStatus < 200 || firstStatus >= 300);
       if (errorStatus && !real) return null; // headless: a block or error page stays a failure
-      if (real) await sleep(paceMs());
+      let challenged = false;
+      if (real) {
+        challenged = looksLikeChallenge(await page.content().catch(() => ''));
+        await sleep(paceMs());
+      }
       await page.waitForLoadState('networkidle', { timeout: SETTLE_TIMEOUT_MS }).catch(() => {});
       const finalUrl = page.url();
       if (!isHttpUrl(finalUrl)) return null;
       const html = await page.content();
       const capped = html.length > HTML_MAX_BYTES ? html.slice(0, HTML_MAX_BYTES) : html;
-      return real && status !== undefined ? { html: capped, finalUrl, status } : { html: capped, finalUrl };
+      if (!real) return { html: capped, finalUrl };
+      // The final document's status (after a challenge reloads the page), else the first response's.
+      const nav = await navigationStatus(page);
+      const status = nav ?? firstStatus;
+      return status !== undefined ? { html: capped, finalUrl, status, challenged } : { html: capped, finalUrl, challenged };
     } finally {
       await page.close().catch(() => {});
     }
@@ -273,12 +291,38 @@ export function createRenderer(browser: BrowserLike, proxy: { port: number }, op
   };
 }
 
-/** A POST to the page's own Cloudflare challenge path (real mode lets only this one through). */
-function isChallengeCheck(url: string): boolean {
+/**
+ * A POST to Cloudflare's challenge path on the same origin as the tab's top document (real mode lets only this one
+ * through). The top document is found by walking the request's frame chain; no frame information means no.
+ */
+function isSameOriginChallengeCheck(req: RequestLike): boolean {
   try {
-    return new URL(url).pathname.startsWith(CHALLENGE_PATH);
+    const target = new URL(req.url());
+    if (!target.pathname.startsWith(CHALLENGE_PATH)) return false;
+    let frame: FrameLike | null = req.frame?.() ?? null;
+    if (!frame) return false;
+    for (let i = 0; i < 20; i++) {
+      const parent: FrameLike | null = frame.parentFrame();
+      if (!parent) break;
+      frame = parent;
+    }
+    return new URL(frame.url()).origin === target.origin;
   } catch {
     return false;
+  }
+}
+
+/** The navigation entry's responseStatus (Chromium), or null when missing, zero or unreadable. */
+async function navigationStatus(page: PageLike): Promise<number | null> {
+  if (!page.evaluate) return null;
+  try {
+    const v = await page.evaluate(() => {
+      const e = (globalThis as unknown as { performance?: { getEntriesByType(t: string): { responseStatus?: unknown }[] } }).performance?.getEntriesByType('navigation')[0];
+      return e?.responseStatus;
+    });
+    return typeof v === 'number' && Number.isInteger(v) && v >= 100 && v < 600 ? v : null;
+  } catch {
+    return null;
   }
 }
 
@@ -313,12 +357,17 @@ export function closeRenderer(renderer: Renderer): Promise<void> {
 }
 
 /**
- * One mission's browser: the guarded proxy plus a renderer behind it, or null when Chromium is not available (missions
- * then keep thin pages as they are). `close()` shuts the renderer (profile deleted), then the proxy. Never throws.
+ * One mission's browsers: the guarded proxy plus a headless renderer (thin pages) and, with `realProfileDir`, a real
+ * headed renderer (blocked pages), both behind the same proxy; or null when Chromium is not available. `close()` shuts
+ * both renderers (the temporary profile deleted, the real profile kept), then the proxy. Never throws.
  */
 export async function openMissionBrowser(
-  deps: { load?: () => Promise<BrowserLike | null>; startProxy?: typeof startGuardedProxy } & RendererOpts = {},
-): Promise<{ renderer: Renderer; close(): Promise<void> } | null> {
+  deps: {
+    load?: () => Promise<BrowserLike | null>; startProxy?: typeof startGuardedProxy;
+    /** With a profile directory (`.data/fetch-profile`), also a real (headed) renderer for blocked pages. */
+    realProfileDir?: string;
+  } & Pick<RendererOpts, 'sleep' | 'random'> = {},
+): Promise<{ renderer: Renderer; realRenderer: Renderer | null; close(): Promise<void> } | null> {
   const browser = await (deps.load ?? loadBrowser)().catch(() => null);
   if (!browser) return null;
   let proxy: GuardedProxy;
@@ -328,17 +377,17 @@ export async function openMissionBrowser(
   } catch {
     return null;
   }
-  let renderer: Renderer;
-  try {
-    renderer = createRenderer(browser, proxy, { mode: deps.mode, profileDir: deps.profileDir, sleep: deps.sleep, random: deps.random });
-  } catch {
-    await proxy.close().catch(() => {});
-    return null;
-  }
+  // Both start lazily: no Chromium (and no window) until a page needs one.
+  const renderer = createRenderer(browser, proxy);
+  const realRenderer = deps.realProfileDir
+    ? createRenderer(browser, proxy, { mode: 'real', profileDir: deps.realProfileDir, sleep: deps.sleep, random: deps.random })
+    : null;
   return {
     renderer,
+    realRenderer,
     async close() {
       await closeRenderer(renderer).catch(() => {});
+      if (realRenderer) await closeRenderer(realRenderer).catch(() => {});
       await proxy.close().catch(() => {});
     },
   };

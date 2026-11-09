@@ -197,8 +197,10 @@ export type MissionDeps = {
   fetchPage: typeof fetchPageFn;
   /** Internet Archive fallback for gone pages (off when absent). */
   archive?: ArchiveClient | 'default';
-  /** Renders blocked or thin pages (off when absent or null): the real browser when the worker opened it in real mode. */
+  /** Renders thin pages headless (off when absent or null). */
   browser?: BrowserRenderer | null;
+  /** The real headed browser for blocked pages, 403 or challenge (off when absent or null). */
+  realBrowser?: BrowserRenderer | null;
   /** The scraping-service step for pages still blocked (skipped and logged when absent or not configured). */
   scraper?: ScraperStep | null;
   collectors: Collectors;
@@ -860,7 +862,7 @@ ${text}` : it.url;
         const host = hostOf(url);
         const page = await collectPage(url, {
           db, fetchPage: guardedFetch, robotsAllows: (u) => robotsAllows(u, { fetchPage: guardedFetch }), archive: archive,
-          browser: deps.browser, scraper: deps.scraper, respectRobots, missionId, log: warn, state: webState,
+          browser: deps.browser, realBrowser: deps.realBrowser, scraper: deps.scraper, respectRobots, missionId, log: warn, state: webState,
         });
         await logDataCall(db, { runId: null, missionId, provider: 'web', endpoint: host, ok: !('failed' in page) });
         if ('failed' in page) {

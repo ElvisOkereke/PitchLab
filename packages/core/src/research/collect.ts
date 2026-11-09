@@ -11,13 +11,20 @@ export const THIN_TEXT_CHARS = 800;
 
 /**
  * Renders a page in a browser. `kind` 'real' is the headed persistent-profile browser (logged as real_browser);
- * otherwise the headless renderer (logged as browser). Null means it declined or could not. `status` is the navigation
- * status when the renderer returns error pages (real mode); absent means 2xx.
+ * otherwise the headless renderer (logged as browser). Null means it declined or could not. Real mode also returns the
+ * final document `status` (absent means 2xx) and whether the first load was a challenge (`challenged`).
  */
 export type BrowserRenderer = {
   kind?: 'headless' | 'real';
-  render(url: string): Promise<{ html: string; finalUrl: string; status?: number } | null>;
+  render(url: string): Promise<{ html: string; finalUrl: string; status?: number; challenged?: boolean } | null>;
 };
+
+/** Statuses a challenge interstitial is served with: a page under one counts only if the first load was a challenge. */
+const CHALLENGE_STATUSES: ReadonlySet<number> = new Set([403, 429, 503]);
+
+/** The logged outcome for a browser page with an error status. */
+const statusOutcome = (status: number): FetchOutcome =>
+  status === 403 ? 'http_403' : status === 404 ? 'http_404' : status === 410 ? 'http_410' : status >= 500 ? 'http_5xx' : 'http_4xx';
 
 /** The scraping-service step (scraper.ts). `skipped`: no provider/key, or the monthly page budget is used up. */
 export type ScraperStep = { scrape(url: string): Promise<PageResult | { skipped: 'not_configured' | 'budget' }> };
@@ -27,7 +34,10 @@ export type CollectCtx = {
   fetchPage: (url: string, opts: FetchPageOpts) => Promise<PageResult>;
   robotsAllows: (url: string) => Promise<boolean>;
   archive?: ArchiveClient;
+  /** Headless renderer: thin pages only (no window). */
   browser?: BrowserRenderer | null;
+  /** Real headed browser: blocked pages only (403 or challenge). */
+  realBrowser?: BrowserRenderer | null;
   scraper?: ScraperStep | null;
   /** Setting `fetch.respectRobots` (default true). False skips robots.txt; never-fetch and banned hosts are still refused. */
   respectRobots?: boolean;
@@ -55,10 +65,11 @@ const len = (s: string) => s.trim().length;
 type Page = { text: string; title: string; finalUrl: string; via: FetchVia };
 
 /**
- * One web page. Order: direct guarded fetch; on a 403, a challenge page or thin text, the browser (the real one when the
- * mission has it); if still blocked (403 or challenge), the scraping service (when a key is set and the monthly budget
- * remains); then the Internet Archive for a page that is gone or still blocked. Thin text alone never spends a scraper
- * page. robots.txt is checked unless `respectRobots` is false; never-fetch and banned hosts are refused first, always.
+ * One web page. Order: direct guarded fetch; thin text goes to the headless renderer (as before); a 403 or a challenge
+ * page goes to the real headed browser, then (still blocked) the scraping service (when a key is set and the monthly
+ * budget remains), then the Internet Archive, which also takes pages that are gone. Thin text alone never opens the
+ * real browser or spends a scraper page. A real-browser page with an error status is content only when the status is
+ * a challenge status (403, 429, 503) and its first load was a challenge that then cleared. robots.txt is checked unless `respectRobots` is false; never-fetch and banned hosts are refused first, always.
  * Every attempt (and a skipped scraper step) is logged in page_fetches; never throws.
  */
 export async function collectPage(url: string, ctx: CollectCtx): Promise<Collected> {
@@ -113,29 +124,39 @@ export async function collectPage(url: string, ctx: CollectCtx): Promise<Collect
     else return { failed: outcome };
   }
 
-  // 2. The browser: for a blocked or thin page.
-  if (ctx.browser) {
-    const via: FetchVia = ctx.browser.kind === 'real' ? 'real_browser' : 'browser';
-    const r = await renderSafely(ctx.browser, url, renderFrom, ctx, allows);
-    if (!r) await record(renderFrom, 'network', via); // tried: declined, dropped or failed
+  // 2a. Thin (not blocked): the headless renderer, as before.
+  if (!blocked) {
+    if (ctx.browser) {
+      const via: FetchVia = ctx.browser.kind === 'real' ? 'real_browser' : 'browser';
+      const r = await renderSafely(ctx.browser, url, renderFrom, ctx, allows);
+      if (!r) await record(renderFrom, 'network', via); // tried: declined, dropped or failed
+      else {
+        await record(r.finalUrl, len(r.text) < THIN_TEXT_CHARS ? 'thin_text' : 'ok', via);
+        if (!best || len(r.text) > len(best.text)) return { text: r.text, title: r.title, finalUrl: r.finalUrl, via };
+      }
+    }
+    return best ?? { failed: 'thin_text' };
+  }
+
+  // 2b. Blocked (403 or challenge): the real browser.
+  if (ctx.realBrowser) {
+    const via: FetchVia = ctx.realBrowser.kind === 'headless' ? 'browser' : 'real_browser';
+    const r = await renderSafely(ctx.realBrowser, url, renderFrom, ctx, allows);
+    if (!r) await record(renderFrom, 'network', via);
     else {
       const thin = len(r.text) < THIN_TEXT_CHARS;
       const errorStatus = r.status !== undefined && (r.status < 200 || r.status >= 300);
+      const cleared = !errorStatus || (CHALLENGE_STATUSES.has(r.status!) && r.challenged === true);
       if (looksLikeChallenge(r.html)) await record(r.finalUrl, 'challenge', via, r.status);
-      else if (errorStatus && thin) await record(r.finalUrl, r.status === 403 ? 'http_403' : 'http_4xx', via, r.status);
+      else if (!cleared) await record(r.finalUrl, statusOutcome(r.status!), via, r.status); // an error page is not content
       else {
         await record(r.finalUrl, thin ? 'thin_text' : 'ok', via, r.status);
-        const page: Page = { text: r.text, title: r.title, finalUrl: r.finalUrl, via };
-        if (!thin) return page;
-        // A thin page that loaded: keep whichever text is longer; a block that cleared to a thin page is not blocked.
-        if (!best || len(r.text) > len(best.text)) best = page;
-        blocked = null;
+        return { text: r.text, title: r.title, finalUrl: r.finalUrl, via };
       }
     }
   }
-  if (!blocked) return best ?? { failed: 'thin_text' };
 
-  // 3. The scraping service: only for a page still blocked.
+  // 3. The scraping service: the page is still blocked.
   const scraped = ctx.scraper ? await scrapeSafely(ctx.scraper, url, ctx) : ({ skipped: 'not_configured' } as const);
   if ('skipped' in scraped) await record(url, 'skipped', 'scraper');
   else if (scraped.ok && isBannedSource(scraped.finalUrl || url)) await record(url, 'blocked_host', 'scraper', scraped.status);
@@ -202,7 +223,7 @@ async function renderSafely(browser: BrowserRenderer, url: string, finalUrl: str
     if (!r) return null;
     if (isBannedSource(r.finalUrl) || (r.finalUrl !== finalUrl && !(await allows(r.finalUrl)))) return null;
     const { title, text } = extract(r.html);
-    return { text, title, finalUrl: r.finalUrl, html: r.html, status: r.status };
+    return { text, title, finalUrl: r.finalUrl, html: r.html, status: r.status, challenged: r.challenged };
   } catch {
     ctx.log(`browser: ${hostOf(url)} render failed`);
     return null;

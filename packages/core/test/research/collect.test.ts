@@ -14,7 +14,7 @@ const SNAP = { snapshotUrl: 'https://web.archive.org/web/20260101000000id_/https
 
 async function setup(o: {
   direct?: PageResult; robots?: (u: string) => boolean; archive?: Partial<ArchiveClient>; browser?: BrowserRenderer | null; disabled?: boolean;
-  scraper?: ScraperStep | null; respectRobots?: boolean;
+  scraper?: ScraperStep | null; respectRobots?: boolean; realBrowser?: BrowserRenderer | null;
 } = {}) {
   const db = await testDb();
   const fetchPage = vi.fn(async () => o.direct ?? okPage());
@@ -24,7 +24,7 @@ async function setup(o: {
   };
   const log = vi.fn();
   const state = { archiveDisabled: o.disabled ?? false };
-  const ctx = { db, fetchPage: fetchPage as never, robotsAllows, archive, browser: o.browser, scraper: o.scraper, respectRobots: o.respectRobots, log, state };
+  const ctx = { db, fetchPage: fetchPage as never, robotsAllows, archive, browser: o.browser, realBrowser: o.realBrowser, scraper: o.scraper, respectRobots: o.respectRobots, log, state };
   const rows = async () => (await db.select().from(pageFetches)).map((r) => `${r.via}:${r.outcome}`).sort();
   return { ctx, fetchPage, robotsAllows, archive, log, state, rows };
 }
@@ -181,7 +181,7 @@ describe('collectPage escalation (direct, real browser, scraping service, archiv
 
   it('a 403 goes to the real browser, logged as real_browser', async () => {
     const scraper = scraperOf(async () => okPage());
-    const s = await setup({ direct: bad(403), browser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 })), scraper });
+    const s = await setup({ direct: bad(403), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 })), scraper });
     expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'real_browser', title: 'R' });
     expect(await s.rows()).toEqual(['direct:http_403', 'real_browser:ok']);
     expect(scraper.scrape).not.toHaveBeenCalled();
@@ -189,14 +189,14 @@ describe('collectPage escalation (direct, real browser, scraping service, archiv
   });
 
   it('a challenge page from the direct fetch goes to the real browser', async () => {
-    const s = await setup({ direct: challengePage(), browser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 })) });
+    const s = await setup({ direct: challengePage(), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 })) });
     expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'real_browser' });
     expect(await s.rows()).toEqual(['direct:challenge', 'real_browser:ok']);
   });
 
   it('still blocked in the browser: the scraping service, logged as scraper', async () => {
     const scraper = scraperOf(async () => ({ ...okPage(), title: 'Scraped' }));
-    const s = await setup({ direct: bad(403), browser: real(async () => ({ html: CHALLENGE, finalUrl: URL_, status: 403 })), scraper });
+    const s = await setup({ direct: bad(403), realBrowser: real(async () => ({ html: CHALLENGE, finalUrl: URL_, status: 403 })), scraper });
     expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'scraper', title: 'Scraped', finalUrl: URL_ });
     expect(await s.rows()).toEqual(['direct:http_403', 'real_browser:challenge', 'scraper:ok']);
     expect(scraper.scrape).toHaveBeenCalledWith(URL_);
@@ -207,7 +207,7 @@ describe('collectPage escalation (direct, real browser, scraping service, archiv
     const order: string[] = [];
     const s = await setup({
       direct: bad(403),
-      browser: real(async () => { order.push('browser'); return null; }),
+      realBrowser: real(async () => { order.push('browser'); return null; }),
       scraper: scraperOf(async () => { order.push('scraper'); return bad(500); }),
       archive: { snapshot: vi.fn(async () => { order.push('archive'); return SNAP; }) },
     });
@@ -242,35 +242,52 @@ describe('collectPage escalation (direct, real browser, scraping service, archiv
     expect(await collectPage(URL_, s.ctx)).toEqual({ failed: 'challenge' });
   });
 
-  it('thin text alone never spends a scraper page', async () => {
+  it('thin text alone uses the headless renderer, never the real browser or a scraper page', async () => {
     const scraper = scraperOf(async () => okPage());
-    const s = await setup({ direct: okPage('tiny'), browser: real(async () => ({ html: '<p>also tiny but longer</p>', finalUrl: URL_, status: 200 })), scraper });
-    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'real_browser', text: 'also tiny but longer' });
+    const realBrowser = real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 }));
+    const browser: BrowserRenderer = { kind: 'headless', render: vi.fn(async () => ({ html: '<p>also tiny but longer</p>', finalUrl: URL_ })) };
+    const s = await setup({ direct: okPage('tiny'), browser, realBrowser, scraper });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'browser', text: 'also tiny but longer' });
+    expect(realBrowser.render).not.toHaveBeenCalled();
     expect(scraper.scrape).not.toHaveBeenCalled();
-    expect(await s.rows()).toEqual(['direct:thin_text', 'real_browser:thin_text']);
+    expect(await s.rows()).toEqual(['browser:thin_text', 'direct:thin_text']);
   });
 
-  it('a real-browser error status counts as blocked unless the page then loaded (a challenge that cleared)', async () => {
-    const blocked = await setup({ direct: bad(403), browser: real(async () => ({ html: '<h1>Forbidden</h1>', finalUrl: URL_, status: 403 })), scraper: scraperOf(async () => okPage()) });
-    expect(await collectPage(URL_, blocked.ctx)).toMatchObject({ via: 'scraper' });
-    expect(await blocked.rows()).toEqual(['direct:http_403', 'real_browser:http_403', 'scraper:ok']);
-    const cleared = await setup({ direct: bad(403), browser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 403 })) });
-    expect(await collectPage(URL_, cleared.ctx)).toMatchObject({ via: 'real_browser' });
+  it('a blocked page never uses the headless renderer (no real browser: straight to the scraper)', async () => {
+    const browser: BrowserRenderer = { kind: 'headless', render: vi.fn(async () => ({ html: ARTICLE, finalUrl: URL_ })) };
+    const s = await setup({ direct: bad(403), browser, scraper: scraperOf(async () => okPage()) });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'scraper' });
+    expect(browser.render).not.toHaveBeenCalled();
+    expect(await s.rows()).toEqual(['direct:http_403', 'scraper:ok']);
+  });
+
+  it('a branded 403 "Forbidden" page from the real browser is not content, however long', async () => {
+    const forbidden = `<html><head><title>Forbidden</title></head><body><article>${'<p>You do not have permission to view this page. Contact support with your reference number.</p>'.repeat(20)}</article></body></html>`;
+    const s = await setup({ direct: bad(403), realBrowser: real(async () => ({ html: forbidden, finalUrl: URL_, status: 403, challenged: false })), scraper: scraperOf(async () => okPage()) });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'scraper' });
+    expect(await s.rows()).toEqual(['direct:http_403', 'real_browser:http_403', 'scraper:ok']);
+  });
+
+  it.each([[404, 'http_404'], [410, 'http_410'], [500, 'http_5xx'], [502, 'http_5xx']] as const)('a %i error page from the real browser is not content (still blocked)', async (status, outcome) => {
+    const s = await setup({ direct: challengePage(), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status, challenged: true })), scraper: scraperOf(async () => okPage()) });
+    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'scraper' });
+    expect(await s.rows()).toEqual(['direct:challenge', `real_browser:${outcome}`, 'scraper:ok']);
+  });
+
+  it.each([403, 429, 503])('a %i is accepted only when the first load showed a challenge that then cleared', async (status) => {
+    const cleared = await setup({ direct: bad(403), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status, challenged: true })) });
+    expect(await collectPage(URL_, cleared.ctx)).toMatchObject({ via: 'real_browser', title: 'R' });
+    const noChallenge = await setup({ direct: bad(403), realBrowser: real(async () => ({ html: ARTICLE, finalUrl: URL_, status, challenged: false })), archive: { snapshot: vi.fn(async () => null) } });
+    expect(await collectPage(URL_, noChallenge.ctx)).toEqual({ failed: 'http_403' });
   });
 
   it('a 404 is not escalated to the browser or the scraper', async () => {
     const browser = real(async () => ({ html: ARTICLE, finalUrl: URL_, status: 200 }));
     const scraper = scraperOf(async () => okPage());
-    const s = await setup({ direct: bad(404), browser, scraper });
+    const s = await setup({ direct: bad(404), realBrowser: browser, browser, scraper });
     expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'archive' });
     expect(browser.render).not.toHaveBeenCalled();
     expect(scraper.scrape).not.toHaveBeenCalled();
-  });
-
-  it('the headless renderer still logs as browser', async () => {
-    const s = await setup({ direct: bad(403), browser: { kind: 'headless', render: async () => ({ html: ARTICLE, finalUrl: URL_ }) } });
-    expect(await collectPage(URL_, s.ctx)).toMatchObject({ via: 'browser' });
-    expect(await s.rows()).toEqual(['browser:ok', 'direct:http_403']);
   });
 });
 
@@ -297,7 +314,7 @@ describe('collectPage: fetch.respectRobots and hosts that are never relaxed', ()
     for (const u of ['https://gamersgetaway.ca/', 'https://shop.gamersgetaway.ca/p', 'https://www.bing.com/search?q=x', 'http://127.0.0.1/']) {
       const browser: BrowserRenderer = { kind: 'real', render: vi.fn(async () => ({ html: '<p>x</p>', finalUrl: u, status: 200 })) };
       const scraper: ScraperStep = { scrape: vi.fn(async () => okPage()) };
-      const s = await setup({ respectRobots: false, browser, scraper });
+      const s = await setup({ respectRobots: false, realBrowser: browser, browser, scraper });
       expect(await collectPage(u, s.ctx)).toEqual({ failed: 'blocked_host' });
       expect(s.fetchPage).not.toHaveBeenCalled();
       expect(browser.render).not.toHaveBeenCalled();
@@ -310,7 +327,7 @@ describe('collectPage: fetch.respectRobots and hosts that are never relaxed', ()
     const LONG_HTML = `<html><body><article>${'<p>text text text text text text text text.</p>'.repeat(60)}</article></body></html>`;
     const s = await setup({
       direct: bad(403), respectRobots: false,
-      browser: { kind: 'real', render: async () => ({ html: LONG_HTML, finalUrl: 'https://gamersgetaway.ca/x', status: 200 }) },
+      realBrowser: { kind: 'real', render: async () => ({ html: LONG_HTML, finalUrl: 'https://gamersgetaway.ca/x', status: 200 }) },
       scraper: { scrape: async () => okPage(LONG, 'https://shop.gamersgetaway.ca/y') },
       archive: { snapshot: vi.fn(async () => null) },
     });

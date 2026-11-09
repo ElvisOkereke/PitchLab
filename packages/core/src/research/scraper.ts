@@ -1,3 +1,4 @@
+import { parse } from 'tldts';
 import type { Db } from '../db/client';
 import { isBannedSource } from '../tools/banned-sources';
 import { extract, HTML_MAX_BYTES, type PageResult } from '../tools/fetch-page';
@@ -62,6 +63,20 @@ export function buildProviderRequest(provider: ScraperProvider, key: string, tar
 /** The provider's report of where the page ended up, if it gives one. */
 const RESOLVED_HEADERS = ['spb-resolved-url', 'zr-final-url'];
 
+/**
+ * A target the provider may load: passes isBannedSource (never-fetch, banned, IP literal, non-http) and has a public
+ * registrable domain (fails closed for single-label and internal names such as `localhost` or `x.internal`).
+ */
+function sendable(target: string): boolean {
+  if (isBannedSource(target)) return false;
+  try {
+    const r = parse(new URL(target).hostname.toLowerCase());
+    return r.domain !== null && r.isIcann === true;
+  } catch {
+    return false;
+  }
+}
+
 const failed = (target: string, reason: NonNullable<PageResult['reason']>, status = 0): PageResult => ({ ok: false, status, finalUrl: target, title: '', text: '', reason });
 
 /** A provider error as a failed page. SourceError messages carry only the source name and status (never the url or key). */
@@ -86,7 +101,7 @@ export async function scrapeViaProvider(
   target: string,
   o: { provider: ScraperProvider; key: string; fetch?: typeof fetch; log?: (m: string) => void },
 ): Promise<PageResult> {
-  if (isBannedSource(target)) return failed(target, 'blocked_host');
+  if (!sendable(target)) return failed(target, 'blocked_host');
   const req = buildProviderRequest(o.provider, o.key, target);
   const http = { fetch: o.fetch };
   try {
@@ -128,7 +143,8 @@ const count = (v: unknown): number => (typeof v === 'number' && Number.isFinite(
  * The scraping step for collectPage: skips when the provider or key is missing, or when this month's page budget
  * (`fetch.scraperMonthlyPages`, default 900) is used up. Each provider request counts one page in
  * `fetch.scraperPages.<YYYY-MM>`, before it is sent (a failed page still costs a request). A target refused before
- * sending costs nothing. The worker runs one mission at a time, so a read-then-write count is enough.
+ * sending costs nothing. The count is best-effort (read, then write): the worker runs one mission at a time, but two
+ * concurrent collectors could each read the same count and the month could overshoot by a page or two.
  */
 export function createScraperStep(o: {
   db: Db; provider?: ScraperProvider; key?: string; fetch?: typeof fetch; now?: () => Date; log?: (m: string) => void;
@@ -141,7 +157,7 @@ export function createScraperStep(o: {
   return {
     configured: true,
     async scrape(url) {
-      if (isBannedSource(url)) return failed(url, 'blocked_host');
+      if (!sendable(url)) return failed(url, 'blocked_host');
       const monthKey = scraperMonthKey(now());
       const limitRaw = await getSetting(db, SCRAPER_MONTHLY_PAGES_KEY);
       const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw >= 0 ? Math.floor(limitRaw) : DEFAULT_SCRAPER_MONTHLY_PAGES;
