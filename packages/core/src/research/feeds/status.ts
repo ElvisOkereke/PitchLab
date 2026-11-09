@@ -27,7 +27,7 @@ const SourceStats = z.object({
 export type FeedSourceStats = z.infer<typeof SourceStats>;
 
 const Stats = z.object({
-  at: z.string().max(40),
+  at: z.iso.datetime({ offset: true }),
   spentUsd: z.number().min(0).catch(0),
   bySource: z.record(z.string(), SourceStats),
 });

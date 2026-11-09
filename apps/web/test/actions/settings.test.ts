@@ -12,7 +12,7 @@ vi.mock('@/lib/auth/require-owner', () => ({ requireOwnerAction: async () => {},
 vi.mock('next/cache', () => import('../helpers/next-mocks').then((m) => m.nextCacheMock));
 vi.mock('next/navigation', () => import('../helpers/next-mocks').then((m) => m.nextNavigationMock));
 
-const { saveSettingsAction, saveHoldoutAction } = await import('@/actions/settings');
+const { saveSettingsAction, saveHoldoutAction, resetTelegramPairingAction } = await import('@/actions/settings');
 
 function form(fields: Record<string, string>) {
   const fd = new FormData();
@@ -52,6 +52,16 @@ describe('saveSettingsAction', () => {
     expect(await saveSettingsAction({}, form({ 'sender.address': 'x'.repeat(501) })))
       .toEqual({ error: 'Mailing address: At most 500 characters.', values: { 'sender.address': 'x'.repeat(501) } });
     expect(await snapshotDb(state.db)).toEqual(before);
+  });
+});
+
+describe('resetTelegramPairingAction', () => {
+  it('forgets the bot owner, makes a new pairing code and refreshes Settings and Finds', async () => {
+    await setSetting(state.db, 'telegram.ownerChatId', 1111);
+    await resetTelegramPairingAction();
+    expect(await getSetting(state.db, 'telegram.ownerChatId')).toBeNull();
+    expect(await getSetting(state.db, 'telegram.pairingCode')).toMatch(/^[A-Z2-9]{8}$/);
+    expect(request.revalidated).toEqual(expect.arrayContaining(['/settings', '/library/finds']));
   });
 });
 

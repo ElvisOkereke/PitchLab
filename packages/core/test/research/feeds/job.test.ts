@@ -1,10 +1,10 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../../src/db/client';
-import { knowledgeItems, llmCalls, settings } from '../../../src/db/schema';
+import { knowledgeItems, knowledgeSources, llmCalls, settings } from '../../../src/db/schema';
 import type { CallCtx, ModelRouter } from '../../../src/llm/types';
 import { SourceError } from '../../../src/research/http';
-import { FEEDS_LAST_RUN_KEY, FEEDS_RSS_KEY, FEEDS_SEEN_KEY, feedsDue, feedsSpentToday, getFeedRssList, runDueFeedsJob, runFeedsJob, type FeedCollectors, type FeedDeps } from '../../../src/research/feeds/job';
+import { FEEDS_LAST_RUN_KEY, FEEDS_RSS_KEY, FEEDS_SEEN_KEY, feedsDue, feedsExitCode, feedsSpentToday, getFeedRssList, runDueFeedsJob, runFeedsJob, type FeedCollectors, type FeedDeps } from '../../../src/research/feeds/job';
 import { DEFAULT_RSS_FEEDS } from '../../../src/research/feeds/rss';
 import { FEEDS_STATS_KEY, readFeedsStatus } from '../../../src/research/feeds/status';
 import { resetThrottle } from '../../../src/research/http';
@@ -167,6 +167,71 @@ describe('runFeedsJob', () => {
     const r = await runFeedsJob(deps(db, router(db), c.collectors));
     expect(r.bySource.reddit).toMatchObject({ items: 1, added: 1 });
     expect(r.bySource.rss!.items).toBe(1);
+  });
+
+  it('saves feeds.seen after each extraction batch, so a later failure does not pay again for the earlier batches', async () => {
+    const db = await testDb();
+    const rt = router(db);
+    let embeds = 0;
+    const embed = rt.embed.bind(rt);
+    rt.embed = async (texts, ctx) => {
+      if (++embeds === 2) throw new Error('embed down');
+      return embed(texts, ctx);
+    };
+    const c = collectors({ ...NONE, hnshow: () => items('hn', 16) }); // 2 batches of 8
+    const r = await runFeedsJob(deps(db, rt, c.collectors));
+    expect(r.warnings.join('\n')).toContain('failed');
+    expect(((await getSetting(db, FEEDS_SEEN_KEY)) as string[]).length).toBe(8);
+  });
+
+  it('yields between sources and batches when a run is queued (shouldYield) or the signal is aborted', async () => {
+    const db = await testDb();
+    const c = collectors({ ...NONE, reddit: () => items('reddit', 2), hnshow: () => items('hn', 16) });
+    let asks = 0;
+    const r = await runFeedsJob(deps(db, router(db), c.collectors, { shouldYield: async () => ++asks > 1 }));
+    expect(c.asked.reddit!.length).toBeGreaterThan(0);
+    expect(c.asked.bluesky).toBeUndefined();
+    expect(c.asked.hnshow).toBeUndefined();
+    expect(r.warnings.join('\n')).toContain('paused for queued work');
+    const db2 = await testDb();
+    const c2 = collectors({ ...NONE, hnshow: () => items('hn', 16) });
+    const ac = new AbortController();
+    ac.abort();
+    const rt2 = router(db2);
+    const r2 = await runFeedsJob(deps(db2, rt2, c2.collectors, { signal: ac.signal }));
+    expect(c2.asked.reddit).toBeUndefined();
+    expect(rt2.calls).toHaveLength(0);
+    expect(r2.warnings.join('\n')).toContain('paused');
+    // Between batches: the first batch is extracted, then the job yields.
+    const db3 = await testDb();
+    const c3 = collectors({ ...NONE, hnshow: () => items('hn', 16) });
+    const rt3 = router(db3);
+    let extracting = false;
+    const r3 = await runFeedsJob(deps(db3, rt3, c3.collectors, { shouldYield: async () => {
+      if (rt3.calls.some((x) => x.kind === 'embed')) extracting = true;
+      return extracting;
+    } }));
+    expect(rt3.calls.filter((x) => x.kind === 'structured')).toHaveLength(1);
+    expect(r3.bySource.hnshow!.added).toBe(8);
+  });
+
+  it('verifies a Reddit comment quote against the comment only, never the post title shown with it', async () => {
+    const db = await testDb();
+    const post = { source: 'reddit', url: 'https://www.reddit.com/r/smallbusiness/comments/abc123/slug/', title: SENTENCE, text: 'My own post body says it all, long enough here.', publishedAt: null };
+    const comment = { source: 'reddit', url: 'https://www.reddit.com/r/smallbusiness/comments/abc123/slug/def456/', title: SENTENCE, text: 'Same here, every week, my bookkeeper hates it too.', publishedAt: null };
+    const c = collectors({ ...NONE, reddit: (q) => (q.startsWith('r/') ? [post, comment] : []) });
+    await runFeedsJob(deps(db, router(db), c.collectors));
+    const srcs = await db.select().from(knowledgeSources);
+    expect(srcs.find((s) => s.url === post.url)?.quoteVerified).toBe(true);
+    expect(srcs.find((s) => s.url === comment.url)?.quoteVerified).toBe(false);
+  });
+
+  it('feedsExitCode: 1 when every source failed or was skipped and nothing was added, else 0', () => {
+    const s = (items: number, added: number, errors: string[] = []) => ({ items, added, errors });
+    const all = (v: ReturnType<typeof s>) => Object.fromEntries(['reddit', 'bluesky', 'hnshow', 'arxiv', 'huggingface', 'githubtrending', 'rss', 'ytshorts'].map((n) => [n, v]));
+    expect(feedsExitCode({ bySource: all(s(0, 0, ['rate limited'])), spentUsd: 0, warnings: [] })).toBe(1);
+    expect(feedsExitCode({ bySource: { ...all(s(0, 0, ['x'])), hnshow: s(0, 0) }, spentUsd: 0, warnings: [] })).toBe(0);
+    expect(feedsExitCode({ bySource: { ...all(s(0, 0, ['x'])), rss: s(3, 1, ['one feed failed']) }, spentUsd: 0, warnings: [] })).toBe(0);
   });
 
   it('skips Shorts without a YouTube key and says so', async () => {

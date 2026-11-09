@@ -3,7 +3,7 @@ import { cleanup, render, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SettingsData } from '@/components/settings-view';
 
-vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})), saveHoldoutAction: vi.fn(async () => ({})) }));
+vi.mock('@/actions/settings', () => ({ saveSettingsAction: vi.fn(async () => ({})), saveHoldoutAction: vi.fn(async () => ({})), resetTelegramPairingAction: vi.fn(async () => {}) }));
 vi.mock('@/actions/library', () => ({ saveResearchSettingsAction: vi.fn(async () => ({})) }));
 vi.mock('@/actions/example', () => ({ hideExampleAction: vi.fn(async () => {}), resetExampleAction: vi.fn(async () => {}) }));
 
@@ -119,12 +119,13 @@ describe('SettingsView', () => {
     const unpaired = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, telegram: true } }, telegram: { connected: true, paired: false, pairingCode: 'ABCD2345' } })} />);
     const t = unpaired.getByTestId('conn-telegram').textContent!;
     expect(t).toContain('/start ABCD2345');
-    expect(t).toContain('gen telegram reset');
+    expect(unpaired.getByRole('button', { name: 'Reset pairing' })).toBeTruthy();
     unpaired.unmount();
     const paired = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, telegram: true } }, telegram: { connected: true, paired: true, pairingCode: null } })} />);
     const tp = paired.getByTestId('conn-telegram').textContent!;
     expect(tp).toContain('paired');
     expect(tp).not.toContain('/start');
+    expect(paired.getByRole('button', { name: 'Reset pairing' })).toBeTruthy();
     paired.unmount();
     const off = render(<SettingsView data={data()} />);
     expect(off.getByTestId('conn-telegram').textContent).toContain('TELEGRAM_BOT_TOKEN');

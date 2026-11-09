@@ -11,4 +11,16 @@ describe('check-bundle needles', () => {
     expect(needles.map((n) => n.label)).toContain('YOUTUBE_API_KEY');
     expect(bundleNeedles({}).skipped).toContain('YOUTUBE_API_KEY');
   });
+
+  it('searches for the sources-expansion secrets when set', () => {
+    const keys = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_OWNER_CHAT_ID', 'SCRAPER_API_KEY', 'BLUESKY_APP_PASSWORD'];
+    const { needles } = bundleNeedles(Object.fromEntries(keys.map((k) => [k, `test-only-${k.toLowerCase()}-value`])));
+    for (const k of keys) expect(needles.map((n) => n.label)).toContain(k);
+    for (const k of keys) expect(bundleNeedles({}).skipped).toContain(k);
+  });
+
+  it('has markers for the capture package and its tools, so they never reach the web bundle', () => {
+    const labels = bundleNeedles({}).needles.map((n) => n.label);
+    for (const m of ['@bcg/capture', 'tesseract', 'yt-dlp', 'playwright']) expect(labels).toContain(`marker ${m}`);
+  });
 });

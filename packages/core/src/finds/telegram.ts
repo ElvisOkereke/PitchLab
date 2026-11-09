@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { Db } from '../db/client';
 import {
-  TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, readPairingCode,
+  TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, readPairingCode, recordWrongPairingGuess,
 } from '../dashboard/telegram';
 import { request, SourceError } from '../research/http';
 import { scrubSecrets } from '../tools/scrub';
@@ -24,6 +24,10 @@ const API = 'https://api.telegram.org';
 const MAX_UPDATES = 50;
 const MAX_TEXT = 4096;
 const MAX_URLS = 10;
+/** Handling failures in a row for one update (setting, survives passes): { updateId, count }. */
+export const TELEGRAM_FAILURES_KEY = 'telegram.updateFailures';
+/** An update that fails this many times in a row is skipped (the offset moves past it). */
+export const MAX_UPDATE_FAILURES = 3;
 const URL_IN_TEXT = /\bhttps?:\/\/[^\s<>"'`]+/gi;
 const TRAILING_PUNCT = /[.,;:!?)\]}'"»”’]+$/;
 
@@ -146,13 +150,31 @@ export async function pollTelegram(deps: TelegramDeps): Promise<{ received: numb
   for (const u of updates) {
     if (typeof u?.update_id !== 'number' || !Number.isInteger(u.update_id)) continue;
     out.received++;
-    await handle(u);
+    try {
+      await handle(u);
+    } catch (err) {
+      if (!(await skipPoison(u.update_id, err))) throw err;
+      out.ignored++;
+    }
     if (u.update_id + 1 > next) {
       next = u.update_id + 1;
       await setSetting(db, TELEGRAM_OFFSET_KEY, next);
     }
   }
   return out;
+
+  /** Counts a failure for this update; true (logged once) when it has now failed MAX_UPDATE_FAILURES times in a row. */
+  async function skipPoison(updateId: number, err: unknown): Promise<boolean> {
+    const prev = (await getSetting(db, TELEGRAM_FAILURES_KEY).catch(() => null)) as { updateId?: unknown; count?: unknown } | null;
+    const count = (prev && prev.updateId === updateId && typeof prev.count === 'number' ? prev.count : 0) + 1;
+    if (count < MAX_UPDATE_FAILURES) {
+      await setSetting(db, TELEGRAM_FAILURES_KEY, { updateId, count }).catch(() => {});
+      return false;
+    }
+    deps.log(sanitize(deps.token, `telegram: skipped an update after ${count} failed attempts (${err instanceof Error ? err.message : String(err)})`));
+    await setSetting(db, TELEGRAM_FAILURES_KEY, null).catch(() => {});
+    return true;
+  }
 
   async function handle(u: Update): Promise<void> {
     const msg = u.message;
@@ -168,6 +190,8 @@ export async function pollTelegram(deps: TelegramDeps): Promise<{ received: numb
       const code = await readPairingCode(db);
       if (!start?.[1] || !code || !codeMatches(start[1], code)) {
         out.ignored++; // nobody owns the bot yet: only /start with the right code counts, and nothing is said back
+        // A wrong code counts toward the guess cap; at the cap the code is replaced (shown again in Settings).
+        if (start?.[1] && code && (await recordWrongPairingGuess(db))) deps.log('telegram: pairing code rotated after too many wrong guesses');
         return;
       }
       await pinTelegramOwner(db, chatId);

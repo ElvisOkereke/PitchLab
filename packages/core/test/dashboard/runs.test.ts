@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { cases, ideas, runStages, runs } from '../../src/db/schema';
 import {
-  MAX_QUEUED, QUEUE_MARKET_ID, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, listRuns, queueGateKillRerun, queueRun, requeueRun,
+  MAX_QUEUED, QUEUE_MARKET_ID, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, hasQueuedRun, listRuns, queueGateKillRerun, queueRun, requeueRun,
 } from '../../src/dashboard/runs';
 import { BENCHMARKS } from '../../src/bench/definitions';
 import { defaultRunConfig } from '../../src/pipeline/types';
@@ -31,11 +31,14 @@ describe('run config schemas', () => {
 
   it('RunConfigSchema accepts the CLI defaults and rejects absurd values', () => {
     expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'open' })).success).toBe(true);
+    // A finds run is always fixed to its finds when queued (R20).
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: ['11111111-1111-4111-8111-111111111111'] })).success).toBe(true);
     for (const patch of [
       { ideaCount: 1e9 }, { ideaCount: 0 }, { advanceCount: 11 }, { maxSearchesPerCall: 11 }, { researchSearchesPerSector: 7 },
       { minSignals: 0 }, { dedupeThreshold: 0.3 }, { dedupeThreshold: 1 }, { sectors: Array(9).fill('x') }, { sectors: ['x'.repeat(101)] },
       { lensIds: Array(9).fill('x') }, { ideaText: 'x'.repeat(20_001) }, { marketId: 'x'.repeat(51) }, { overturnOfIdeaId: 'nope' },
       { seedType: 'chaos' },
+      { seedType: 'finds' }, { seedType: 'finds', findIds: [] },
     ]) {
       expect(RunConfigSchema.safeParse({ ...defaultRunConfig({ seedType: 'open' }), ...patch }).success).toBe(false);
     }
@@ -179,6 +182,18 @@ describe('listRuns', () => {
   });
 });
 
+describe('hasQueuedRun', () => {
+  it('is true only while a run is queued', async () => {
+    const db = await testDb();
+    expect(await hasQueuedRun(db)).toBe(false);
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    await db.update(runs).set({ status: 'running' }).where(eq(runs.id, run.id));
+    expect(await hasQueuedRun(db)).toBe(false);
+    await db.update(runs).set({ status: 'queued' }).where(eq(runs.id, run.id));
+    expect(await hasQueuedRun(db)).toBe(true);
+  });
+});
+
 describe('countRunsByStatus', () => {
   it('counts every run status, zero when absent', async () => {
     expect(await countRunsByStatus(db)).toEqual({ queued: 0, running: 0, succeeded: 0, failed: 0 });
@@ -205,10 +220,10 @@ describe('example run is hidden', () => {
 describe('finds seed (sources expansion §C)', () => {
   const v = (dim: number) => { const x = unit(0).map(() => 0); x[0] = 0.5; x[dim] = Math.sqrt(0.75); return x; };
 
-  it('schemas accept a finds seed with at most 20 find ids', () => {
+  it('schemas accept a finds seed with 1 to 20 find ids (the stored config always has them; the queue input may omit them)', () => {
     const id = randomUUID();
     expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: [id] })).success).toBe(true);
-    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds' })).success).toBe(true);
+    expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds' })).success).toBe(false);
     expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: Array.from({ length: 21 }, () => randomUUID()) })).success).toBe(false);
     expect(RunConfigSchema.safeParse(defaultRunConfig({ seedType: 'finds', findIds: ['nope'] })).success).toBe(false);
     expect(QueueRunInputSchema.safeParse({ seedType: 'finds' }).success).toBe(true);

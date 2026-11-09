@@ -15,6 +15,9 @@ const SUB = /^r\/[A-Za-z0-9_]{2,21}$/;
 
 const childrenOf = (j: unknown): Record<string, unknown>[] =>
   list(rec(rec(j).data).children).map((c) => rec(rec(c).data));
+/** A comment's permalink (/r/<sub>/comments/<post>/<slug>/<comment>/), not the post's. */
+export const isRedditCommentUrl = (url: string): boolean =>
+  /^https:\/\/(?:www\.|old\.)?reddit\.com\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+\/[^/]*\/[A-Za-z0-9]+\/?(?:[?#].*)?$/.test(url);
 const permalink = (p: unknown): string => (/^\/r\/[A-Za-z0-9_]+\/comments\/[A-Za-z0-9]+\//.test(str(p)) ? `https://${HOST}${str(p)}` : '');
 
 /** `q` is a search query, or `r/<subreddit>` for that subreddit's weekly top. Author fields are never read. */

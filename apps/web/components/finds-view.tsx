@@ -1,4 +1,5 @@
-import type { FindRow } from '@bcg/core/finds/store';
+import type { TelegramStatus } from '@bcg/core/dashboard/telegram';
+import { FINDS_SEED_DEFAULT, type FindRow } from '@bcg/core/finds/store';
 import Link from 'next/link';
 import { deleteFindAction, retryFindAction } from '@/actions/finds';
 import { formatDateTime, relativeTime } from '@/lib/time';
@@ -28,6 +29,8 @@ function statsLine(stats: FindRow['stats']): string {
 
 function FindItem({ find, now }: { find: FindRow; now: Date }) {
   const stats = statsLine(find.stats);
+  /** Names the find in the per-row button labels (its title, else its address). */
+  const name = find.title ?? find.url;
   return (
     <li className="find-row" data-testid={`find-${find.id}`}>
       <div className="label-row">
@@ -50,13 +53,13 @@ function FindItem({ find, now }: { find: FindRow; now: Date }) {
         {find.status === 'failed' ? (
           <form action={retryFindAction}>
             <input type="hidden" name="id" value={find.id} />
-            <button type="submit">Retry</button>
+            <button type="submit" aria-label={`Retry ${name}`}>Retry</button>
           </form>
         ) : null}
         {find.status !== 'capturing' ? (
           <form action={deleteFindAction}>
             <input type="hidden" name="id" value={find.id} />
-            <button type="submit">Delete</button>
+            <button type="submit" aria-label={`Delete ${name}`}>Delete</button>
           </form>
         ) : null}
       </div>
@@ -64,13 +67,26 @@ function FindItem({ find, now }: { find: FindRow; now: Date }) {
   );
 }
 
-export type FindsViewProps = { finds: FindRow[]; telegramConnected: boolean; now: Date };
+export type FindsViewProps = { finds: FindRow[]; telegram: TelegramStatus; now: Date };
+
+/** How to connect the bot (no token on the worker), the pairing code while unpaired, nothing once paired. */
+function TelegramHint({ telegram }: { telegram: TelegramStatus }) {
+  if (!telegram.connected) return <p className="muted">Telegram is not connected yet. The steps to connect your bot are in docs/OWNER-TODO.md.</p>;
+  if (telegram.paired) return null;
+  return (
+    <p className="muted" data-testid="telegram-hint">
+      {telegram.pairingCode
+        ? <>Your Telegram bot is not paired yet. Send <code>/start {telegram.pairingCode}</code> to it to pair it.</>
+        : 'Your Telegram bot is not paired yet: restart npm run worker to get a pairing code (shown in Settings → Connections).'}
+    </p>
+  );
+}
 
 /**
  * The Finds page: paste links, see each one's capture status, and start a run from the captured ones. Everything is
  * rendered as text (R13).
  */
-export function FindsView({ finds, telegramConnected, now }: FindsViewProps) {
+export function FindsView({ finds, telegram, now }: FindsViewProps) {
   const busy = finds.some((f) => f.status === 'queued' || f.status === 'capturing');
   const captured = finds.some((f) => f.status === 'done');
   return (
@@ -82,9 +98,9 @@ export function FindsView({ finds, telegramConnected, now }: FindsViewProps) {
       </div>
       <p><Link href="/library">Back to the library</Link></p>
       <p>Share links to your Telegram bot or paste them here. PitchLab downloads each one, transcribes it, reads on-screen text and adds it to your library.</p>
-      {telegramConnected ? null : <p className="muted">Telegram is not connected yet. The steps to connect your bot are in docs/OWNER-TODO.md.</p>}
+      <TelegramHint telegram={telegram} />
       <FindsPasteForm />
-      {captured ? <FindsRunForm /> : null}
+      {captured ? <FindsRunForm count={FINDS_SEED_DEFAULT} /> : null}
       <h2>Your finds</h2>
       {finds.length === 0 ? <p className="muted">No finds yet.</p> : <ul className="find-list">{finds.map((f) => <FindItem key={f.id} find={f} now={now} />)}</ul>}
       {busy ? <AutoRefresh everyMs={REFRESH_MS} /> : null}

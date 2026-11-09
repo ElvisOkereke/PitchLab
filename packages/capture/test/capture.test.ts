@@ -351,6 +351,28 @@ describe('captureLink', () => {
     for (const c of calls.filter((c) => c.command !== ytdlp())) expect(c.args).not.toContain('--proxy');
   });
 
+  it('refuses when checkUrl does not answer within the timeout', async () => {
+    const { spawn, calls } = tools();
+    const res = await captureLink('https://www.youtube.com/shorts/x', opts({ spawn, timeoutMs: 20, checkUrl: () => new Promise<boolean>(() => {}) }));
+    expect(res).toEqual({ ok: false, platform: 'youtube', error: expect.stringMatching(/not allowed/i) });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('scrubs an Instagram profile name from the URL path out of errors raised before metadata', async () => {
+    const res = await captureLink(
+      'https://www.instagram.com/plannerqueen77/reel/ABC123/',
+      opts({ spawn: tools({ meta: { code: 1, stderr: 'ERROR: [Instagram] https://www.instagram.com/plannerqueen77/reel/ABC123/: login required for plannerqueen77' } }).spawn }),
+    );
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(res)).not.toMatch(/plannerqueen77/i);
+    resetCapturePacing();
+    const reel = await captureLink(
+      'https://www.instagram.com/reel/ABC123/',
+      opts({ spawn: tools({ meta: { code: 1, stderr: 'ERROR: [Instagram] reel ABC123: login required' } }).spawn }),
+    );
+    expect(!reel.ok && reel.error).toMatch(/reel ABC123/);
+  });
+
   it('refuses before spawning when checkUrl says no', async () => {
     const { spawn, calls } = tools();
     const checkUrl = vi.fn(async () => false);
@@ -373,6 +395,11 @@ describe('captureLink', () => {
     'http://printer.local/v',
     'http://metadata.google.internal/computeMetadata/v1/',
     'http://intranet/v',
+    'http://127.1/v',
+    'http://0x7f000001/v',
+    'http://localhost./v',
+    'http://localhost../v',
+    'http://printer.local../v',
   ])('refuses the private or local host %s without spawning or reading the page', async (url) => {
     const { spawn, calls } = tools();
     const readPage = vi.fn(async () => ({ pageText: 'secret' }));

@@ -103,6 +103,12 @@ const SPECS: Record<string, Spec> = {
   'settings.ts#saveSettingsAction': {
     seed: async () => ({ 'sender.name': 'Al Owner', 'landing.formEndpoint': 'https://forms.example/f' }),
   },
+  'settings.ts#resetTelegramPairingAction': {
+    seed: async (db) => {
+      await setSetting(db, 'telegram.ownerChatId', 1111);
+      return {};
+    },
+  },
   'settings.ts#saveHoldoutAction': {
     seed: async () => ({ holdout: 'An AI bookkeeper for small clinics' }),
   },

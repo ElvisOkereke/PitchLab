@@ -37,8 +37,10 @@ export async function runQueuedFinds(deps: RunFindsDeps): Promise<{ captured: nu
 /**
  * The worker's finds step: nothing (and nothing opened) when no find is waiting; otherwise one find per call. A missing
  * tool or capture service is logged once per executor (once per worker start), and the finds stay queued.
+ * `toolsAvailable` false (the worker's check at start) skips opening capture altogether, so the package is not
+ * imported and no proxy is started on every pass.
  */
-export function createFindsExecutor(deps: Omit<RunFindsDeps, 'limit'>): () => Promise<boolean> {
+export function createFindsExecutor(deps: Omit<RunFindsDeps, 'limit'> & { toolsAvailable?: boolean }): () => Promise<boolean> {
   const warned = new Set<string>();
   const warnOnce = (m: string) => {
     if (warned.has(m)) return;
@@ -47,6 +49,10 @@ export function createFindsExecutor(deps: Omit<RunFindsDeps, 'limit'>): () => Pr
   };
   return async () => {
     if (!(await hasQueuedFinds(deps.db))) return false;
+    if (deps.toolsAvailable === false) {
+      warnOnce(FINDS_WAITING_TOOLS);
+      return false;
+    }
     const r = await runQueuedFinds({ ...deps, limit: 1 });
     if (r === 'no_tools') {
       warnOnce(FINDS_WAITING_TOOLS);

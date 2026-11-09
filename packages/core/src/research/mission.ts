@@ -28,6 +28,7 @@ import { hnTrend } from './sources/hntrend';
 import { wikiTrend } from './sources/wikipageviews';
 import { worldBankMarket } from './sources/worldbank';
 import { youtubeSearch, type YoutubeState } from './sources/youtube';
+import { isRedditCommentUrl } from './feeds/reddit';
 import { productHuntSearch, productHuntToDraft, type ProductHuntItem } from './sources/producthunt';
 import { ycCompanies, ycToDraft, type YcCompany } from './sources/yc';
 
@@ -55,8 +56,9 @@ const WEB_MAX_SEARCHES = 3;
 export const BUDGET_WARNING = 'Budget reached; stopped early.';
 
 /**
- * Sources a mission may use. Reddit is deliberately absent (site terms: commercial use needs a contract and its API
- * is closing); its collector module stays in research/sources/ unused, so it can be re-enabled with permission.
+ * Sources a mission may use. Reddit is not one of them: the owner ruled it in (2026-11-08), and it comes in through the
+ * automatic feeds instead (research/feeds/reddit.ts: public .json, at most 1 request per 2 s). The older collector in
+ * research/sources/reddit.ts stays unused.
  * Product Hunt is used only when PRODUCTHUNT_TOKEN is set (owner ruling: non-commercial prototyping under its free API
  * terms). YouTube is used only when YOUTUBE_API_KEY is set (official API, 30-day retention).
  * The Slice B sources (Federal Register, Wikipedia pageviews, World Bank) are free, keyless APIs; World Bank is never
@@ -1058,9 +1060,11 @@ export async function extractDrafts(
 function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: KnowledgeKind[]): KnowledgeDraft | null {
   const src = batch[e.source - 1];
   const shownText = shown[e.source - 1];
-  // A YouTube comment item carries the video title only as context: the quote must be verbatim in the item's own text
-  // (the comment, or the title and description for the video item itself), never in the title shown alongside it.
-  const sourceText = src?.sourceType === 'youtube' ? stripInvisible(src.text) : shownText;
+  // A YouTube or Reddit comment item carries the video or post title only as context: the quote must be verbatim in the
+  // item's own text (the comment, or the title and description for the video item itself), never in the title shown
+  // alongside it.
+  const ownTextOnly = src?.sourceType === 'youtube' || (src?.sourceType === 'reddit' && isRedditCommentUrl(src.url));
+  const sourceText = src && ownTextOnly ? stripInvisible(src.text) : shownText;
   if (!src || shownText === undefined || sourceText === undefined || !kinds.includes(e.kind)) return null;
   let facts: unknown;
   try {

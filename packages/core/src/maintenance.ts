@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNotNull, lt, lte, notExists, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, notExists, or, sql, type SQL } from 'drizzle-orm';
 import { EXPIRED_PLACEHOLDER, YOUTUBE_CLAIM_NOTE, isYoutubeUrl } from './case/expired';
 import type { Db } from './db/client';
 import { pacificDate } from './research/sources/youtube';
@@ -11,6 +11,8 @@ export const YOUTUBE_RETENTION_DAYS = 30;
 export { EXPIRED_PLACEHOLDER, YOUTUBE_CLAIM_NOTE };
 /** Cases read per batch by the case-quote step (cursor on id), and at most this many batches per run. */
 const CASE_BATCH = 100;
+/** Library source type of a YouTube link the owner shared as a find (see finds/worker findSourceType). */
+const FIND_SOURCE_TYPE = 'youtube-find';
 const MAX_CASE_BATCHES = 1000;
 
 /** Whitespace-collapsed text, as harvest's collapse() stores a promoted library quote (whitespace runs to one space, trimmed). */
@@ -68,6 +70,13 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
     sql`s.source_type = 'youtube' and s.expires_at is not null and s.expires_at > ${nowParam} and s.url = ${urlCol}`;
   /** A copy of YouTube text is backed while an unexpired YouTube source for the same url contains it (copies may be excerpts). */
   const backedBySource = (urlCol: SQL, text: SQL) => sql`exists (select 1 from knowledge_sources s where ${liveYoutubeSource(urlCol)}
+      and strpos(${collapsed(sql`s.quote`)}, ${collapsed(text)}) > 0)`;
+  /**
+   * Text the owner shared as a YouTube find (source type 'youtube-find', captured by the finds pipeline, not YouTube API data)
+   * does not expire: a copy backed by a live find source for the same url is kept whatever the case's age.
+   */
+  const backedByFind = (urlCol: SQL, text: SQL) => sql`exists (select 1 from knowledge_sources s where s.source_type = ${FIND_SOURCE_TYPE}
+      and (s.expires_at is null or s.expires_at > ${nowParam}) and s.url = ${urlCol}
       and strpos(${collapsed(sql`s.quote`)}, ${collapsed(text)}) > 0)`;
   const errors: string[] = [];
   const step = async <T>(name: string, fallback: T, fn: () => Promise<T>): Promise<T> => {
@@ -134,13 +143,14 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
     // Backing is checked on the quote, or on the text when the quote is already gone. Redacted rows no longer match.
     const signalText = sql`(${claims.section} = 'signal' and ${claims.text} <> ${EXPIRED_PLACEHOLDER})`;
     const backed = backedBySource(sql`claims.source_url`, sql`coalesce(claims.quote, claims.text)`);
+    const findBacked = backedByFind(sql`claims.source_url`, sql`coalesce(claims.quote, claims.text)`);
     const res = await tx.update(claims)
       .set({
         quote: null,
         reviewNote: sql`(case when ${claims.quote} is not null then ${YOUTUBE_CLAIM_NOTE} else ${claims.reviewNote} end)`,
         text: sql`(case when ${claims.section} = 'signal' then ${EXPIRED_PLACEHOLDER} else ${claims.text} end)`,
       })
-      .where(and(isYoutubeUrlSql(sql`${claims.sourceUrl}`), or(isNotNull(claims.quote), signalText), or(inArray(claims.caseId, old), sql`not ${backed}`)))
+      .where(and(isYoutubeUrlSql(sql`${claims.sourceUrl}`), or(isNotNull(claims.quote), signalText), sql`not ${findBacked}`, or(inArray(claims.caseId, old), sql`not ${backed}`)))
       .returning({ id: claims.id });
     return res.length;
   }));
@@ -148,7 +158,7 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
   const redactedCases = await step('redact case quotes', 0, async () => {
     // Verbatim YouTube quotes inside cases.sections (evidence signals and claims, number-input sources at any depth).
     // Same rule as claims: replaced by the placeholder when the case is over 30 days old or no unexpired YouTube source
-    // for the same url contains the quote. Only quote text changes, so computed numbers stay as they are. Cases are read
+    // for the same url contains the quote, unless a live YouTube find for the url contains it. Only quote text changes, so computed numbers stay as they are. Cases are read
     // in bounded batches (cursor on id) and written back with a compare-and-set on the old sections.
     let count = 0;
     let after: string | null = null;
@@ -161,10 +171,16 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
         const found = youtubeQuoteNodes(next);
         if (found.length === 0) continue;
         const old = row.createdAt < ytCutoff;
-        const live = old ? [] : await db.select({ url: knowledgeSources.url, quote: knowledgeSources.quote }).from(knowledgeSources)
-          .where(and(eq(knowledgeSources.sourceType, 'youtube'), gt(knowledgeSources.expiresAt, now), inArray(knowledgeSources.url, [...new Set(found.map((f) => f.url))])));
+        // Live YouTube API sources back a quote only while the case is under 30 days old; a live YouTube find backs it always.
+        const live = await db.select({ url: knowledgeSources.url, quote: knowledgeSources.quote, sourceType: knowledgeSources.sourceType }).from(knowledgeSources)
+          .where(and(
+            or(
+              old ? undefined : and(eq(knowledgeSources.sourceType, 'youtube'), gt(knowledgeSources.expiresAt, now)),
+              and(eq(knowledgeSources.sourceType, FIND_SOURCE_TYPE), or(isNull(knowledgeSources.expiresAt), gt(knowledgeSources.expiresAt, now))),
+            ),
+            inArray(knowledgeSources.url, [...new Set(found.map((f) => f.url))])));
         const backed = (f: QuoteNode) => live.some((l) => l.url === f.url && l.quote !== null && collapse(l.quote).includes(collapse(f.node.quote)));
-        const expired = found.filter((f) => old || !backed(f));
+        const expired = found.filter((f) => !backed(f));
         if (expired.length === 0) continue;
         for (const f of expired) f.node.quote = EXPIRED_PLACEHOLDER;
         const written = await db.transaction((tx) => tx.update(cases).set({ sections: next as typeof row.sections })

@@ -96,6 +96,8 @@ export async function rssFeed(q: string, opts: RssOpts): Promise<RawItem[]> {
   if (!url) throw new SourceError('bad_response', 'rss', 'rss: feed address is not a web address');
   const res = await opts.fetchPage(url, { userAgent: USER_AGENT, accept: 'feed', blockHosts: BANNED_DOMAINS, maxBytes: 1_500_000 });
   if (!res.ok) {
+    // The fetcher's own reasons first: a too-large or non-feed body can arrive with a 200 status.
+    if (res.reason === 'too_large') throw badResponse('rss', 'feed is larger than 1.5 MB');
     if (res.status === 429) throw new SourceError('rate_limited', 'rss');
     if (res.status === 401 || res.status === 403) throw new SourceError('auth', 'rss', `rss: HTTP ${res.status}`);
     if (res.reason === 'not_html') throw badResponse('rss', 'response was not an RSS or Atom feed');

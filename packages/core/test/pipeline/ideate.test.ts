@@ -1611,6 +1611,8 @@ describe('ideate: seen in the wild', () => {
     const shown = block(p!, 'seen-in-the-wild')!.split('\n');
     expect(shown[0]).toContain(`[${far.itemId}] Dog walking routes`);
     expect(shown[1]).toContain(`[${close.itemId}] Close by`);
+    // A finds seed is not tied to a sector, so its calls name consumer segments like an open seed.
+    expect(block(p!, 'focus')).toMatch(/Consumer segments: \S/);
     const embeds = t.router.calls.filter((c) => c.kind === 'embed');
     expect(embeds[0]!.prompt).toContain('Dog walking routes');
   });

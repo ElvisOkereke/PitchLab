@@ -25,6 +25,9 @@ export const RunConfigSchema = z.object({
   minSignals: int(1, 10),
   dedupeThreshold: z.number().min(0.5).max(0.99),
   overturnOfIdeaId: z.uuid().optional(),
+}).refine((c) => c.seedType !== 'finds' || (c.findIds?.length ?? 0) > 0, {
+  // Queueing (dashboard, CLI) always fixes a finds run to its finds, so a resumed run uses the same ones (R20).
+  message: 'A finds run needs its finds.', path: ['findIds'],
 });
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -256,6 +259,11 @@ export type RunStatus = (typeof runStatus.enumValues)[number];
 export async function countRunsByStatus(db: Db): Promise<Record<RunStatus, number>> {
   const rows = await db.select({ status: runs.status, n: count() }).from(runs).where(eq(runs.isExample, false)).groupBy(runs.status);
   return Object.fromEntries(runStatus.enumValues.map((s) => [s, rows.find((r) => r.status === s)?.n ?? 0])) as Record<RunStatus, number>;
+}
+
+/** True while a run waits in the queue (the feeds job yields to it). One indexed row read. */
+export async function hasQueuedRun(db: Db): Promise<boolean> {
+  return (await db.select({ id: runs.id }).from(runs).where(eq(runs.status, 'queued')).limit(1)).length > 0;
 }
 
 /** Page ≥ 1 (anything else → 1). */

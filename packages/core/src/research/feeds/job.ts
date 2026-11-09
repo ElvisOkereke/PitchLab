@@ -60,6 +60,13 @@ export type FeedDeps = {
   sleep?: (ms: number) => Promise<void>;
   /** Replaces a built-in collector (tests). */
   collectors?: Partial<FeedCollectors>;
+  /**
+   * Checked between sources and between extraction batches: true (for example a run was queued) stops this run early,
+   * keeping what it has stored and marked seen; the rest waits for the next due run.
+   */
+  shouldYield?: () => boolean | Promise<boolean>;
+  /** The worker's stop signal: an aborted signal stops the run at the same points. */
+  signal?: AbortSignal;
 };
 
 export type FeedsResult = { bySource: Record<string, FeedSourceStats>; spentUsd: number; warnings: string[] };
@@ -146,6 +153,16 @@ function inputsFor(name: FeedSource, topics: FeedTopics, rss: string[]): string[
   }
 }
 
+/**
+ * The exit code for `gen feeds run`: 1 when no source collected anything (each one failed or was skipped) and nothing
+ * was added, else 0.
+ */
+export function feedsExitCode(r: FeedsResult): number {
+  const stats = Object.values(r.bySource);
+  const added = stats.reduce((a, s) => a + s.added, 0);
+  return stats.length > 0 && added === 0 && stats.every((s) => s.items === 0 && s.errors.length > 0) ? 1 : 0;
+}
+
 /** Runs unconditionally (the manual `gen feeds run`). Never throws: a failure is recorded in the returned warnings and stats. */
 export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
   const { db, router, log } = deps;
@@ -165,6 +182,16 @@ export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
   };
   const save = async () => {
     await setSetting(db, FEEDS_STATS_KEY, { at: now.toISOString(), spentUsd: result.spentUsd, bySource: result.bySource });
+  };
+  let yielded = false;
+  /** True once the worker has other work queued or is stopping (warned once); the run then stops where it is. */
+  const yieldNow = async (): Promise<boolean> => {
+    if (yielded) return true;
+    if (deps.signal?.aborted || (deps.shouldYield && (await deps.shouldYield()))) {
+      yielded = true;
+      warn('paused for queued work; the rest waits for the next run');
+    }
+    return yielded;
   };
 
   try {
@@ -188,6 +215,7 @@ export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
     // 1. Collect, source by source.
     const perSource = new Map<FeedSource, RawItem[]>();
     for (const name of FEED_SOURCES) {
+      if (await yieldNow()) break;
       if (name === 'ytshorts' && !deps.keys?.youtubeApiKey && !deps.collectors?.ytshorts) {
         fail(name, 'skipped: no YouTube API key');
         continue;
@@ -241,7 +269,7 @@ export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
       return capped;
     };
     const extractPrompt = loadPrompt('library-extract');
-    for (let i = 0; i < queue.length && !(await overCap()); i += EXTRACT_BATCH) {
+    for (let i = 0; i < queue.length && !(await overCap()) && !(await yieldNow()); i += EXTRACT_BATCH) {
       const slice = queue.slice(i, i + EXTRACT_BATCH);
       const texts: Collected[] = slice.map(({ it }) => ({
         url: it.url, domain: hostOf(it.url), sourceType: it.source, title: it.title ?? '', text: it.text.trim(), publishedAt: it.publishedAt,
@@ -259,9 +287,12 @@ export async function runFeedsJob(deps: FeedDeps): Promise<FeedsResult> {
         }
       }
       // Items whose batch was paid for (or stopped by the cap) are not retried; a batch that failed is, next run.
-      if (out.batchesFailed === 0 && out.batchesOk > 0) for (const { key } of slice) newSeen.push(hashOf(key));
+      // Saved after every batch, so a failure or a stop later in the run never pays for these again.
+      if (out.batchesFailed === 0 && out.batchesOk > 0) {
+        for (const { key } of slice) newSeen.push(hashOf(key));
+        await setSetting(db, FEEDS_SEEN_KEY, [...seen, ...newSeen].slice(-MAX_SEEN));
+      }
     }
-    if (newSeen.length > 0) await setSetting(db, FEEDS_SEEN_KEY, [...seen, ...newSeen].slice(-MAX_SEEN));
     result.spentUsd = Math.max(0, (await feedsSpentToday(db, now)) - spentBefore);
   } catch (e) {
     warn(`failed: ${reasonOf(e)}`);

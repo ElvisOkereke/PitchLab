@@ -2,8 +2,10 @@
 // Searches every file the browser can download (apps/web/.next/static) for the secrets this app holds and for
 // server-only markers. Prints file names and labels only, never a value. Exit 0 = no hits, 1 = hits, 2 = no build.
 //   Secrets (process env first, else the repo-root .env, read only to search): SESSION_SECRET, OWNER_PASSWORD_HASH,
-//   DATABASE_URL and its password, LLM_API_KEY, YOUTUBE_API_KEY, ACCEPT_PASSWORD when set.
-//   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:, playwright (the optional local browser is core-only)
+//   DATABASE_URL and its password, LLM_API_KEY, YOUTUBE_API_KEY, ACCEPT_PASSWORD, TELEGRAM_BOT_TOKEN,
+//   TELEGRAM_OWNER_CHAT_ID, SCRAPER_API_KEY, BLUESKY_APP_PASSWORD when set.
+//   Markers: postgres://, postgresql://, drizzle, pglite, scrypt:, playwright (the optional local browser is core-only),
+//   @bcg/capture, tesseract and yt-dlp (the capture package and its tools are worker-only).
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +14,7 @@ import { parseEnv } from 'node:util';
 const webRoot = fileURLToPath(new URL('..', import.meta.url));
 const repoRoot = resolve(webRoot, '..', '..');
 
-const MARKERS = ['postgres://', 'postgresql://', 'drizzle', 'pglite', 'scrypt:', 'playwright'];
+const MARKERS = ['postgres://', 'postgresql://', 'drizzle', 'pglite', 'scrypt:', 'playwright', '@bcg/capture', 'tesseract', 'yt-dlp'];
 /** Values shorter than this are too generic to search for (they would match ordinary words). */
 const MIN_SECRET_LENGTH = 8;
 
@@ -55,6 +57,10 @@ export function bundleNeedles(env = loadEnv()) {
     LLM_API_KEY: env.LLM_API_KEY,
     YOUTUBE_API_KEY: env.YOUTUBE_API_KEY,
     ACCEPT_PASSWORD: env.ACCEPT_PASSWORD,
+    TELEGRAM_BOT_TOKEN: env.TELEGRAM_BOT_TOKEN,
+    TELEGRAM_OWNER_CHAT_ID: env.TELEGRAM_OWNER_CHAT_ID,
+    SCRAPER_API_KEY: env.SCRAPER_API_KEY,
+    BLUESKY_APP_PASSWORD: env.BLUESKY_APP_PASSWORD,
   };
   const needles = [];
   const skipped = [];

@@ -11,14 +11,17 @@ import { formToObject, pickValues, type FormState } from '@/lib/form';
 const PAGE = '/library/finds';
 const LINKS_MAX = 100_000;
 
-/** The paste box as items: one link per line, the rest of the line (after the first space) is the note. Blank lines are skipped. */
+/**
+ * The paste box as items: one link per line, the rest of the line (after the first space) is the note. Blank lines are
+ * skipped but still counted, so `badLine` is the line number the owner sees in the box.
+ */
 function parseLinks(text: string): { items: { url: string; note?: string }[]; badLine?: number } {
   const items: { url: string; note?: string }[] = [];
   let n = 0;
   for (const line of text.split(/\r?\n/)) {
+    n += 1;
     const t = line.trim();
     if (!t) continue;
-    n += 1;
     const space = t.search(/\s/);
     const url = space === -1 ? t : t.slice(0, space);
     const note = space === -1 ? '' : t.slice(space).trim();
@@ -42,7 +45,7 @@ export async function addFindsAction(_prev: FormState, fd: FormData): Promise<Fo
   const r = await addFinds(getDb(), items.map((i) => ({ ...i, source: 'paste' as const })));
   revalidatePath(PAGE);
   const parts = [`Added ${r.added}`];
-  if (r.duplicates > 0) parts.push(`${r.duplicates} already captured`);
+  if (r.duplicates > 0) parts.push(`${r.duplicates} already in your finds`);
   return { ok: true, notice: `${parts.join(', ')}.` };
 }
 

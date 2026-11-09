@@ -1,7 +1,10 @@
 /** How much of a page is scanned: interstitials are small, and a cap keeps a huge page cheap. */
 const SCAN_CHARS = 300_000;
-/** Readable text under this many characters is an interstitial-sized page (weak markers count only then). */
-export const CHALLENGE_TEXT_CHARS = 1_500;
+/**
+ * Readable text under this many characters means a thin page: collectPage tries a renderer for it, and here weak
+ * challenge markers count only on such a page. One constant for both (collect.ts re-exports it).
+ */
+export const THIN_TEXT_CHARS = 800;
 
 /**
  * Markers only interstitials carry: each one alone means a challenge. Bot-defence scripts that also run on ordinary
@@ -47,12 +50,21 @@ function titleOf(s: string): string {
   return start >= 0 && end > start ? s.slice(start + 1, Math.min(end, start + 300)).trim() : '';
 }
 
-/** Removes `<tag ...>...</tag>` blocks with indexOf (linear, no backtracking). */
+/** Index of the next `<tag` that is the whole tag name (`<head>`, `<head `, not `<header>`), or -1. */
+function openTag(s: string, tag: string, from: number): number {
+  for (let i = s.indexOf(`<${tag}`, from); i >= 0; i = s.indexOf(`<${tag}`, i + 1)) {
+    const next = s.charAt(i + tag.length + 1);
+    if (next === '>' || next === '/' || next === '' || /s/.test(next)) return i;
+  }
+  return -1;
+}
+
+/** Removes `<tag ...>...</tag>` blocks with indexOf (linear, no backtracking); the tag name must match exactly. */
 function dropBlocks(s: string, tag: string): string {
   let out = '';
   let i = 0;
   for (;;) {
-    const open = s.indexOf(`<${tag}`, i);
+    const open = openTag(s, tag, i);
     if (open < 0) return out + s.slice(i);
     out += s.slice(i, open);
     const close = s.indexOf(`</${tag}>`, open);
@@ -78,7 +90,7 @@ function readableLength(s: string): number {
 /**
  * True when the html looks like a bot wall or a challenge interstitial (Cloudflare, DataDome, PerimeterX, Incapsula,
  * Akamai, DDoS-Guard, "verify you are human"). Interstitial-only markers and whole interstitial titles count alone;
- * infrastructure markers, generic titles and body phrases count only when the page has under 1,500 characters of
+ * infrastructure markers, generic titles and body phrases count only when the page has under THIN_TEXT_CHARS (800) characters of
  * readable text, so an article about CAPTCHAs or a page that merely loads a bot-defence script is not a challenge.
  * Pure and bounded (scans at most the first 300,000 characters).
  */
@@ -89,5 +101,5 @@ export function looksLikeChallenge(html: string): boolean {
   const title = titleOf(s);
   if (title && STRONG_TITLES.some((re) => re.test(title))) return true;
   const weak = WEAK_MARKERS.some((m) => s.includes(m)) || (title !== '' && WEAK_TITLES.some((m) => title.includes(m)));
-  return weak && readableLength(s) < CHALLENGE_TEXT_CHARS;
+  return weak && readableLength(s) < THIN_TEXT_CHARS;
 }

@@ -1,3 +1,4 @@
+import type { TelegramStatus } from '@bcg/core/dashboard/telegram';
 import type { FindRow } from '@bcg/core/finds/store';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,7 +26,8 @@ function find(o: Partial<FindRow> = {}): FindRow {
     knowledgeItemId: ITEM, startedAt: null, createdAt: new Date('2026-11-09T14:00:00Z'), capturedAt: new Date('2026-11-09T14:05:00Z'), ...o,
   };
 }
-const view = (rows: FindRow[], telegramConnected = true) => render(<FindsView finds={rows} telegramConnected={telegramConnected} now={NOW} />);
+const PAIRED: TelegramStatus = { connected: true, paired: true, pairingCode: null };
+const view = (rows: FindRow[], telegram: TelegramStatus = PAIRED) => render(<FindsView finds={rows} telegram={telegram} now={NOW} />);
 
 describe('FindsView', () => {
   it('explains what Finds does and shows the paste box', () => {
@@ -35,12 +37,29 @@ describe('FindsView', () => {
     expect(screen.getByText(/No finds yet/)).toBeTruthy();
   });
 
-  it('shows the Telegram hint only when Telegram is not connected', () => {
-    view([], false);
+  it('Telegram hint: the setup steps when the worker has no token, the pairing code while unpaired, nothing once paired', () => {
+    view([], { connected: false, paired: false, pairingCode: 'ABCD2345' });
     expect(screen.getByText(/OWNER-TODO/)).toBeTruthy();
     cleanup();
-    view([], true);
+    const unpaired = view([], { connected: true, paired: false, pairingCode: 'ABCD2345' });
+    expect(unpaired.getByTestId('telegram-hint').textContent).toContain('/start ABCD2345');
     expect(screen.queryByText(/OWNER-TODO/)).toBeNull();
+    cleanup();
+    const noCode = view([], { connected: true, paired: false, pairingCode: null });
+    expect(noCode.getByTestId('telegram-hint').textContent).toMatch(/restart npm run worker/);
+    cleanup();
+    const paired = view([], PAIRED);
+    expect(paired.queryByTestId('telegram-hint')).toBeNull();
+    expect(screen.queryByText(/OWNER-TODO/)).toBeNull();
+  });
+
+  it('per-row Retry and Delete buttons are labelled with the find title', () => {
+    view([find({ status: 'failed', knowledgeItemId: null })]);
+    expect(screen.getByRole('button', { name: 'Retry Plumber invoice hack' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete Plumber invoice hack' })).toBeTruthy();
+    cleanup();
+    view([find({ status: 'failed', knowledgeItemId: null, title: null })]);
+    expect(screen.getByRole('button', { name: 'Retry https://www.tiktok.com/@a/video/1' })).toBeTruthy();
   });
 
   it('a done find shows platform, title, note, stats, time and a link to its library entry, with Delete but no Retry', () => {
@@ -56,8 +75,8 @@ describe('FindsView', () => {
     expect(t).toContain('1:15');
     expect(t).toContain('2026-11-09 09:05');
     expect(within(row).getByRole('link', { name: /library entry/i }).getAttribute('href')).toBe(`/library?item=${ITEM}`);
-    expect(within(row).queryByRole('button', { name: 'Retry' })).toBeNull();
-    expect(within(row).getByRole('button', { name: 'Delete' })).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: /^Retry/ })).toBeNull();
+    expect(within(row).getByRole('button', { name: /^Delete/ })).toBeTruthy();
   });
 
   it('a failed find shows its error and warnings, with Retry and Delete', () => {
@@ -65,13 +84,13 @@ describe('FindsView', () => {
     const row = screen.getByTestId(`find-${ID}`);
     expect(row.textContent).toContain('Could not read that link.');
     expect(row.textContent).toContain('no audio track');
-    expect(within(row).getByRole('button', { name: 'Retry' })).toBeTruthy();
+    expect(within(row).getByRole('button', { name: /^Retry/ })).toBeTruthy();
     expect(within(row).queryByRole('link', { name: /library entry/i })).toBeNull();
   });
 
   it('a capturing find has no Delete', () => {
     view([find({ status: 'capturing', knowledgeItemId: null })]);
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Delete/ })).toBeNull();
   });
 
   it('renders hostile text as text (R13)', () => {

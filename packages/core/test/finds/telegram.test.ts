@@ -182,6 +182,47 @@ describe('pollTelegram', () => {
     }
   });
 
+  it('rotates the pairing code after 10 wrong /start <code> guesses (counted across passes), logging it once', async () => {
+    const db = await testDb();
+    const code = (await ensurePairingCode(db))!;
+    const wrong = code.slice(0, 7) + (code[7] === 'A' ? 'B' : 'A');
+    const logs: string[] = [];
+    const guesses = (from: number, count: number) => Array.from({ length: count }, (_, i) => update(from + i, { chatId: STRANGER, text: `/start ${wrong}` }));
+    await poll(db, [guesses(1, 5)], logs);
+    await poll(db, [[update(6, { chatId: STRANGER, text: '/start' }), ...guesses(7, 4)]], logs); // a bare /start is not a guess
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBe(code);
+    await poll(db, [guesses(11, 1)], logs);
+    const rotated = await getSetting(db, TELEGRAM_PAIRING_KEY);
+    expect(rotated).toMatch(/^[A-Z2-9]{8}$/);
+    expect(rotated).not.toBe(code);
+    expect(logs.filter((l) => l === 'telegram: pairing code rotated after too many wrong guesses')).toHaveLength(1);
+    // The old code no longer pairs; the new one does.
+    await poll(db, [[update(12, { chatId: STRANGER, text: `/start ${code}` })]], logs);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBeNull();
+    await poll(db, [[update(13, { chatId: OWNER, text: `/start ${rotated}` })]], logs);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(OWNER);
+  });
+
+  it('skips an update that fails 3 times in a row (offset advanced, logged once) and carries on', async () => {
+    const db = await testDb();
+    await setSetting(db, TELEGRAM_OWNER_KEY, OWNER);
+    const logs: string[] = [];
+    const add: typeof addFinds = async (d, items) => {
+      if (items.some((i) => i.url.includes('/poison'))) throw new Error('db down');
+      return addFinds(d, items);
+    };
+    const batch = () => [update(60, { chatId: OWNER, text: 'https://example.com/poison' }), update(61, { chatId: OWNER, text: 'https://example.com/fine' })];
+    const run = () => pollTelegram({ db, token: TOKEN, fetch: fakeTelegram([batch()]).fetch, log: (m) => logs.push(m), addFinds: add });
+    await expect(run()).rejects.toThrow('db down');
+    await expect(run()).rejects.toThrow('db down');
+    expect(await getSetting(db, TELEGRAM_OFFSET_KEY)).toBeNull();
+    const r = await run();
+    expect(r).toMatchObject({ received: 2, added: 1 });
+    expect(await getSetting(db, TELEGRAM_OFFSET_KEY)).toBe(62);
+    expect(logs.filter((l) => l.startsWith('telegram: skipped an update after 3 failed attempts'))).toHaveLength(1);
+    expect((await db.select().from(finds)).map((f) => f.url)).toEqual(['https://example.com/fine']);
+  });
+
   it('sendTelegram posts plain text to the fixed host and reports failure without the token', async () => {
     const tg = fakeTelegram([]);
     expect(await sendTelegram({ token: TOKEN, fetch: tg.fetch, log: () => {} }, OWNER, 'Captured: x')).toBe(true);

@@ -17,8 +17,11 @@ export interface BlueskyOpts extends FeedOpts {
 }
 
 let session: { handle: string; jwt: string } | null = null;
+/** Set after the public AppView first answers 401/403: later queries go straight to the signed-in path (or stop). */
+let publicNeedsAuth = false;
 export function resetBlueskyState(): void {
   session = null;
+  publicNeedsAuth = false;
 }
 
 async function login(handle: string, password: string, opts: BlueskyOpts): Promise<string> {
@@ -40,11 +43,13 @@ export async function blueskyFeed(q: string, opts: BlueskyOpts = {}): Promise<Ra
   const qs = new URLSearchParams({ q, limit: String(MAX_PER_QUERY), sort: 'latest' });
   const http = httpOf(opts);
   let json: unknown;
-  await throttle('public.api.bsky.app', MIN_INTERVAL_MS, { sleep: opts.sleep });
   try {
+    if (publicNeedsAuth) throw new SourceError('auth', 'bluesky');
+    await throttle('public.api.bsky.app', MIN_INTERVAL_MS, { sleep: opts.sleep });
     json = await request('bluesky', `${PUBLIC}?${qs}`, {}, http);
   } catch (e) {
     if (!isAuth(e)) throw e;
+    publicNeedsAuth = true;
     if (!opts.handle || !opts.appPassword) {
       throw new SourceError('auth', 'bluesky', 'bluesky: search needs sign-in (set BLUESKY_HANDLE and BLUESKY_APP_PASSWORD)');
     }

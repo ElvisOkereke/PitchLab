@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { looksLikeChallenge } from '../../src/research/challenge';
+import { THIN_TEXT_CHARS } from '../../src/research/collect';
 
 describe('looksLikeChallenge', () => {
   it.each([
@@ -42,6 +43,19 @@ describe('looksLikeChallenge', () => {
       ['DataDome interstitial', '<html><head><title>example.com</title></head><body><script>var dd={"cid":"x","hsh":"y","host":"geo.captcha-delivery.com"}</script><script src="https://ct.captcha-delivery.com/c.js"></script></body></html>'],
       ['PerimeterX block page', '<html><head><title>Access to this page has been denied</title></head><body><div id="px-captcha"></div></body></html>'],
     ])('real interstitial: %s', (_name, html) => expect(looksLikeChallenge(html)).toBe(true));
+  });
+
+  it('a long article with a <header> after <head> and the jsd snippet at the end is not a challenge (tag-boundary match)', () => {
+    const html = '<html><head><title>Guide</title></head><body><header><nav><a href="/">Home</a> <a href="/blog">Blog</a></nav></header>'
+      + `<article>${'<p>Owners told us invoicing eats a full day every week. </p>'.repeat(60)}</article>`
+      + '<script>(function(){var a=document.createElement("script");a.src="/cdn-cgi/challenge-platform/scripts/jsd/main.js";document.head.appendChild(a)})();</script></body></html>';
+    expect(looksLikeChallenge(html)).toBe(false);
+  });
+
+  it('weak markers count only under the thin-text threshold collectPage uses (THIN_TEXT_CHARS)', () => {
+    const page = (chars: number) => `<html><head><title>Security check</title></head><body><p>${'x'.repeat(chars)}</p></body></html>`;
+    expect(looksLikeChallenge(page(THIN_TEXT_CHARS - 1))).toBe(true);
+    expect(looksLikeChallenge(page(THIN_TEXT_CHARS))).toBe(false);
   });
 
   it('is bounded on huge input', () => {

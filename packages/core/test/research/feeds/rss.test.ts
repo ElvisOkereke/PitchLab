@@ -71,6 +71,24 @@ describe('rssFeed', () => {
     await expect(rssFeed('https://example.com/f', { fetchPage: pages({ text: 'Sign up to read our newsletter' }).fetchPage })).rejects.toMatchObject({ code: 'bad_response' });
   });
 
+  it('says a feed was too large (the reason is checked before the status)', async () => {
+    await expect(rssFeed('https://example.com/f', { fetchPage: pages({ ok: false, status: 200, reason: 'too_large', text: '' }).fetchPage }))
+      .rejects.toMatchObject({ code: 'bad_response', message: 'rss: feed is larger than 1.5 MB' });
+  });
+
+  it('DOCTYPEs: an external entity is refused, internal entities are never expanded, a public DTD line is fine', async () => {
+    const xxe = `<?xml version="1.0"?>\n<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>\n<rss version="2.0"><channel><item><title>T &xxe;</title><link>https://example.com/e</link></item></channel></rss>`;
+    await expect(rssFeed('https://example.com/feed', { fetchPage: pages({ text: xxe }).fetchPage })).rejects.toMatchObject({ code: 'bad_response' });
+    const bomb = `<?xml version="1.0"?>\n<!DOCTYPE rss [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">]>\n<rss version="2.0"><channel><item><title>T &c;</title><link>https://example.com/e</link><description>Body &c;</description></item></channel></rss>`;
+    const items = await rssFeed('https://example.com/feed', { fetchPage: pages({ text: bomb }).fetchPage });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.url).toBe('https://example.com/e');
+    expect(JSON.stringify(items)).not.toMatch(/aaaaaaaaaaaaaaaaaaaa/);
+    expect(items[0]!.text.length).toBeLessThan(100);
+    const dtd = `<?xml version="1.0"?>\n<!DOCTYPE rss PUBLIC "-//Netscape Communications//DTD RSS 0.91//EN" "http://my.netscape.com/publish/formats/rss-0.91.dtd">\n<rss version="0.91"><channel><item><title>Old feed</title><link>https://example.com/o</link><description>Still works</description></item></channel></rss>`;
+    expect((await rssFeed('https://example.com/feed', { fetchPage: pages({ text: dtd }).fetchPage })).map((i) => i.url)).toEqual(['https://example.com/o']);
+  });
+
   it('refuses a feed address that is not a web address', async () => {
     const p = pages({});
     await expect(rssFeed('file:///etc/passwd', { fetchPage: p.fetchPage })).rejects.toMatchObject({ code: 'bad_response' });

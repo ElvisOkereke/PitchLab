@@ -5,6 +5,7 @@ import type { ResearchSettings } from '@bcg/core/dashboard/missions';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
 import type { FeedsStatus } from '@bcg/core/research/feeds/status';
 import type { TelegramStatus } from '@bcg/core/dashboard/telegram';
+import { resetTelegramPairingAction } from '@/actions/settings';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
 import { formatDateTime } from '@/lib/time';
 import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
@@ -52,12 +53,23 @@ const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
 
 /** Pairing state shown under the Telegram row once the worker has the token. */
 function TelegramPairing({ telegram }: { telegram: TelegramStatus }) {
-  if (telegram.paired) return <span className="muted small"> paired with your chat</span>;
-  if (!telegram.pairingCode) return <span className="muted small"> restart npm run worker to get a pairing code</span>;
-  return (
+  const state = telegram.paired ? (
+    <span className="muted small"> paired with your chat</span>
+  ) : telegram.pairingCode ? (
     <span className="muted small">
-      {' '}Send <code>/start {telegram.pairingCode}</code> to your bot to pair it. To pair again later, run gen telegram reset.
+      {' '}Send <code>/start {telegram.pairingCode}</code> to your bot to pair it.
     </span>
+  ) : (
+    <span className="muted small"> restart npm run worker to get a pairing code</span>
+  );
+  return (
+    <>
+      {state}
+      {/* Forgets the paired chat and makes a new code (the bot then waits for /start <new code>). */}
+      <form action={resetTelegramPairingAction} className="inline-form">
+        <button type="submit">Reset pairing</button>
+      </form>
+    </>
   );
 }
 

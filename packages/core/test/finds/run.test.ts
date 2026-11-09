@@ -79,6 +79,19 @@ describe('createFindsExecutor', () => {
     expect((await db.select().from(finds))[0]!.status).toBe('queued');
   });
 
+  it('skips opening capture (no import, no proxy) when the worker found the tools missing at start', async () => {
+    const db = await testDb();
+    await addFinds(db, [{ url: 'https://example.com/g', source: 'paste' }]);
+    const logs: string[] = [];
+    const open = vi.fn(async () => opened().c);
+    const exec = createFindsExecutor({ db, router, log: (m) => logs.push(m), open, toolsAvailable: false });
+    expect(await exec()).toBe(false);
+    expect(await exec()).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+    expect(logs.filter((l) => l.includes('Finds are waiting: run npm run capture:setup'))).toHaveLength(1);
+    expect((await db.select().from(finds))[0]!.status).toBe('queued');
+  });
+
   it('returns true when it processed a find', async () => {
     const db = await testDb();
     await addFinds(db, [{ url: 'https://example.com/e', source: 'paste' }]);

@@ -9,6 +9,9 @@ describe('readFeedsStatus', () => {
     expect(await readFeedsStatus(db)).toBeNull();
     await setSetting(db, FEEDS_STATS_KEY, 'garbage');
     expect(await readFeedsStatus(db)).toBeNull();
+    // `at` must be an ISO date (it is shown as a date in Settings).
+    await setSetting(db, FEEDS_STATS_KEY, { at: 'yesterday-ish', spentUsd: 0, bySource: {} });
+    expect(await readFeedsStatus(db)).toBeNull();
   });
 
   it('lists sources in a fixed order, ignoring unknown ones and repairing bad numbers', async () => {

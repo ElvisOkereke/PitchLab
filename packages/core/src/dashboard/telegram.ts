@@ -14,6 +14,10 @@ import { readWorkerStatus } from './settings';
 export const TELEGRAM_OWNER_KEY = 'telegram.ownerChatId';
 export const TELEGRAM_OFFSET_KEY = 'telegram.offset';
 export const TELEGRAM_PAIRING_KEY = 'telegram.pairingCode';
+/** Wrong `/start <code>` guesses against the current code (cleared when the code changes or the owner pairs). */
+export const TELEGRAM_GUESSES_KEY = 'telegram.wrongGuesses';
+/** After this many wrong guesses the pairing code is replaced. */
+export const MAX_PAIRING_GUESSES = 10;
 export const PAIRING_CODE_LENGTH = 8;
 /** No 0/O, 1/I/L: easy to read off a screen and type on a phone. */
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -45,9 +49,9 @@ export async function ensurePairingCode(db: Db): Promise<string | null> {
   return code;
 }
 
-/** Forgets the owner and makes a new pairing code (gen telegram reset). */
+/** Forgets the owner and makes a new pairing code (gen telegram reset, Settings → Reset pairing). */
 export async function resetTelegramPairing(db: Db): Promise<string> {
-  await db.delete(settings).where(inArray(settings.key, [TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY]));
+  await db.delete(settings).where(inArray(settings.key, [TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, TELEGRAM_GUESSES_KEY]));
   const code = newCode();
   await setSetting(db, TELEGRAM_PAIRING_KEY, code);
   return code;
@@ -56,7 +60,23 @@ export async function resetTelegramPairing(db: Db): Promise<string> {
 /** Binds the owner (the code matched, or TELEGRAM_OWNER_CHAT_ID) and clears the pairing code. */
 export async function pinTelegramOwner(db: Db, chatId: number | string): Promise<void> {
   await setSetting(db, TELEGRAM_OWNER_KEY, chatId);
-  await db.delete(settings).where(inArray(settings.key, [TELEGRAM_PAIRING_KEY]));
+  await db.delete(settings).where(inArray(settings.key, [TELEGRAM_PAIRING_KEY, TELEGRAM_GUESSES_KEY]));
+}
+
+/**
+ * Counts one wrong pairing guess. At MAX_PAIRING_GUESSES the code is replaced with a new one (shown in Settings) and the
+ * count starts again; returns true when that happened.
+ */
+export async function recordWrongPairingGuess(db: Db): Promise<boolean> {
+  const v = await getSetting(db, TELEGRAM_GUESSES_KEY);
+  const count = (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0) + 1;
+  if (count < MAX_PAIRING_GUESSES) {
+    await setSetting(db, TELEGRAM_GUESSES_KEY, count);
+    return false;
+  }
+  await setSetting(db, TELEGRAM_PAIRING_KEY, newCode());
+  await db.delete(settings).where(inArray(settings.key, [TELEGRAM_GUESSES_KEY]));
+  return true;
 }
 
 /** For Settings → Connections: the worker has the bot token, an owner is bound, and the code while unpaired. */

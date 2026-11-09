@@ -92,7 +92,7 @@ const LABELS: Record<Platform, string> = {
 export function isLocalOrPrivateHost(url: string): boolean {
   let host: string;
   try {
-    host = new URL(url).hostname.toLowerCase().replace(/\.$/, '');
+    host = new URL(url).hostname.toLowerCase().replace(/\.+$/, '');
   } catch {
     return true;
   }
@@ -139,10 +139,23 @@ function cleanTitle(title: string, platform: Platform): string {
   return t || `${LABELS[platform]} video`;
 }
 
-/** @handles in the URL path (TikTok, Threads, YouTube), known before any metadata. */
+/** Instagram path segments that are not profile names. */
+const INSTAGRAM_RESERVED = new Set(['p', 'reel', 'reels', 'tv', 'stories', 'explore', 'accounts', 'direct', 'share', 's']);
+
+/**
+ * Creator names known from the URL before any metadata: @handles in the path (TikTok, Threads, YouTube), and Instagram
+ * profile names (instagram.com/<name>/…, instagram.com/stories/<name>/…).
+ */
 function handlesInUrl(url: string): string[] {
   try {
-    return [...new URL(url).pathname.matchAll(/\/@([\w.-]+)/g)].map((m) => m[1]);
+    const u = new URL(url);
+    const out = [...u.pathname.matchAll(/\/@([\w.-]+)/g)].map((m) => m[1]);
+    if (detectPlatform(url) === 'instagram') {
+      const parts = u.pathname.split('/').filter(Boolean);
+      const name = parts[0] === 'stories' ? parts[1] : parts[0];
+      if (name && !INSTAGRAM_RESERVED.has(name.toLowerCase()) && /^[\w.]+$/.test(name)) out.push(name);
+    }
+    return out;
   } catch {
     return [];
   }
@@ -168,7 +181,8 @@ export async function captureLink(url: string, opts: CaptureOptions): Promise<Ca
   const platform = detectPlatform(url);
   if (isLocalOrPrivateHost(url)) return { ok: false, platform, error: 'That address is not allowed (local or private host).' };
   if (opts.checkUrl) {
-    const allowed = await opts.checkUrl(url).catch(() => false);
+    // A policy check that never answers refuses the capture (bounded like every other step).
+    const allowed = await withTimeout(opts.checkUrl(url).catch(() => false), opts.timeoutMs ?? TOOL_TIMEOUT_MS, () => false);
     if (!allowed) return { ok: false, platform, error: 'That address is not allowed.' };
   }
   const run = queue.then(() => paced(url, platform, opts));

@@ -21,6 +21,7 @@ import {
   BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, previewBaseline, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
 } from './bench/passes';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
+import { hasQueuedRun } from './dashboard/runs';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
 import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settings } from './db/schema';
@@ -41,7 +42,7 @@ import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
-import { runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
+import { feedsExitCode, runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 import { createScraperStep } from './research/scraper';
 import { fileURLToPath } from 'node:url';
@@ -229,7 +230,8 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
         if (code) out(`Telegram: send /start ${code} to your bot to pair it (also shown in Settings → Connections).`);
       }
     }
-    const executeFinds = createFindsExecutor(findsDeps(db, env));
+    // Tools missing at start: finds wait without importing capture each pass (restart the worker after capture:setup).
+    const executeFinds = createFindsExecutor({ ...findsDeps(db, env), toolsAvailable: captureAvailable });
     await runWorker({
       db,
       intervalMs: opts.interval * 1000,
@@ -269,7 +271,8 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       executeFeeds: async () => {
         busy = true;
         try {
-          await runDueFeedsJob(feedDeps(db, env));
+          // Stops between sources and batches when a run is queued or the worker is stopping (the run comes first).
+          await runDueFeedsJob({ ...feedDeps(db, env), signal: stop.signal, shouldYield: () => hasQueuedRun(db) });
         } finally {
           busy = false;
         }
@@ -399,7 +402,10 @@ async function feedsRunCommand(): Promise<number> {
       out(`${name.padEnd(15)} ${String(s.items).padStart(4)} items  ${String(s.added).padStart(3)} added${s.errors.length ? `  (${s.errors.join('; ')})` : ''}`);
     }
     out(`Spent $${r.spentUsd.toFixed(2)}.`);
-    return 0;
+    // Non-zero when every source failed or was skipped and nothing was added (so a script notices).
+    const code = feedsExitCode(r);
+    if (code !== 0) console.error('Every feed source failed or was skipped; nothing was added.');
+    return code;
   } finally {
     await closeDb(db);
   }

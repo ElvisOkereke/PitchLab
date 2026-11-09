@@ -53,6 +53,23 @@ describe('blueskyFeed', () => {
     expect(f.calls.filter((c) => c.url.pathname.endsWith('createSession'))).toHaveLength(1);
   });
 
+  it('remembers that search needs sign-in after the first 401/403, so later queries skip the public endpoint', async () => {
+    const f = mockFetch(() => text('AuthMissing', 401));
+    await expect(blueskyFeed('x y', opts(f.impl))).rejects.toMatchObject({ code: 'auth' });
+    await expect(blueskyFeed('second query', opts(f.impl))).rejects.toMatchObject({ code: 'auth', message: expect.stringContaining('BLUESKY_APP_PASSWORD') });
+    expect(f.calls).toHaveLength(1);
+    resetBlueskyState();
+    const g = mockFetch((u) => {
+      if (u.hostname === 'public.api.bsky.app') return text('Forbidden', 403);
+      if (u.pathname.endsWith('createSession')) return json({ accessJwt: 'jwt-secret-token' });
+      return json({ posts: [post('3kabc')] });
+    });
+    const creds = { ...opts(g.impl), handle: 'me.bsky.social', appPassword: 'app-pass-secret' };
+    await blueskyFeed('x y', creds);
+    await blueskyFeed('again now', creds);
+    expect(g.calls.filter((c) => c.url.hostname === 'public.api.bsky.app')).toHaveLength(1);
+  });
+
   it('a failed sign-in error carries no password or token', async () => {
     const f = mockFetch((u) => (u.pathname.endsWith('createSession') ? text('{"error":"AuthenticationRequired","message":"app-pass-secret"}', 401) : text('no', 401)));
     const err = await blueskyFeed('x y', { ...opts(f.impl), handle: 'me.bsky.social', appPassword: 'app-pass-secret' }).catch((e: Error) => e);

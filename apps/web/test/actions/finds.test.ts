@@ -40,7 +40,7 @@ describe('addFindsAction', () => {
     await addFinds(state.db, [{ url: 'https://example.com/post', source: 'telegram' }]);
     const r = await addFindsAction({}, form({ links: 'https://example.com/post?utm_source=x' }));
     expect(r.ok).toBe(true);
-    expect(r.notice).toContain('already');
+    expect(r.notice).toBe('Added 0, 1 already in your finds.');
     expect(await state.db.select().from(finds)).toHaveLength(1);
   });
 
@@ -53,6 +53,8 @@ describe('addFindsAction', () => {
       expect(r.values?.links).toBe(bad);
     }
     expect(await snapshotDb(state.db)).toEqual(before);
+    // Line numbers count blank lines, so they match what the owner sees in the box.
+    expect((await addFindsAction({}, form({ links: 'https://ok.example/a\n\n  \nnot a link' }))).error).toBe('Line 4 is not an http or https link.');
   });
 
   it('refuses an empty paste and more than 50 lines', async () => {

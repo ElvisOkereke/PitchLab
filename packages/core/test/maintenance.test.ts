@@ -374,6 +374,45 @@ describe('runMaintenance', () => {
     expect((await runMaintenance(db, NOW)).redactedCases).toBe(0);
   });
 
+  it('keeps case quotes and claims backed by a YouTube find (no expiry); one backed only by an expired YouTube source still goes', async () => {
+    const db = await testDb();
+    const uF = 'https://www.youtube.com/watch?v=findfindfin';
+    const uB = 'https://www.youtube.com/watch?v=expiredexpi';
+    const qF = 'I pay a guy cash every week to sort the receipts for me.';
+    const qB = 'Our scheduling app double books the crew weekly.';
+    n++;
+    await upsertKnowledgeItem(db, {
+      kind: 'problem', title: `F${n}`, summary: `FS${n}`, quote: qF, audience: 'business', countries: ['US'], industries: ['x'],
+      voice: 'operator', facts: { persona: 'p' },
+      source: { url: uF, domain: 'www.youtube.com', sourceType: 'youtube-find', quote: qF, quoteVerified: true },
+    }, unit(300), { now: ago(60) });
+    await ytSource(db, uB, qB, ago(31));
+    const sections = (sigs: { quote: string; url: string; sourceName: string }[]) =>
+      ({ summary: { oneLiner: 'o' }, evidence: { signals: sigs, claims: [] } }) as never;
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', ideaCount: 1, advanceCount: 1 }));
+    const recent = await insertCase(db, (await insertIdea(db, run.id)).id, {
+      createdAt: ago(1),
+      sections: sections([{ quote: qF, url: uF, sourceName: 'YouTube' }, { quote: qB, url: uB, sourceName: 'YouTube' }]),
+    });
+    const old = await insertCase(db, (await insertIdea(db, run.id)).id, { createdAt: ago(45), slug: 'old-find-case', sections: sections([{ quote: qF, url: uF, sourceName: 'YouTube' }]) });
+    const [findClaim, oldFindClaim, ytClaim] = await db.insert(claims).values([
+      { caseId: recent.id, section: 'signal', text: qF, sourceUrl: uF, quote: qF },
+      { caseId: old.id, section: 'signal', text: qF, sourceUrl: uF, quote: qF },
+      { caseId: recent.id, section: 'signal', text: qB, sourceUrl: uB, quote: qB },
+    ]).returning();
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    const get = async (id: string) => (await db.select().from(cases).where(eq(cases.id, id)))[0]!.sections as unknown as { evidence: { signals: { quote: string }[] } };
+    expect((await get(recent.id)).evidence.signals.map((s) => s.quote)).toEqual([qF, PLACEHOLDER]);
+    expect((await get(old.id)).evidence.signals.map((s) => s.quote)).toEqual([qF]);
+    const getClaim = async (id: string) => (await db.select().from(claims).where(eq(claims.id, id)))[0]!;
+    expect(await getClaim(findClaim!.id)).toMatchObject({ text: qF, quote: qF, reviewNote: null });
+    expect(await getClaim(oldFindClaim!.id)).toMatchObject({ text: qF, quote: qF, reviewNote: null });
+    expect(await getClaim(ytClaim!.id)).toMatchObject({ text: PLACEHOLDER, quote: null });
+    expect(r.redactedCases).toBe(1);
+    expect(r.redactedClaims).toBe(1);
+  });
+
   it('deletes a source at exactly expires_at == now', async () => {
     const db = await testDb();
     await ytSource(db, 'https://www.youtube.com/watch?v=boundaryboun', 'A boundary comment long enough.', ago(30));

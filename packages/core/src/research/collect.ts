@@ -2,12 +2,12 @@ import type { Db } from '../db/client';
 import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { extract, type FetchPageOpts, type PageResult } from '../tools/fetch-page';
 import type { ArchiveClient } from './archive';
-import { looksLikeChallenge } from './challenge';
+import { THIN_TEXT_CHARS, looksLikeChallenge } from './challenge';
 import { classifyFetch, recordFetch, type FetchOutcome, type FetchVia } from './fetch-log';
 import { SourceError, USER_AGENT } from './http';
 
-/** Readable text under this many characters means a page that probably renders client-side. */
-export const THIN_TEXT_CHARS = 800;
+/** Readable text under this many characters means a page that probably renders client-side (shared with challenge.ts). */
+export { THIN_TEXT_CHARS };
 
 /**
  * Renders a page in a browser. `kind` 'real' is the headed persistent-profile browser (logged as real_browser);

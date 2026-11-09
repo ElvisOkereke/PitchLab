@@ -1,5 +1,5 @@
 import { listFinds } from '@bcg/core/finds/store';
-import { getSetting } from '@bcg/core/validation/settings';
+import { telegramStatus } from '@bcg/core/dashboard/telegram';
 import { FindsView } from '@/components/finds-view';
 import { requireOwner } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
@@ -8,6 +8,6 @@ import { getDb } from '@/lib/db';
 export default async function FindsPage() {
   await requireOwner();
   const db = getDb();
-  const [finds, chat] = await Promise.all([listFinds(db), getSetting(db, 'telegram.ownerChatId')]);
-  return <FindsView finds={finds} telegramConnected={chat !== null && chat !== ''} now={new Date()} />;
+  const [finds, telegram] = await Promise.all([listFinds(db), telegramStatus(db)]);
+  return <FindsView finds={finds} telegram={telegram} now={new Date()} />;
 }

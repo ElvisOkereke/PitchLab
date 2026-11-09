@@ -681,13 +681,15 @@ export async function ideate(
     .join('\n');
   const signalUrls = new Set(passed.map((s) => s.url));
 
-  // The run's focus: business sectors (the seed's, or those the evidence came from) and, for open seeds, consumer segments.
+  // The run's focus: business sectors (the seed's, or those the evidence came from) and, for open and finds seeds
+  // (neither is tied to a sector), consumer segments.
   const sectors = cfg.seedType === 'sector'
     ? (cfg.sectors ?? []).map((s) => capField(s, 80)).filter(Boolean)
     : cfg.seedType === 'open'
       ? [...new Set(passed.map((s) => capField(s.sector, 80)).filter(Boolean))].slice(0, MAX_FOCUS_SECTORS)
       : [];
   const segments = pickConsumerSegments(run.id);
+  const withSegmentsSeed = cfg.seedType === 'open' || cfg.seedType === 'finds';
   const focusFor = (withSegments: boolean) => {
     const lines = [`Business sectors: ${sectors.length ? sectors.join('; ') : 'any in the market'}`];
     if (withSegments) lines.push(`Consumer segments: ${segments.join('; ')}`);
@@ -867,7 +869,7 @@ export async function ideate(
   const count = Math.ceil(cfg.ideaCount / chosen.length);
   for (const lens of chosen) {
     for (const n of splitCounts(count, IDEAS_PER_CALL)) {
-      pending.push(...await generate(lens, n, { withSegments: cfg.seedType === 'open', gap: '' }));
+      pending.push(...await generate(lens, n, { withSegments: withSegmentsSeed, gap: '' }));
     }
   }
 
@@ -900,7 +902,7 @@ export async function ideate(
           consumer: needConsumer, models: needModels, unused: now.short.models, have: pending.length, target: cfg.ideaCount,
         });
         left -= n;
-        pending.push(...await generate(lens, n, { withSegments: mixShort || cfg.seedType === 'open', gap }));
+        pending.push(...await generate(lens, n, { withSegments: mixShort || withSegmentsSeed, gap }));
       }
     } catch (err) {
       log(`ideate: re-ask failed (${errorMessage(err)}), keeping the ideas so far`);
