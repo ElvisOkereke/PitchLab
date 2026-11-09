@@ -282,7 +282,11 @@ export async function getLibraryItem(db: Db, id: string, now: Date = new Date())
 }
 
 /** Source types that count as social/community platforms in the coverage view. */
-export const SOCIAL_SOURCE_TYPES = ['youtube', 'hn', 'stackexchange', 'github', 'appstore', 'producthunt'] as const; // not 'hn-trend' (story counts)
+export const SOCIAL_SOURCE_TYPES = [
+  'youtube', 'hn', 'stackexchange', 'github', 'appstore', 'producthunt', // not 'hn-trend' (story counts)
+  // Finds the owner shared from social platforms (not 'other-find', a plain web page).
+  'instagram-find', 'tiktok-find', 'youtube-find', 'x-find', 'threads-find', 'facebook-find', 'linkedin-find',
+] as const;
 
 export type LibraryCoverage = {
   byKind: Record<string, number>;

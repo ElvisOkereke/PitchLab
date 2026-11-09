@@ -1,21 +1,25 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { Db } from '../db/client';
+import {
+  TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, readPairingCode,
+} from '../dashboard/telegram';
 import { request, SourceError } from '../research/http';
 import { scrubSecrets } from '../tools/scrub';
 import { getSetting, setSetting } from '../validation/settings';
-import { addFinds } from './store';
+import { addFinds as defaultAddFinds } from './store';
 
 /**
- * The private Telegram bot (worker-side, outbound only): getUpdates on api.telegram.org, never a webhook. The first chat
- * that sends /start becomes the owner (setting telegram.ownerChatId); every other chat is ignored silently and nothing
- * from it is stored. Links in the owner's messages become finds; the rest of the text is the note. Replies are plain
+ * The private Telegram bot (worker-side, outbound only): getUpdates on api.telegram.org, never a webhook. The owner is
+ * bound only by `/start <code>` with the one-time pairing code (setting telegram.pairingCode, shown in Settings and the
+ * worker log; compared in constant time and cleared once used), or pinned by TELEGRAM_OWNER_CHAT_ID. Every other chat,
+ * a bare /start and a wrong code are ignored silently, and nothing from them is stored. Links in the owner's messages become finds; the rest of the text is the note. Replies are plain
  * text (no parse mode).
  *
  * The token appears only in the request url path. Request errors never carry the url (http.ts), and every message this
  * module logs or throws has the token removed as well (sanitize), so it never reaches a log, a heartbeat or a row.
  */
 
-export const TELEGRAM_OWNER_KEY = 'telegram.ownerChatId';
-export const TELEGRAM_OFFSET_KEY = 'telegram.offset';
+export { TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY } from '../dashboard/telegram';
 const API = 'https://api.telegram.org';
 const MAX_UPDATES = 50;
 const MAX_TEXT = 4096;
@@ -28,6 +32,10 @@ export type TelegramDeps = TelegramTransport & {
   db: Db;
   /** getUpdates `timeout` in seconds. 0 (the default) returns at once, so a worker pass is never held. */
   timeoutSec?: number;
+  /** TELEGRAM_OWNER_CHAT_ID: pins the owner (the pairing code is then not used). */
+  ownerChatId?: string;
+  /** Tests only. */
+  addFinds?: typeof defaultAddFinds;
 };
 
 type Entity = { type?: unknown; offset?: unknown; length?: unknown; url?: unknown };
@@ -107,57 +115,79 @@ export function messageParts(m: { text?: unknown; caption?: unknown; entities?: 
 
 const sameChat = (a: unknown, b: unknown) => (typeof a === 'number' || typeof a === 'string') && String(a) === String(b);
 
+/** Constant-time comparison of a sent code with the stored one (different lengths never match). */
+function codeMatches(sent: string, expected: string): boolean {
+  const a = Buffer.from(sent.toUpperCase(), 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
- * One getUpdates pass from the stored offset (setting telegram.offset, advanced past every update seen, owner or not).
- * Returns how many updates arrived, how many finds were added and how many updates were ignored (strangers, or links
- * before an owner exists). A getUpdates failure throws (token-free); a failed reply is only logged.
+ * One getUpdates pass from the stored offset (setting telegram.offset, saved after every update, owner or not, so a
+ * failure mid-batch never replays the updates before it). Returns how many updates arrived, how many finds were added
+ * and how many updates were ignored (strangers, a bare /start, a wrong code, anything before pairing). A getUpdates
+ * failure throws (token-free); a failed reply is only logged.
  */
 export async function pollTelegram(deps: TelegramDeps): Promise<{ received: number; added: number; ignored: number }> {
   const { db } = deps;
+  const addFinds = deps.addFinds ?? defaultAddFinds;
   const stored = await getSetting(db, TELEGRAM_OFFSET_KEY);
   const offset = typeof stored === 'number' && Number.isInteger(stored) && stored > 0 ? stored : null;
   const timeout = Math.max(0, Math.min(50, Math.floor(deps.timeoutSec ?? 0)));
   const query = `?${offset !== null ? `offset=${offset}&` : ''}timeout=${timeout}&limit=${MAX_UPDATES}&allowed_updates=${encodeURIComponent('["message"]')}`;
   const result = await call(deps, 'getUpdates', { query, timeoutMs: (timeout + 10) * 1000 });
   const updates = (Array.isArray(result) ? result : []) as Update[];
-  let owner = await getSetting(db, TELEGRAM_OWNER_KEY);
+  const pinned = deps.ownerChatId?.trim() || null;
+  let owner: unknown = pinned ?? (await getSetting(db, TELEGRAM_OWNER_KEY));
+  const unpaired = () => owner === null || owner === undefined || owner === '';
+  if (unpaired()) await ensurePairingCode(db);
   let next = offset ?? 0;
   const out = { received: 0, added: 0, ignored: 0 };
   for (const u of updates) {
     if (typeof u?.update_id !== 'number' || !Number.isInteger(u.update_id)) continue;
     out.received++;
-    next = Math.max(next, u.update_id + 1);
+    await handle(u);
+    if (u.update_id + 1 > next) {
+      next = u.update_id + 1;
+      await setSetting(db, TELEGRAM_OFFSET_KEY, next);
+    }
+  }
+  return out;
+
+  async function handle(u: Update): Promise<void> {
     const msg = u.message;
     const chatId = msg?.chat?.id;
     if (!msg || (typeof chatId !== 'number' && typeof chatId !== 'string')) {
       out.ignored++;
-      continue;
+      return;
     }
     const text = typeof msg.text === 'string' ? msg.text.trim() : '';
+    const start = /^\/start(?:@\w+)?(?:\s+(\S+))?\s*$/i.exec(text);
     const isStart = /^\/start(?:@\w+)?(?:\s|$)/i.test(text);
-    if (owner === null || owner === undefined) {
-      if (!isStart) {
-        out.ignored++; // nobody owns the bot yet: only /start counts
-        continue;
+    if (unpaired()) {
+      const code = await readPairingCode(db);
+      if (!start?.[1] || !code || !codeMatches(start[1], code)) {
+        out.ignored++; // nobody owns the bot yet: only /start with the right code counts, and nothing is said back
+        return;
       }
-      await setSetting(db, TELEGRAM_OWNER_KEY, chatId);
+      await pinTelegramOwner(db, chatId);
       owner = chatId;
-      deps.log('telegram: owner chat saved');
-      await sendTelegram(deps, chatId, 'Hi! Send me links to videos or posts you like and I will add them to your PitchLab library.');
-      continue;
+      deps.log('telegram: paired with the owner chat');
+      await sendTelegram(deps, chatId, 'Paired. Send me links to videos or posts you like and I will add them to your PitchLab library.');
+      return;
     }
     if (!sameChat(chatId, owner)) {
       out.ignored++; // strangers get no reply and nothing is stored
-      continue;
+      return;
     }
     if (isStart) {
       await sendTelegram(deps, chatId, 'Ready. Send me a link (and a note if you like).');
-      continue;
+      return;
     }
     const { urls, note } = messageParts(msg);
     if (urls.length === 0) {
       await sendTelegram(deps, chatId, 'Send me a link to capture (you can add a note after it).');
-      continue;
+      return;
     }
     const r = await addFinds(db, urls.map((url) => ({ url, note: note || undefined, source: 'telegram' as const })));
     out.added += r.added;
@@ -168,6 +198,4 @@ export async function pollTelegram(deps: TelegramDeps): Promise<{ received: numb
     else reply = r.added === 1 ? 'Got it' : `Got it: ${r.added} links.`;
     await sendTelegram(deps, chatId, reply);
   }
-  if (next > (offset ?? 0)) await setSetting(db, TELEGRAM_OFFSET_KEY, next);
-  return out;
 }

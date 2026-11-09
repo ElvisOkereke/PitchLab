@@ -86,6 +86,12 @@ function handlesInUrl(url: string): string[] {
   }
 }
 
+/** A find's library source type: `<platform>-find` (youtube-find, instagram-find, other-find…). */
+export function findSourceType(platform: string): string {
+  const p = platform.toLowerCase().replace(/[^a-z]/g, '').slice(0, 20);
+  return `${p || 'other'}-find`;
+}
+
 const hostOf = (url: string): string => {
   try {
     return new URL(url).hostname;
@@ -283,7 +289,8 @@ async function extractFind(
     source: {
       url: find.url,
       domain: hostOf(find.url),
-      sourceType: capField(t.platform, 40) || 'other',
+      // `<platform>-find`, never the bare platform: `youtube` sources fall under the 30-day YouTube API deletion rule.
+      sourceType: findSourceType(t.platform),
       quote,
       quoteVerified,
     },

@@ -4,6 +4,7 @@ import type { MarketSummary } from '@bcg/core/dashboard/markets';
 import type { ResearchSettings } from '@bcg/core/dashboard/missions';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
 import type { FeedsStatus } from '@bcg/core/research/feeds/status';
+import type { TelegramStatus } from '@bcg/core/dashboard/telegram';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
 import { formatDateTime } from '@/lib/time';
 import { SETTINGS_NOTICES, type SettingsNotice } from '@/lib/settings-query';
@@ -25,6 +26,8 @@ export type SettingsData = {
   holdout: string[];
   /** What the last automatic feeds run did (null before the first run). */
   feeds?: FeedsStatus | null;
+  /** The Telegram bot: paired or not, and the one-time pairing code while unpaired. */
+  telegram?: TelegramStatus;
 };
 
 const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] = [
@@ -35,13 +38,28 @@ const PROVIDERS: [keyof WorkerStatus['providers'], string, [string, string]?][] 
   ['producthunt', 'Product Hunt'],
   ['youtube', 'YouTube'],
   ['browser', 'Local browser (Chromium)', ['installed', 'not installed']],
+  ['telegram', 'Telegram bot'],
+  ['capture', 'Capture tools (for finds)', ['installed', 'not installed']],
 ];
 
-const HINT_ID: Partial<Record<keyof WorkerStatus['providers'], string>> = { youtube: 'conn-youtube', browser: 'conn-browser' };
+const HINT_ID: Partial<Record<keyof WorkerStatus['providers'], string>> = { youtube: 'conn-youtube', browser: 'conn-browser', telegram: 'conn-telegram', capture: 'conn-capture' };
 const HINT: Partial<Record<keyof WorkerStatus['providers'], string>> = {
   youtube: 'Optional. Add YOUTUBE_API_KEY to your .env file, then restart npm run worker.',
   browser: 'Optional, for pages that need JavaScript. Install it with npx playwright-core install chromium, run in packages/core.',
+  telegram: 'Optional, for sharing links from your phone. Add TELEGRAM_BOT_TOKEN to your .env file, then restart npm run worker.',
+  capture: 'Needed to capture finds. Run npm run capture:setup, then restart npm run worker.',
 };
+
+/** Pairing state shown under the Telegram row once the worker has the token. */
+function TelegramPairing({ telegram }: { telegram: TelegramStatus }) {
+  if (telegram.paired) return <span className="muted small"> paired with your chat</span>;
+  if (!telegram.pairingCode) return <span className="muted small"> restart npm run worker to get a pairing code</span>;
+  return (
+    <span className="muted small">
+      {' '}Send <code>/start {telegram.pairingCode}</code> to your bot to pair it. To pair again later, run gen telegram reset.
+    </span>
+  );
+}
 
 /** The automatic feeds, as text: each source's last run, items found, entries added and errors. */
 export function FeedsList({ feeds }: { feeds: FeedsStatus | null }) {
@@ -127,6 +145,7 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
               <li key={k} data-testid={HINT_ID[k]}>
                 <span className="name">{label}</span> <Badge ok={ok} yes={words?.[0] ?? 'connected'} no={words?.[1] ?? 'not set'} />
                 {ok === false && HINT[k] ? <span className="muted small"> {HINT[k]}</span> : null}
+                {k === 'telegram' && ok && data.telegram ? <TelegramPairing telegram={data.telegram} /> : null}
               </li>
             );
           })}

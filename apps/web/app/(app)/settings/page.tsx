@@ -6,6 +6,7 @@ import { getResearchSettings } from '@bcg/core/dashboard/missions';
 import { databaseReachable, readEditableSettings, readWorkerStatus } from '@bcg/core/dashboard/settings';
 import { exampleState } from '@bcg/core/example/example';
 import { readFeedsStatus } from '@bcg/core/research/feeds/status';
+import { telegramStatus } from '@bcg/core/dashboard/telegram';
 import { SettingsView } from '@/components/settings-view';
 import { requireOwner } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
@@ -16,7 +17,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   await requireOwner();
   const notice = parseSettingsNotice(await searchParams);
   const db = getDb();
-  const [values, worker, database, lenses, market, example, research, holdout, feeds] = await Promise.all([
+  const [values, worker, database, lenses, market, example, research, holdout, feeds, telegram] = await Promise.all([
     readEditableSettings(db),
     readWorkerStatus(db),
     databaseReachable(db),
@@ -26,6 +27,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     getResearchSettings(db),
     holdoutList(db),
     readFeedsStatus(db),
+    telegramStatus(db),
   ]);
-  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden }, research, holdout, feeds }} notice={notice} />;
+  return <SettingsView data={{ values, worker, database, lenses, market, example: { hidden: example.hidden }, research, holdout, feeds, telegram }} notice={notice} />;
 }

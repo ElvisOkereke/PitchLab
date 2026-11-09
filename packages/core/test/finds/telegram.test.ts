@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { finds } from '../../src/db/schema';
-import { TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, messageParts, pollTelegram, sendTelegram } from '../../src/finds/telegram';
+import { TELEGRAM_OFFSET_KEY, TELEGRAM_OWNER_KEY, TELEGRAM_PAIRING_KEY, ensurePairingCode } from '../../src/dashboard/telegram';
+import { addFinds } from '../../src/finds/store';
+import { messageParts, pollTelegram, sendTelegram } from '../../src/finds/telegram';
 import { getSetting, setSetting } from '../../src/validation/settings';
 import { testDb } from '../helpers/db';
 
@@ -59,28 +61,83 @@ describe('messageParts', () => {
 });
 
 describe('pollTelegram', () => {
-  it('locks the owner on the first /start and replies in plain text', async () => {
+  it('binds the owner only on /start with the pairing code, then clears the code; replies are plain text', async () => {
     const db = await testDb();
-    const { r, calls } = await poll(db, [[update(10, { chatId: OWNER, text: '/start' })]]);
+    const code = await ensurePairingCode(db);
+    expect(code).toMatch(/^[A-Z2-9]{8}$/);
+    const { r, calls } = await poll(db, [[update(10, { chatId: OWNER, text: `/start ${code}` })]]);
     expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(OWNER);
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBeNull();
     expect(r).toMatchObject({ received: 1, added: 0, ignored: 0 });
     const rs = replies(calls);
     expect(rs).toHaveLength(1);
     expect(rs[0]).toMatchObject({ chat: OWNER, parse: undefined });
   });
 
-  it('ignores strangers silently and stores nothing, before and after the lock', async () => {
+  it('ignores a bare /start, a wrong code and links while unpaired, silently', async () => {
     const db = await testDb();
-    // Before any /start: a link from anyone is ignored (no owner yet).
-    let out = await poll(db, [[update(1, { chatId: STRANGER, text: 'https://example.com/a' })]]);
-    expect(out.r).toMatchObject({ received: 1, added: 0, ignored: 1 });
+    const code = (await ensurePairingCode(db))!;
+    const wrong = code.slice(0, 7) + (code[7] === 'A' ? 'B' : 'A');
+    const out = await poll(db, [[
+      update(1, { chatId: STRANGER, text: '/start' }),
+      update(2, { chatId: STRANGER, text: `/start ${wrong}` }),
+      update(3, { chatId: STRANGER, text: `/start ${code}x` }),
+      update(4, { chatId: STRANGER, text: `https://example.com/a ${code}` }),
+    ]]);
+    expect(out.r).toMatchObject({ received: 4, added: 0, ignored: 4 });
     expect(replies(out.calls)).toEqual([]);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBeNull();
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toBe(code);
+    expect(await db.select().from(finds)).toHaveLength(0);
+  });
+
+  it('a poll while unpaired creates the pairing code when there is none', async () => {
+    const db = await testDb();
+    await poll(db, [[update(1, { chatId: STRANGER, text: '/start' })]]);
+    expect(await getSetting(db, TELEGRAM_PAIRING_KEY)).toMatch(/^[A-Z2-9]{8}$/);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBeNull();
+  });
+
+  it('two /start <code> in one batch: the first binds, the second is a stranger', async () => {
+    const db = await testDb();
+    const code = (await ensurePairingCode(db))!;
+    const out = await poll(db, [[update(1, { chatId: OWNER, text: `/start ${code}` }), update(2, { chatId: STRANGER, text: `/start ${code}` })]]);
+    expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(OWNER);
+    expect(out.r).toMatchObject({ received: 2, ignored: 1 });
+    expect(replies(out.calls).map((x) => x.chat)).toEqual([OWNER]);
+  });
+
+  it('an owner pinned by TELEGRAM_OWNER_CHAT_ID wins over the code and the stored owner', async () => {
+    const db = await testDb();
+    await setSetting(db, TELEGRAM_OWNER_KEY, STRANGER);
+    const code = (await ensurePairingCode(db))!;
+    const tg = fakeTelegram([[update(1, { chatId: STRANGER, text: `/start ${code}` }), update(2, { chatId: OWNER, text: 'https://example.com/pinned' })]]);
+    const r = await pollTelegram({ db, token: TOKEN, fetch: tg.fetch, log: () => {}, ownerChatId: String(OWNER) });
+    expect(r).toMatchObject({ received: 2, added: 1, ignored: 1 });
+    expect(replies(tg.calls).map((x) => x.chat)).toEqual([OWNER]);
+  });
+
+  it('ignores strangers silently and stores nothing once paired', async () => {
+    const db = await testDb();
     await setSetting(db, TELEGRAM_OWNER_KEY, OWNER);
-    out = await poll(db, [[update(2, { chatId: STRANGER, text: '/start' }), update(3, { chatId: STRANGER, text: 'https://example.com/b' })]]);
+    const out = await poll(db, [[update(2, { chatId: STRANGER, text: '/start' }), update(3, { chatId: STRANGER, text: 'https://example.com/b' })]]);
     expect(out.r).toMatchObject({ received: 2, added: 0, ignored: 2 });
     expect(replies(out.calls)).toEqual([]);
     expect(await getSetting(db, TELEGRAM_OWNER_KEY)).toBe(OWNER);
     expect(await db.select().from(finds)).toHaveLength(0);
+  });
+
+  it('saves the offset after each update, so a failure mid-batch does not replay the earlier ones', async () => {
+    const db = await testDb();
+    await setSetting(db, TELEGRAM_OWNER_KEY, OWNER);
+    const tg = fakeTelegram([[update(50, { chatId: OWNER, text: 'https://example.com/1' }), update(51, { chatId: OWNER, text: 'https://example.com/2' })]]);
+    let n = 0;
+    const add: typeof addFinds = async (d, items) => {
+      if (++n === 2) throw new Error('db down');
+      return addFinds(d, items);
+    };
+    await expect(pollTelegram({ db, token: TOKEN, fetch: tg.fetch, log: () => {}, addFinds: add })).rejects.toThrow('db down');
+    expect(await getSetting(db, TELEGRAM_OFFSET_KEY)).toBe(51);
   });
 
   it('turns the owner\'s links into finds, replies "Got it", and "Already captured" for a repeat', async () => {

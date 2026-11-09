@@ -32,6 +32,8 @@ const schema = z.object({
   BLUESKY_APP_PASSWORD: z.string().min(1).optional(),
   /** Optional: the private Telegram bot the owner shares links to (finds). Only ever put in the Bot API url path, never logged. */
   TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
+  /** Optional: pins the bot's owner chat id (skips the /start <code> pairing). */
+  TELEGRAM_OWNER_CHAT_ID: z.string().regex(/^-?\d{1,20}$/).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

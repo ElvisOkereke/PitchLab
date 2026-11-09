@@ -70,6 +70,7 @@ export type CliHandlers = {
   findsAdd(url: string, note: string | undefined): Promise<number>;
   findsList(): Promise<number>;
   findsRun(): Promise<number>;
+  telegramReset(): Promise<number>;
   benchBaseline(opts: { force?: boolean; dryRun?: boolean }): Promise<number>;
   benchRun(): Promise<number>;
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
@@ -210,6 +211,14 @@ export function buildProgram(h: CliHandlers): Command {
       } else {
         throw new CliError('Usage: gen finds add <url> [note] | gen finds list | gen finds run', 2);
       }
+    });
+
+  program.command('telegram')
+    .description('The Telegram bot: "gen telegram reset" forgets its owner and prints a new pairing code')
+    .argument('<action>', '"reset"')
+    .action(async (action: string) => {
+      if (action !== 'reset') throw new CliError('Usage: gen telegram reset', 2);
+      process.exitCode = await h.telegramReset();
     });
 
   program.command('research')

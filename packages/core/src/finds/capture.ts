@@ -135,27 +135,34 @@ export async function openCapture(deps: OpenCaptureDeps): Promise<OpenedCapture 
     deps.log(`capture proxy failed to start: ${errorMessage(err)}`);
     return null;
   }
-  const toolsDir = join(deps.root, '.tools');
-  const profileDir = join(deps.root, '.data', 'capture-profile');
-  const tmpDir = join(deps.root, '.data', 'capture-tmp');
-  const exists = deps.exists ?? existsSync;
+  // Anything that throws from here on must not leave the proxy listening.
   try {
-    if (!exists(tmpDir)) mkdirSync(tmpDir, { recursive: true });
-  } catch {
-    // captureLink creates its own work folder; a missing parent shows up there as a readable error
+    const toolsDir = join(deps.root, '.tools');
+    const profileDir = join(deps.root, '.data', 'capture-profile');
+    const tmpDir = join(deps.root, '.data', 'capture-tmp');
+    const exists = deps.exists ?? existsSync;
+    try {
+      if (!exists(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+    } catch {
+      // captureLink creates its own work folder; a missing parent shows up there as a readable error
+    }
+    const paths = mod.toolPaths(toolsDir);
+    const opts = {
+      toolsDir, profileDir, tmpDir,
+      proxyUrl: `http://127.0.0.1:${proxy.port}`,
+      checkUrl: (url: string) => checkCaptureUrl(url, deps.lookup),
+      readPage: makeReadPage({ db: deps.db, fetchPage: deps.fetchPage, log: deps.log }),
+      log: (m: string) => deps.log(`capture: ${m}`),
+    };
+    return {
+      capture: (url) => mod.captureLink(url, opts),
+      scrubHandles: mod.scrubHandles,
+      toolsPresent: exists(paths.ytdlp) && exists(paths.ffmpeg),
+      close: () => proxy.close().catch(() => {}),
+    };
+  } catch (err) {
+    await proxy.close().catch(() => {});
+    deps.log(`capture unavailable: ${errorMessage(err)}`);
+    return null;
   }
-  const paths = mod.toolPaths(toolsDir);
-  const opts = {
-    toolsDir, profileDir, tmpDir,
-    proxyUrl: `http://127.0.0.1:${proxy.port}`,
-    checkUrl: (url: string) => checkCaptureUrl(url, deps.lookup),
-    readPage: makeReadPage({ db: deps.db, fetchPage: deps.fetchPage, log: deps.log }),
-    log: (m: string) => deps.log(`capture: ${m}`),
-  };
-  return {
-    capture: (url) => mod.captureLink(url, opts),
-    scrubHandles: mod.scrubHandles,
-    toolsPresent: exists(paths.ytdlp) && exists(paths.ffmpeg),
-    close: () => proxy.close().catch(() => {}),
-  };
 }

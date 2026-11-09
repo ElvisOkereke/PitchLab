@@ -316,6 +316,14 @@ describe('libraryCoverage', () => {
     await rejectItem(db, gone.itemId);
     expect((await libraryCoverage(db)).socialShare).toBe(0.5);
   });
+  it('socialShare counts finds from social platforms, not finds from other sites', async () => {
+    const db = await testDb();
+    const types = ['instagram-find', 'tiktok-find', 'youtube-find', 'x-find', 'threads-find', 'facebook-find', 'linkedin-find', 'other-find'];
+    for (let i = 0; i < types.length; i++) {
+      await upsertKnowledgeItem(db, draft({ source: unverifiedSource(`https://y.example/f${i}`, 'y.example', types[i]!) }), unit(i), {});
+    }
+    expect((await libraryCoverage(db)).socialShare).toBe(7 / 8);
+  });
   it('socialShare leaves out HN trend counts (a measurement, not a community post)', async () => {
     const db = await testDb();
     await upsertKnowledgeItem(db, draft({ source: unverifiedSource('https://y.example/1', 'y.example', 'hn') }), unit(0), {});

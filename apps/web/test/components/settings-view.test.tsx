@@ -81,7 +81,7 @@ describe('SettingsView', () => {
     const { getByTestId } = render(<SettingsView data={data()} />);
     const c = getByTestId('connections');
     const items = Object.fromEntries([...c.querySelectorAll('li')].map((li) => [li.querySelector('.name')!.textContent, li.querySelector('.badge')!.textContent]));
-    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', YouTube: 'not set', 'Local browser (Chromium)': 'not installed', Database: 'connected' });
+    expect(items).toEqual({ 'LLM API': 'connected', GitHub: 'not set', 'Stack Exchange': 'connected', 'Google Places': 'not set', 'Product Hunt': 'not set', YouTube: 'not set', 'Local browser (Chromium)': 'not installed', 'Telegram bot': 'not set', 'Capture tools (for finds)': 'not installed', Database: 'connected' });
     expect(c.textContent).not.toMatch(/reddit/i);
     expect([...c.querySelectorAll('.badge')].map((b) => b.textContent).join(' ')).not.toMatch(/postgres|key|secret|:\/\//i);
   });
@@ -112,6 +112,23 @@ describe('SettingsView', () => {
     expect(t).toContain('YOUTUBE_API_KEY');
     expect(t).toMatch(/\.env/);
     expect(t).toMatch(/restart/i);
+  });
+
+  it('Telegram: the pairing code and how to use it while unpaired; paired once bound; how to add the token otherwise', () => {
+    const w = data().worker!;
+    const unpaired = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, telegram: true } }, telegram: { connected: true, paired: false, pairingCode: 'ABCD2345' } })} />);
+    const t = unpaired.getByTestId('conn-telegram').textContent!;
+    expect(t).toContain('/start ABCD2345');
+    expect(t).toContain('gen telegram reset');
+    unpaired.unmount();
+    const paired = render(<SettingsView data={data({ worker: { ...w, providers: { ...w.providers, telegram: true } }, telegram: { connected: true, paired: true, pairingCode: null } })} />);
+    const tp = paired.getByTestId('conn-telegram').textContent!;
+    expect(tp).toContain('paired');
+    expect(tp).not.toContain('/start');
+    paired.unmount();
+    const off = render(<SettingsView data={data()} />);
+    expect(off.getByTestId('conn-telegram').textContent).toContain('TELEGRAM_BOT_TOKEN');
+    expect(off.getByTestId('conn-capture').textContent).toContain('npm run capture:setup');
   });
 
   it('Local browser: installed, or not installed with the install command and where to run it', () => {

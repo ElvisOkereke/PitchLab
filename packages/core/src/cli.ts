@@ -46,8 +46,9 @@ import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/
 import { fileURLToPath } from 'node:url';
 import { addFinds, listFinds } from './finds/store';
 import { captureToolsPresent, openCapture } from './finds/capture';
-import { pollTelegram, sendTelegram, TELEGRAM_OWNER_KEY } from './finds/telegram';
-import { hasQueuedFinds, runFindsJob } from './finds/worker';
+import { pollTelegram, sendTelegram } from './finds/telegram';
+import { createFindsExecutor, runQueuedFinds, type RunFindsDeps } from './finds/run';
+import { TELEGRAM_OWNER_KEY, ensurePairingCode, pinTelegramOwner, resetTelegramPairing } from './dashboard/telegram';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -208,7 +209,15 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     // Whether the capture tools are installed (npm run capture:setup), checked once at worker start.
     const captureAvailable = await captureToolsPresent(REPO_ROOT);
     const telegramToken = env.TELEGRAM_BOT_TOKEN;
-    let captureWarned = false;
+    if (telegramToken) {
+      // TELEGRAM_OWNER_CHAT_ID pins the owner; otherwise the bot pairs only with `/start <code>` (shown once per start).
+      if (env.TELEGRAM_OWNER_CHAT_ID) await pinTelegramOwner(db, env.TELEGRAM_OWNER_CHAT_ID);
+      else {
+        const code = await ensurePairingCode(db);
+        if (code) out(`Telegram: send /start ${code} to your bot to pair it (also shown in Settings → Connections).`);
+      }
+    }
+    const executeFinds = createFindsExecutor(findsDeps(db, env));
     await runWorker({
       db,
       intervalMs: opts.interval * 1000,
@@ -235,19 +244,12 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       },
       // A short poll (timeout 0) on every pass, so the worker is never held waiting for messages.
       pollTelegram: telegramToken ? async () => {
-        await pollTelegram({ db, token: telegramToken, log: out, timeoutSec: 0 });
+        await pollTelegram({ db, token: telegramToken, log: out, timeoutSec: 0, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID });
       } : undefined,
       executeFinds: async () => {
-        if (!(await hasQueuedFinds(db))) return false;
         busy = true;
         try {
-          const r = await runFinds(db, env, 1);
-          if (r === null) {
-            if (!captureWarned) out('Finds are waiting, but the capture service could not start (run npm run capture:setup).');
-            captureWarned = true;
-            return false;
-          }
-          return r.captured + r.failed > 0;
+          return await executeFinds();
         } finally {
           busy = false;
         }
@@ -292,24 +294,28 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
 }
 
 /**
- * Captures up to `limit` queued finds with the capture service behind the guarded proxy (opened for this call only),
- * replying on Telegram to the owner when a find came from there. Null when the capture service is unavailable.
+ * The finds job's collaborators: the capture service behind the guarded proxy (opened per call), the router, and a
+ * Telegram reply to the owner when a find came from there.
  */
-async function runFinds(db: Db, env: Env, limit: number): Promise<{ captured: number; failed: number } | null> {
-  const capture = await openCapture({ db, log: out, root: REPO_ROOT });
-  if (!capture) return null;
-  try {
-    const token = env.TELEGRAM_BOT_TOKEN;
-    return await runFindsJob({
-      db, router: buildRouter(env, db), log: out, capture: capture.capture, scrubHandles: capture.scrubHandles, limit,
-      notify: token ? async (text) => {
-        const owner = await getSetting(db, TELEGRAM_OWNER_KEY);
-        if (typeof owner === 'number' || typeof owner === 'string') await sendTelegram({ token, log: out }, owner, text);
-      } : undefined,
-    });
-  } finally {
-    await capture.close();
-  }
+function findsDeps(db: Db, env: Env): Omit<RunFindsDeps, 'limit'> {
+  const token = env.TELEGRAM_BOT_TOKEN;
+  return {
+    db, router: buildRouter(env, db), log: out, open: () => openCapture({ db, log: out, root: REPO_ROOT }),
+    notify: token ? async (text) => {
+      const owner = env.TELEGRAM_OWNER_CHAT_ID ?? (await getSetting(db, TELEGRAM_OWNER_KEY));
+      if (typeof owner === 'number' || typeof owner === 'string') await sendTelegram({ token, log: out }, owner, text);
+    } : undefined,
+  };
+}
+
+/** `gen telegram reset`: forgets the bot's owner and prints a new pairing code. */
+async function telegramResetCommand(): Promise<number> {
+  return withDb(async (db) => {
+    const code = await resetTelegramPairing(db);
+    out(`Telegram pairing reset. Send /start ${code} to your bot to pair it again (restart the worker if it is running).`);
+    if (process.env.TELEGRAM_OWNER_CHAT_ID) out('Note: TELEGRAM_OWNER_CHAT_ID is set in .env and pins the owner; remove it to pair with the code.');
+    return 0;
+  });
 }
 
 /** `gen finds add <url> [note]`: queues one pasted link. */
@@ -347,9 +353,9 @@ async function findsRunCommand(): Promise<number> {
   const env = loadEnv();
   const db = await openDb(env.DATABASE_URL);
   try {
-    const r = await runFinds(db, env, 50);
-    if (r === null) {
-      console.error('The capture service could not start. Run npm run capture:setup first.');
+    const r = await runQueuedFinds({ ...findsDeps(db, env), limit: 50 });
+    if (r === 'no_tools' || r === 'unavailable') {
+      console.error(r === 'no_tools' ? 'The capture tools are not installed. Run npm run capture:setup first.' : 'The capture service could not start.');
       return 1;
     }
     out(`${r.captured} captured, ${r.failed} failed.`);
@@ -865,6 +871,7 @@ const program = buildProgram({
   findsAdd: findsAddCommand,
   findsList: findsListCommand,
   findsRun: findsRunCommand,
+  telegramReset: telegramResetCommand,
   research: researchCommand,
   researchStatus: researchStatusCommand,
   benchBaseline: benchBaselineCommand,

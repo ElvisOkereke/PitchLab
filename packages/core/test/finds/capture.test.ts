@@ -71,6 +71,14 @@ describe('openCapture', () => {
     expect(close).toHaveBeenCalled();
   });
 
+  it('closes the proxy when anything throws after it started', async () => {
+    const db = await testDb();
+    const close = vi.fn(async () => {});
+    const mod = { captureLink: vi.fn(), scrubHandles: (t: string) => t, toolPaths: () => { throw new Error('bad tools dir'); } } as unknown as CaptureModule;
+    expect(await openCapture({ db, log: () => {}, root: 'R:/repo', importer: async () => mod, exists: () => true, startProxy: async () => ({ port: 1, address: '127.0.0.1', close }) })).toBeNull();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it('returns null when the capture package cannot load or the proxy cannot start', async () => {
     const db = await testDb();
     expect(await openCapture({ db, log: () => {}, root: 'R:/repo', importer: async () => { throw new Error('missing'); } })).toBeNull();

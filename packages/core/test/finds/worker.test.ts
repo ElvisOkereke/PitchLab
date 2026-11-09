@@ -75,12 +75,20 @@ describe('runFindsJob', () => {
     // Handles and emails are not stored in the entry text.
     expect(`${item!.title} ${item!.summary} ${JSON.stringify(item!.facts)}`).not.toMatch(/bigcreator|a@b\.com/);
     const [src] = await db.select().from(knowledgeSources);
-    expect(src).toMatchObject({ url: 'https://www.tiktok.com/@bigcreator/video/1', sourceType: 'tiktok', quoteVerified: true });
+    expect(src).toMatchObject({ url: 'https://www.tiktok.com/@bigcreator/video/1', sourceType: 'tiktok-find', quoteVerified: true, expiresAt: null });
     // The model sees the texts wrapped as untrusted, and the note.
     expect(rt.prompts[0]).toContain('<transcript>');
     expect(rt.prompts[0]).toContain('dentists!');
     expect(rt.versions[0]).toBe('finds:find-extract.v1');
     expect(notify).toHaveBeenCalledWith(expect.stringMatching(/^Captured: Tiny AI service/));
+  });
+
+  it('a YouTube find keeps its own source type, so the 30-day YouTube API deletion rule never applies', async () => {
+    const db = await testDb();
+    await addFinds(db, [{ url: 'https://youtube.com/shorts/abc', source: 'paste' }]);
+    await job(db, async () => okCapture({ platform: 'youtube' }));
+    const [src] = await db.select().from(knowledgeSources);
+    expect(src).toMatchObject({ sourceType: 'youtube-find', expiresAt: null });
   });
 
   it('keeps a quote that is not in the captured text unverified', async () => {
