@@ -152,3 +152,21 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
 - **Recommendation:**
   - make the gate's scale check advisory, so scale ranks but doesn't kill, until the owner says which side is right;
   - then tune with their answers.
+
+## 2026-11-08: owner ruling on scale, and what a good idea is
+
+- **Owner's words:**
+  - Kept cases "may not have the earning ceiling but are better ideas … they inspire more confidence that people actually need a service that they will pay money for".
+  - Most kills were ideas that "can be very simply done manually or just asking any frontier AI system to do it, given it has the right data".
+  - Wants "more challenging problems that require a bit of engineering/industry expertise".
+  - Wants a larger buyer base, but a smart idea first.
+  - Wants better comp analysis: companies doing well in similar or adjacent spaces signal worth.
+  - Wants more validation steps before ideas reach the final verdict.
+- **Change:** setting `gate.minRevenueCeiling` lowered to 100,000 (was 1,000,000).
+- **Next:**
+  - Add the new sources first: the capture service and Finds (Telegram, paste), plus automatic feeds.
+  - Then a "worth and difficulty" round:
+    - a check that kills ideas a person or a frontier model could do with the data in hand;
+    - comp-based worth evidence from successful adjacent companies;
+    - an extra validation step before cases reach the Board.
+  - Then the next bench pass.
