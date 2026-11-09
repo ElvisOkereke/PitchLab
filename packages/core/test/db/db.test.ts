@@ -3,7 +3,9 @@ import { sql, cosineDistance } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
 import { seedDefaults, CONSUMER_SEGMENTS } from '../../src/db/seed';
 import { eq } from 'drizzle-orm';
-import { cases, claims, ideaReviews, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { cases, claims, finds, ideaReviews, lenses, markets, runs, ideas, signals } from '../../src/db/schema';
 
 describe('db', () => {
   it('migrates, seeds idempotently, and supports vector similarity', async () => {
@@ -146,6 +148,22 @@ describe('db', () => {
     const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
     const [idea] = await db.insert(ideas).values({ runId: run!.id, origin: 'generated', title: 't', oneLiner: 'o', buyer: 'b', problem: 'p', solution: 's', signalIds: [], status: 'candidate' }).returning();
     expect(idea).toMatchObject({ scaleEstimate: null, scaleResult: null });
+  });
+
+  it('migration 0014 adds finds, the find kind and the new fetch routes, additively', async () => {
+    const db = await testDb();
+    const enumLabels = async (name: string) =>
+      ((await db.execute(sql`select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = ${name} order by e.enumsortorder`)) as unknown as { rows: { enumlabel: string }[] }).rows.map((r) => r.enumlabel);
+    expect(await enumLabels('knowledge_kind')).toEqual(['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market', 'find']);
+    expect(await enumLabels('fetch_via')).toEqual(['direct', 'archive', 'browser', 'real_browser', 'scraper']);
+    expect(await enumLabels('find_status')).toEqual(['queued', 'capturing', 'done', 'failed']);
+    expect(await enumLabels('find_source')).toEqual(['telegram', 'paste']);
+    const [f] = await db.insert(finds).values({ url: 'https://example.com/x', platform: 'other', source: 'paste' }).returning();
+    expect(f).toMatchObject({ status: 'queued', note: null, knowledgeItemId: null, warnings: [], capturedAt: null });
+    await expect(db.insert(finds).values({ url: 'https://example.com/x', platform: 'other', source: 'telegram' })).rejects.toThrow();
+    // The migration only adds: its SQL never drops, renames or alters an existing column type.
+    const migration = readFileSync(join(__dirname, '..', '..', 'drizzle', readdirSync(join(__dirname, '..', '..', 'drizzle')).find((n) => n.startsWith('0014_'))!), 'utf8');
+    expect(migration).not.toMatch(/\bDROP\b|\bRENAME\b|ALTER COLUMN/i);
   });
 });
 

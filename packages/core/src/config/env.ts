@@ -30,6 +30,8 @@ const schema = z.object({
   /** Optional: Bluesky sign-in for the feeds, used only if the public search endpoint demands auth (use an app password, never the account password). */
   BLUESKY_HANDLE: z.string().min(1).optional(),
   BLUESKY_APP_PASSWORD: z.string().min(1).optional(),
+  /** Optional: the private Telegram bot the owner shares links to (finds). Only ever put in the Bot API url path, never logged. */
+  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
 });
 
 export type Env = z.infer<typeof schema>;

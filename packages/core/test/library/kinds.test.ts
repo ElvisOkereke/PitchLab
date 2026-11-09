@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { testDb } from '../helpers/db';
-import { KNOWLEDGE_KINDS, SLICE_A_KINDS, KIND_LABELS, FactsSchemas, parseFacts } from '../../src/library/kinds';
+import { KNOWLEDGE_KINDS, LIBRARY_ENTRY_KINDS, SLICE_A_KINDS, KIND_LABELS, FactsSchemas, parseFacts } from '../../src/library/kinds';
 import { knowledgeItems, knowledgeSources, researchMissions, signals, dataCalls } from '../../src/db/schema';
 import { logDataCall } from '../../src/tools/data-calls';
 
@@ -62,11 +62,22 @@ describe('library kinds', () => {
   });
 
   it('KIND_LABELS has a plain label for every kind', () => {
-    expect(Object.keys(KIND_LABELS).sort()).toEqual([...KNOWLEDGE_KINDS].sort());
+    expect(Object.keys(KIND_LABELS).sort()).toEqual([...LIBRARY_ENTRY_KINDS].sort());
+    expect(KIND_LABELS.find).toBe('Seen in the wild');
     expect(KIND_LABELS.trend).toBe("What's growing or shrinking");
     expect(KIND_LABELS.rule_change).toBe('A rule or platform change');
     expect(KIND_LABELS.market).toBe('Market size clues');
     expect([KIND_LABELS.problem, KIND_LABELS.startup, KIND_LABELS.pricing]).toEqual(['Problems', 'Startups', 'Pricing']);
+  });
+
+  it('a find is a library entry kind, never a research kind; its facts are checked', () => {
+    expect(LIBRARY_ENTRY_KINDS).toEqual([...KNOWLEDGE_KINDS, 'find']);
+    expect((KNOWLEDGE_KINDS as readonly string[]).includes('find')).toBe(false);
+    const f = { what: 'AI receptionist', whoPays: 'dentists', howItEarns: '$200/month', whyItWorks: 'missed calls', claims: ['10k a month'], platform: 'tiktok', views: 10, likes: 2, creatorType: 'solo' };
+    expect(parseFacts('find', f)).toEqual(f);
+    expect(parseFacts('find', { ...f, views: undefined, likes: undefined, creatorType: undefined })).toMatchObject({ what: 'AI receptionist' });
+    expect(() => parseFacts('find', { ...f, claims: 'x' })).toThrow(/find/);
+    expect(() => parseFacts('find', { ...f, what: undefined })).toThrow();
   });
 
   it('rejects a bad startup outcome', () => {

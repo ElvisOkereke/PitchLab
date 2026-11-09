@@ -156,7 +156,7 @@ describe('ideationContext: changing and markets (Slice B)', () => {
     await rejectItem(db, rej);
     await addB(db, 'trend', { bad: true }, near(0.8, 6));
     await addB(db, 'rule_change', rc('Bad date', 'soon'), near(0.85, 7));
-    const old = new Date(Date.now() - 40 * 864e5);
+    const old = new Date(NOW.getTime() - 40 * 864e5);
     await upsertKnowledgeItem(db, { kind: 'trend', title: 'Gone', summary: 's', audience: 'business', countries: ['US'], industries: [], facts: tr('Gone'), source: { url: 'https://www.youtube.com/watch?v=gonegonegon', domain: 'www.youtube.com', sourceType: 'youtube', quoteVerified: false } }, near(0.92, 8), { now: old });
     const c = await ideationContext(db, unit(0), { countries: ['US'], now: NOW });
     expect(c.changing.map((x) => x.id)).toEqual([glob]);

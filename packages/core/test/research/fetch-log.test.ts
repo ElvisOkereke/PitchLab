@@ -51,7 +51,7 @@ describe('fetchStats', () => {
   it('is empty-safe', async () => {
     const s = await fetchStats(await testDb(), {});
     expect(s).toMatchObject({ total: 0, ok: 0, okRate: null, topFailing: [] });
-    expect(s.byVia).toEqual({ direct: { total: 0, ok: 0 }, archive: { total: 0, ok: 0 }, browser: { total: 0, ok: 0 } });
+    expect(s.byVia).toEqual({ direct: { total: 0, ok: 0 }, archive: { total: 0, ok: 0 }, browser: { total: 0, ok: 0 }, real_browser: { total: 0, ok: 0 }, scraper: { total: 0, ok: 0 } });
   });
   it('computes rates, via split, top failing, window and bound', async () => {
     const db = await testDb();

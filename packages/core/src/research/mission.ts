@@ -341,10 +341,10 @@ function outcomeReason(o: FetchOutcome): string {
 }
 
 /** Stored text: invisible characters out, whitespace collapsed, personal identifiers scrubbed, capped at 500. */
-const cleanStored = (s: string): string => capQuote(scrubPersonal(capField(stripInvisible(s), 2000)));
+export const cleanStored = (s: string): string => capQuote(scrubPersonal(capField(stripInvisible(s), 2000)));
 
 /** Strip invisible characters and personal identifiers from every string in model-extracted facts. */
-function cleanFacts(v: unknown): unknown {
+export function cleanFacts(v: unknown): unknown {
   if (typeof v === 'string') return scrubPersonal(stripInvisible(v));
   if (Array.isArray(v)) return v.map(cleanFacts);
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cleanFacts(x)]));
@@ -352,28 +352,28 @@ function cleanFacts(v: unknown): unknown {
 }
 
 const COUNTRY = /^([A-Z]{2}|global)$/;
-function cleanCountries(cs: string[]): string[] {
+export function cleanCountries(cs: string[]): string[] {
   const out = cs.map((c) => c.trim()).map((c) => (c.toLowerCase() === 'global' ? 'global' : c.toUpperCase())).filter((c) => COUNTRY.test(c));
   return [...new Set(out)].slice(0, 10);
 }
-function cleanIndustries(xs: string[]): string[] {
+export function cleanIndustries(xs: string[]): string[] {
   const out = xs.map((x) => capField(stripInvisible(x), 60).toLowerCase()).filter(Boolean);
   return [...new Set(out)].slice(0, 10);
 }
 
 /** Long enough to count as evidence: at least MIN_QUOTE_WORDS words and MIN_QUOTE_CHARS characters after normalize(). */
-function longEnough(s: string): boolean {
+export function longEnough(s: string): boolean {
   const n = normalize(s);
   return n.length >= MIN_QUOTE_CHARS && n.split(' ').length >= MIN_QUOTE_WORDS;
 }
 
 /** Long enough, and verbatim after normalize() (on word boundaries) in the text the collector fetched. */
-function quoteOnSource(quote: string, sourceText: string): boolean {
+export function quoteOnSource(quote: string, sourceText: string): boolean {
   return longEnough(quote) && ` ${normalize(sourceText)} `.includes(` ${normalize(quote)} `);
 }
 
 /** Redaction markers scrubPersonal inserts; they are not evidence, so they do not count toward a quote's length. */
-const REDACTION_MARKERS = /\[(?:user|profile removed|email removed)\]/g;
+export const REDACTION_MARKERS = /\[(?:user|profile removed|email removed)\]/g;
 
 /** Structured-source drafts (YC, Product Hunt): no model call; text fields still cleaned before storage. */
 function cleanStructured(d: KnowledgeDraft): KnowledgeDraft {
@@ -814,7 +814,7 @@ ${text}` : it.url;
     };
     const addStructured = (drafts: KnowledgeDraft[]) => {
       for (const d of drafts) {
-        if (!kinds.includes(d.kind) || isBannedSource(d.source.url) || seenUrls.has(d.source.url)) continue;
+        if (!(kinds as readonly string[]).includes(d.kind) || isBannedSource(d.source.url) || seenUrls.has(d.source.url)) continue;
         seenUrls.add(d.source.url);
         structured.push(cleanStructured(d));
       }

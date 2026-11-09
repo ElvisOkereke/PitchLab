@@ -37,13 +37,13 @@ function coverage(o: Partial<LibraryCoverage> = {}): LibraryCoverage {
 function fetches(o: Partial<FetchStats> = {}): FetchStats {
   return {
     total: 20, ok: 15, okRate: 0.75,
-    byVia: { direct: { total: 16, ok: 11 }, archive: { total: 3, ok: 3 }, browser: { total: 1, ok: 1 } },
+    byVia: { direct: { total: 16, ok: 11 }, archive: { total: 3, ok: 3 }, browser: { total: 1, ok: 1 }, real_browser: { total: 0, ok: 0 }, scraper: { total: 0, ok: 0 } },
     byOutcome: { ok: 15, http_403: 3, thin_text: 1, timeout: 1 },
     topFailing: [{ domain: 'blocky.example', failures: 3, topOutcome: 'http_403' }, { domain: 'spa.example', failures: 1, topOutcome: 'thin_text' }],
     ...o,
   };
 }
-const NO_FETCHES: FetchStats = { total: 0, ok: 0, okRate: null, byVia: { direct: { total: 0, ok: 0 }, archive: { total: 0, ok: 0 }, browser: { total: 0, ok: 0 } }, byOutcome: {}, topFailing: [] };
+const NO_FETCHES: FetchStats = { total: 0, ok: 0, okRate: null, byVia: { direct: { total: 0, ok: 0 }, archive: { total: 0, ok: 0 }, browser: { total: 0, ok: 0 }, real_browser: { total: 0, ok: 0 }, scraper: { total: 0, ok: 0 } }, byOutcome: {}, topFailing: [] };
 function mission(o: Partial<MissionView> = {}): MissionView {
   return {
     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', topic: 'late invoices', kinds: ['problem'], countries: [], audience: null, origin: 'owner', status: 'succeeded',

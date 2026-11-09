@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",
+    "@bcg/capture": "*",
     "@electric-sql/pglite": "^0.5.10",
     "@electric-sql/pglite-pgvector": "^0.0.11",
     "@mozilla/readability": "^0.6.0",

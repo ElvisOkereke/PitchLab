@@ -181,11 +181,14 @@ function FetchDiagnostics({ fetches }: { fetches: FetchStats }) {
             Pages read: <strong>{ofTotal(fetches.ok, fetches.total)}</strong>
           </p>
           <ul className="plain stack">
-            {(Object.keys(VIA_LABEL) as (keyof FetchStats['byVia'])[]).map((v) => (
-              <li key={v}>
-                {VIA_LABEL[v]}: {ofTotal(fetches.byVia[v].ok, fetches.byVia[v].total)}
-              </li>
-            ))}
+            {/* The signed-in browser and scraping-service routes are listed only once they have been used. */}
+            {(Object.keys(VIA_LABEL) as (keyof FetchStats['byVia'])[])
+              .filter((v) => fetches.byVia[v] && (fetches.byVia[v].total > 0 || v === 'direct' || v === 'archive' || v === 'browser'))
+              .map((v) => (
+                <li key={v}>
+                  {VIA_LABEL[v]}: {ofTotal(fetches.byVia[v].ok, fetches.byVia[v].total)}
+                </li>
+              ))}
           </ul>
           {outcomes.length > 0 ? (
             <p className="muted small">What went wrong: {outcomes.map(([k, n]) => `${outcomeLabel(k)} ${n}`).join(' · ')}</p>

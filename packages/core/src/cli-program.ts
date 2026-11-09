@@ -67,6 +67,9 @@ export type CliHandlers = {
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
   feedsRun(): Promise<number>;
+  findsAdd(url: string, note: string | undefined): Promise<number>;
+  findsList(): Promise<number>;
+  findsRun(): Promise<number>;
   benchBaseline(opts: { force?: boolean; dryRun?: boolean }): Promise<number>;
   benchRun(): Promise<number>;
   benchReport(passId: string | undefined, opts: { recompute?: boolean }): Promise<number>;
@@ -191,6 +194,22 @@ export function buildProgram(h: CliHandlers): Command {
     .action(async (action: string) => {
       if (action !== 'run') throw new CliError('Usage: gen feeds run', 2);
       process.exitCode = await h.feedsRun();
+    });
+
+  program.command('finds')
+    .description('Links you shared (Telegram or pasted): "gen finds add <url> [note]" queues one, "gen finds list" shows them, "gen finds run" captures the queued ones now (costs model calls)')
+    .argument('<action>', '"add", "list" or "run"')
+    .argument('[args...]', 'for add: the link, then an optional note')
+    .action(async (action: string, args: string[]) => {
+      if (action === 'add') {
+        if (args.length === 0) throw new CliError('Usage: gen finds add <url> [note]', 2);
+        const [url, ...note] = args;
+        process.exitCode = await h.findsAdd(url!, note.length ? note.join(' ') : undefined);
+      } else if ((action === 'list' || action === 'run') && args.length === 0) {
+        process.exitCode = action === 'list' ? await h.findsList() : await h.findsRun();
+      } else {
+        throw new CliError('Usage: gen finds add <url> [note] | gen finds list | gen finds run', 2);
+      }
     });
 
   program.command('research')

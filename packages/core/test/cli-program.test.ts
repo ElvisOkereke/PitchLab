@@ -6,7 +6,7 @@ function handlers() {
   return {
     run: vi.fn(ok), resume: vi.fn(ok), export: vi.fn(ok), runs: vi.fn(ok),
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
-    configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok), feedsRun: vi.fn(ok),
+    configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok), feedsRun: vi.fn(ok), findsAdd: vi.fn(ok), findsList: vi.fn(ok), findsRun: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
     auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok),
   } satisfies CliHandlers;
@@ -108,6 +108,16 @@ describe('gen prospects import / outreach / config', () => {
     expect((await parse(['worker', '--once', '--feeds'])).worker).toHaveBeenCalledWith({ interval: 10, once: true, feeds: true });
     expect((await parse(['feeds', 'run'])).feedsRun).toHaveBeenCalledTimes(1);
     await expect(parse(['feeds', 'nope'])).rejects.toThrow(/gen feeds run/);
+  });
+
+  it('finds add <url> [note], finds list and finds run call their handlers; other actions are refused', async () => {
+    expect((await parse(['finds', 'add', 'https://www.tiktok.com/@a/video/1', 'great', 'idea'])).findsAdd).toHaveBeenCalledWith('https://www.tiktok.com/@a/video/1', 'great idea');
+    expect((await parse(['finds', 'add', 'https://example.com/x'])).findsAdd).toHaveBeenCalledWith('https://example.com/x', undefined);
+    expect((await parse(['finds', 'list'])).findsList).toHaveBeenCalledTimes(1);
+    expect((await parse(['finds', 'run'])).findsRun).toHaveBeenCalledTimes(1);
+    await expect(parse(['finds', 'add'])).rejects.toThrow(/gen finds add/);
+    await expect(parse(['finds', 'nope'])).rejects.toThrow(/gen finds/);
+    await expect(parse(['finds', 'list', 'extra'])).rejects.toThrow(/gen finds/);
   });
 
   it('worker takes an --interval in seconds (default 10, minimum 2) and --once', async () => {

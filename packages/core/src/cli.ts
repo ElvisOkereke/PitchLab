@@ -43,6 +43,11 @@ import { listMissions, MissionInputSchema, queueMission } from './dashboard/miss
 import { buildCollectors, runMission } from './research/mission';
 import { runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
+import { fileURLToPath } from 'node:url';
+import { addFinds, listFinds } from './finds/store';
+import { captureToolsPresent, openCapture } from './finds/capture';
+import { pollTelegram, sendTelegram, TELEGRAM_OWNER_KEY } from './finds/telegram';
+import { hasQueuedFinds, runFindsJob } from './finds/worker';
 
 /** npm runs workspace scripts inside packages/core; resolve user paths against where `npm` was run. */
 const BASE_DIR = process.env.INIT_CWD ?? process.cwd();
@@ -52,6 +57,8 @@ const BENCH_DIR = fromBase(join('output', 'bench'));
 const AUDIT_DIR = fromBase(join('output', 'audit'));
 const VALIDATION_DIR = fromBase(join('output', 'validation'));
 const DEFAULT_DB_URL = 'pglite://.data/pglite';
+/** The repo root (this file is packages/core/src/cli.ts): capture tools in .tools, its profile and work folders in .data. */
+const REPO_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..', '..', '..');
 
 /** Strip terminal control characters from text that may come from harvested/LLM content. */
 const clean = (s: string) => s.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, '');
@@ -198,6 +205,10 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     if (swept > 0) out(`Removed ${swept} stale browser profile${swept === 1 ? '' : 's'}.`);
     // Whether Chromium is installed, checked once at worker start (shown in Settings).
     const browserAvailable = (await loadBrowser()) !== null;
+    // Whether the capture tools are installed (npm run capture:setup), checked once at worker start.
+    const captureAvailable = await captureToolsPresent(REPO_ROOT);
+    const telegramToken = env.TELEGRAM_BOT_TOKEN;
+    let captureWarned = false;
     await runWorker({
       db,
       intervalMs: opts.interval * 1000,
@@ -208,7 +219,7 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
       // Also finalises here: a run that failed during setup is marked failed by the worker after `execute` throws.
       heartbeat: async () => {
         try {
-          await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models, { browser: browserAvailable }));
+          await setSetting(db, WORKER_STATUS_KEY, workerStatus(env, models, { browser: browserAvailable, capture: captureAvailable }));
         } finally {
           await finaliseBenchmarks(db);
         }
@@ -218,6 +229,25 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
         busy = true;
         try {
           return (await executeAndReport(db, env, id)) === 0 ? 'succeeded' : 'failed';
+        } finally {
+          busy = false;
+        }
+      },
+      // A short poll (timeout 0) on every pass, so the worker is never held waiting for messages.
+      pollTelegram: telegramToken ? async () => {
+        await pollTelegram({ db, token: telegramToken, log: out, timeoutSec: 0 });
+      } : undefined,
+      executeFinds: async () => {
+        if (!(await hasQueuedFinds(db))) return false;
+        busy = true;
+        try {
+          const r = await runFinds(db, env, 1);
+          if (r === null) {
+            if (!captureWarned) out('Finds are waiting, but the capture service could not start (run npm run capture:setup).');
+            captureWarned = true;
+            return false;
+          }
+          return r.captured + r.failed > 0;
         } finally {
           busy = false;
         }
@@ -257,6 +287,74 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
     return 0;
   } finally {
     process.off('SIGINT', onSigint);
+    await closeDb(db);
+  }
+}
+
+/**
+ * Captures up to `limit` queued finds with the capture service behind the guarded proxy (opened for this call only),
+ * replying on Telegram to the owner when a find came from there. Null when the capture service is unavailable.
+ */
+async function runFinds(db: Db, env: Env, limit: number): Promise<{ captured: number; failed: number } | null> {
+  const capture = await openCapture({ db, log: out, root: REPO_ROOT });
+  if (!capture) return null;
+  try {
+    const token = env.TELEGRAM_BOT_TOKEN;
+    return await runFindsJob({
+      db, router: buildRouter(env, db), log: out, capture: capture.capture, scrubHandles: capture.scrubHandles, limit,
+      notify: token ? async (text) => {
+        const owner = await getSetting(db, TELEGRAM_OWNER_KEY);
+        if (typeof owner === 'number' || typeof owner === 'string') await sendTelegram({ token, log: out }, owner, text);
+      } : undefined,
+    });
+  } finally {
+    await capture.close();
+  }
+}
+
+/** `gen finds add <url> [note]`: queues one pasted link. */
+async function findsAddCommand(url: string, note: string | undefined): Promise<number> {
+  return withDb(async (db) => {
+    const r = await addFinds(db, [{ url, note, source: 'paste' }]);
+    if (r.invalid) {
+      console.error('That is not an http(s) link.');
+      return 2;
+    }
+    out(r.added ? 'Queued. Start `gen worker` (or run `gen finds run`) to capture it.' : 'Already captured (or already queued).');
+    return 0;
+  });
+}
+
+/** `gen finds list`: the 50 newest finds. */
+async function findsListCommand(): Promise<number> {
+  return withDb(async (db) => {
+    const rows = await listFinds(db, { limit: 50 });
+    if (rows.length === 0) {
+      out('No finds yet. Share a link with the Telegram bot or run `gen finds add <url>`.');
+      return 0;
+    }
+    for (const f of rows) {
+      const detail = f.status === 'failed' ? `error: ${f.error ?? ''}` : (f.title ?? '');
+      out(`${f.id}  ${f.status.padEnd(9)} ${f.platform.padEnd(9)} ${f.url}${detail ? `  ${detail}` : ''}`);
+    }
+    return 0;
+  });
+}
+
+/** `gen finds run`: captures every queued find now (up to 50; costs model calls). */
+async function findsRunCommand(): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const r = await runFinds(db, env, 50);
+    if (r === null) {
+      console.error('The capture service could not start. Run npm run capture:setup first.');
+      return 1;
+    }
+    out(`${r.captured} captured, ${r.failed} failed.`);
+    return r.failed > 0 ? 1 : 0;
+  } finally {
     await closeDb(db);
   }
 }
@@ -764,6 +862,9 @@ const program = buildProgram({
   configGet: configGetCommand,
   worker: workerCommand,
   feedsRun: feedsRunCommand,
+  findsAdd: findsAddCommand,
+  findsList: findsListCommand,
+  findsRun: findsRunCommand,
   research: researchCommand,
   researchStatus: researchStatusCommand,
   benchBaseline: benchBaselineCommand,

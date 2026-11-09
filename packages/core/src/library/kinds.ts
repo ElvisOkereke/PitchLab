@@ -4,6 +4,13 @@ import { z } from 'zod';
 export const KNOWLEDGE_KINDS = ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market'] as const;
 export type KnowledgeKind = (typeof KNOWLEDGE_KINDS)[number];
 
+/**
+ * Every kind a library entry can have: the researchable kinds above, plus `find` (a link the owner shared, captured by
+ * the worker). Missions and feeds never extract finds, so `find` is not in KNOWLEDGE_KINDS.
+ */
+export const LIBRARY_ENTRY_KINDS = [...KNOWLEDGE_KINDS, 'find'] as const;
+export type LibraryEntryKind = (typeof LIBRARY_ENTRY_KINDS)[number];
+
 /** Kinds collected in Slice A. */
 export const SLICE_A_KINDS = ['problem', 'startup', 'pricing'] as const;
 export type SliceAKind = (typeof SLICE_A_KINDS)[number];
@@ -55,20 +62,33 @@ export const FactsSchemas = {
     sizeClues: z.array(z.object({ metric: z.string(), value: z.string(), unit: z.string(), year: z.string() })).min(1).max(8),
     growthClues: z.array(z.object({ metric: z.string(), change: z.string(), period: z.string() })).max(6),
   }),
+  /** A shared link (finds). Claims are the creator's own and unverified; views and likes come from the capture, never the model. */
+  find: z.object({
+    what: z.string(),
+    whoPays: z.string(),
+    howItEarns: z.string(),
+    whyItWorks: z.string(),
+    claims: z.array(z.string()).max(10),
+    platform: z.string(),
+    views: z.number().optional(),
+    likes: z.number().optional(),
+    creatorType: z.string().optional(),
+  }),
 } as const;
 
 /** Plain labels for the web (forms and filters). */
-export const KIND_LABELS: Record<KnowledgeKind, string> = {
+export const KIND_LABELS: Record<LibraryEntryKind, string> = {
   problem: 'Problems',
   startup: 'Startups',
   pricing: 'Pricing',
   trend: "What's growing or shrinking",
   rule_change: 'A rule or platform change',
   market: 'Market size clues',
+  find: 'Seen in the wild',
 };
 
 export type KnowledgeDraft = {
-  kind: KnowledgeKind;
+  kind: LibraryEntryKind;
   title: string;
   summary: string;
   quote?: string;
@@ -77,7 +97,7 @@ export type KnowledgeDraft = {
   industries: string[];
   voice?: KnowledgeVoice;
   facts: unknown;
-  source: { url: string; domain: string; sourceType: string; publishedAt?: Date; quote?: string; quoteVerified: boolean; voice?: KnowledgeVoice; via?: 'direct' | 'archive' | 'browser'; snapshotAt?: Date };
+  source: { url: string; domain: string; sourceType: string; publishedAt?: Date; quote?: string; quoteVerified: boolean; voice?: KnowledgeVoice; via?: 'direct' | 'archive' | 'browser' | 'real_browser' | 'scraper'; snapshotAt?: Date };
 };
 
 export class FactsError extends Error {
@@ -88,7 +108,7 @@ export class FactsError extends Error {
 }
 
 /** Parse kind-specific facts; throws FactsError (named) on mismatch or a kind with no schema yet. */
-export function parseFacts(kind: KnowledgeKind, facts: unknown): unknown {
+export function parseFacts(kind: LibraryEntryKind, facts: unknown): unknown {
   const schema = (FactsSchemas as Record<string, z.ZodType>)[kind];
   if (!schema) throw new FactsError(kind, 'no facts schema for this kind');
   const r = schema.safeParse(facts);

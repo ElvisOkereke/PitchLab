@@ -69,7 +69,7 @@ export function resolveModels(env: Env): Record<ModelStage, string> {
 }
 
 /** The heartbeat the dashboard shows: which keys are set (booleans, never values) and the resolved models. */
-export function workerStatus(env: Env, models: Record<ModelStage, string>, extra: { browser?: boolean } = {}): WorkerStatus {
+export function workerStatus(env: Env, models: Record<ModelStage, string>, extra: { browser?: boolean; capture?: boolean } = {}): WorkerStatus {
   return {
     at: new Date().toISOString(),
     providers: {
@@ -80,6 +80,8 @@ export function workerStatus(env: Env, models: Record<ModelStage, string>, extra
       producthunt: Boolean(env.PRODUCTHUNT_TOKEN),
       youtube: Boolean(env.YOUTUBE_API_KEY),
       browser: Boolean(extra.browser),
+      telegram: Boolean(env.TELEGRAM_BOT_TOKEN),
+      capture: Boolean(extra.capture),
     },
     models: { ...models },
   };
@@ -95,6 +97,13 @@ export type WorkerOptions = {
   executeMission?: (missionId: string) => Promise<'succeeded' | 'failed'>;
   /** Automatic feeds: called when idle (after runs, validation and missions); the callee decides whether they are due. A throw is logged and ignored. */
   executeFeeds?: () => Promise<void>;
+  /**
+   * Finds: called when no run, validation job or mission is waiting. Returns true when it processed at least one find
+   * (the loop then checks the queues again before the next). A throw is logged and ignored.
+   */
+  executeFinds?: () => Promise<boolean>;
+  /** Telegram: called once on every pass (a short, non-blocking poll). A throw is logged and ignored. */
+  pollTelegram?: () => Promise<void>;
   /** With `once`, still run the feeds (gen worker --once --feeds). */
   feedsOnce?: boolean;
   heartbeat: () => Promise<void>;
@@ -202,9 +211,31 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       clearInterval(timer);
     }
   };
+  /** Finds when idle; true when it did work. Kept quick to read: the job itself captures one find at a time. */
+  const findsWork = async (): Promise<boolean> => {
+    if (!o.executeFinds) return false;
+    const timer = setInterval(() => void beat(), o.intervalMs);
+    try {
+      return await o.executeFinds();
+    } catch (err) {
+      o.log(`finds failed: ${errorMessage(err)}`);
+      return false;
+    } finally {
+      clearInterval(timer);
+    }
+  };
+  const poll = async () => {
+    if (!o.pollTelegram) return;
+    try {
+      await o.pollTelegram();
+    } catch (err) {
+      o.log(`telegram poll failed: ${errorMessage(err)}`);
+    }
+  };
   while (!o.signal.aborted) {
     await maintain();
     await beat();
+    await poll();
     // D2-R3: a stop requested while the heartbeat was in flight must not start a run.
     if (o.signal.aborted) return;
     const id = await claimNextRun(o.db);
@@ -246,6 +277,12 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
           if (o.once) return;
           continue;
         }
+      }
+      if (await findsWork()) {
+        if (o.once) return;
+        continue;
+      }
+      if (o.executeMission) {
         // Idle: top up the background queue (a failure here must never stop the worker). Not with --once: it would queue a mission that never runs.
         if (!o.once) try {
           const queued = await maybeQueueBackgroundMission(o.db, new Date());

@@ -369,7 +369,7 @@ describe('runWorker', () => {
 describe('workerStatus', () => {
   it('reports which keys are set, never their values', () => {
     const s = workerStatus(loadEnv({ LLM_API_KEY: 'k1', STACKEXCHANGE_KEY: 'k2', GOOGLE_PLACES_API_KEY: 'k3' }), DEFAULT_MODELS);
-    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true, producthunt: false, youtube: false, browser: false });
+    expect(s.providers).toEqual({ llm: true, github: false, stackexchange: true, places: true, producthunt: false, youtube: false, browser: false, telegram: false, capture: false });
     expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1', PRODUCTHUNT_TOKEN: 'k4' }), DEFAULT_MODELS).providers.producthunt).toBe(true);
     expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1', YOUTUBE_API_KEY: 'yt-secret' }), DEFAULT_MODELS, { browser: true }).providers).toMatchObject({ youtube: true, browser: true });
     expect(JSON.stringify(workerStatus(loadEnv({ LLM_API_KEY: 'k1', YOUTUBE_API_KEY: 'yt-secret' }), DEFAULT_MODELS))).not.toContain('yt-secret');
@@ -423,6 +423,57 @@ describe('older heartbeats', () => {
     const db = await testDb();
     await setSetting(db, WORKER_STATUS_KEY, { at: new Date().toISOString(), providers: { llm: true, github: false, stackexchange: false, places: false }, models: {} });
     const hb = await readWorkerStatus(db);
-    expect(hb!.providers).toMatchObject({ youtube: false, browser: false, producthunt: false });
+    expect(hb!.providers).toMatchObject({ youtube: false, browser: false, producthunt: false, telegram: false, capture: false });
+  });
+});
+
+describe('workerStatus: Telegram and capture', () => {
+  it('reports the Telegram token as a boolean and whether the capture tools are present', () => {
+    const s = workerStatus(loadEnv({ LLM_API_KEY: 'k1', TELEGRAM_BOT_TOKEN: '123:tg-secret-value' }), DEFAULT_MODELS, { capture: true });
+    expect(s.providers).toMatchObject({ telegram: true, capture: true });
+    expect(JSON.stringify(s)).not.toContain('tg-secret-value');
+    expect(workerStatus(loadEnv({ LLM_API_KEY: 'k1' }), DEFAULT_MODELS).providers).toMatchObject({ telegram: false, capture: false });
+  });
+});
+
+describe('runWorker finds and Telegram', () => {
+  it('polls Telegram on every pass, and a failing poll never stops the worker', async () => {
+    const db = await testDb();
+    const pollTelegram = vi.fn(async () => { throw new Error('telegram down'); });
+    const logs: string[] = [];
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: (m) => { logs.push(m); }, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation, pollTelegram });
+    expect(pollTelegram).toHaveBeenCalledTimes(1);
+    expect(logs.some((l) => l.includes('telegram') && l.includes('telegram down'))).toBe(true);
+    const stop = new AbortController();
+    let n = 0;
+    await runWorker({ db, intervalMs: 2, signal: stop.signal, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation,
+      pollTelegram: async () => { if (++n >= 3) stop.abort(); } });
+    expect(n).toBe(3);
+  });
+
+  it('runs the finds job after runs, validation jobs and missions, before the feeds', async () => {
+    const db = await testDb();
+    const missionId = await insertMissionRow(db);
+    const order: string[] = [];
+    let pending = 1;
+    const base = {
+      db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {},
+      execute: async () => 'succeeded' as const, executeValidation: noValidation,
+      executeMission: vi.fn(async (id: string) => { order.push(`mission:${id}`); return 'succeeded' as const; }),
+      executeFinds: vi.fn(async () => { order.push('finds'); return pending-- > 0; }),
+      executeFeeds: vi.fn(async () => { order.push('feeds'); }), feedsOnce: true,
+    };
+    await runWorker(base); // mission
+    await runWorker(base); // finds (did work: the pass ends there)
+    await runWorker(base); // finds (nothing left), then feeds
+    expect(order).toEqual([`mission:${missionId}`, 'finds', 'finds', 'feeds']);
+  });
+
+  it('a throwing finds job is logged and the worker carries on', async () => {
+    const db = await testDb();
+    const logs: string[] = [];
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, log: (m) => { logs.push(m); }, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation,
+      executeFinds: async () => { throw new Error('finds boom'); } });
+    expect(logs.some((l) => l.includes('finds failed') && l.includes('finds boom'))).toBe(true);
   });
 });

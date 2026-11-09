@@ -21,6 +21,8 @@ export const VIA_LABEL: Record<string, string> = {
   direct: 'Directly',
   archive: 'From an archived copy',
   browser: 'In the local browser',
+  real_browser: 'In the signed-in browser',
+  scraper: 'Through the scraping service',
 };
 
 export const outcomeLabel = (k: string): string => OUTCOME_LABEL[k] ?? k.replace(/_/g, ' ');

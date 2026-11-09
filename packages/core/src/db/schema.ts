@@ -421,12 +421,12 @@ export const settings = pgTable('settings', {
 
 // ---- Research library (Slice A, migration 0009) ---------------------------------------------------
 
-export const knowledgeKind = pgEnum('knowledge_kind', ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market']);
+export const knowledgeKind = pgEnum('knowledge_kind', ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market', 'find']);
 export const knowledgeStatus = pgEnum('knowledge_status', ['active', 'rejected']);
 export const missionOrigin = pgEnum('mission_origin', ['owner', 'background']);
 
 export const FETCH_OUTCOMES = ['ok', 'http_403', 'http_404', 'http_410', 'http_4xx', 'http_5xx', 'timeout', 'blocked_robots', 'blocked_host', 'too_large', 'not_html', 'thin_text', 'network'] as const;
-export const FETCH_VIAS = ['direct', 'archive', 'browser'] as const;
+export const FETCH_VIAS = ['direct', 'archive', 'browser', 'real_browser', 'scraper'] as const;
 export const fetchOutcome = pgEnum('fetch_outcome', FETCH_OUTCOMES);
 export const fetchVia = pgEnum('fetch_via', FETCH_VIAS);
 
@@ -514,3 +514,36 @@ export const pageFetches = pgTable('page_fetches', {
   runId: uuid('run_id').references(() => runs.id),
   at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index('page_fetches_at_idx').on(t.at), index('page_fetches_url_domain_idx').on(t.urlDomain)]);
+
+// ---- Finds (migration 0014) ---------------------------------------------------------------------------
+
+export const FIND_STATUSES = ['queued', 'capturing', 'done', 'failed'] as const;
+export const FIND_SOURCES = ['telegram', 'paste'] as const;
+export const findStatus = pgEnum('find_status', FIND_STATUSES);
+export const findSource = pgEnum('find_source', FIND_SOURCES);
+
+/** View and like counts from the capture, where the platform shows them. */
+export type FindStats = { views?: number; likes?: number; comments?: number; durationSec?: number; uploadedAt?: string };
+
+/** A link the owner shared (Telegram or pasted), captured by the worker and turned into one `find` library entry. */
+export const finds = pgTable('finds', {
+  id: id(),
+  /** The normalised url (tracking parameters stripped); unique. */
+  url: text('url').notNull(),
+  platform: text('platform').notNull(),
+  title: text('title'),
+  note: text('note'),
+  source: findSource('source').notNull(),
+  status: findStatus('status').notNull().default('queued'),
+  caption: text('caption'),
+  transcript: text('transcript'),
+  screenText: text('screen_text'),
+  stats: jsonb('stats').$type<FindStats>(),
+  error: text('error'),
+  warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+  knowledgeItemId: uuid('knowledge_item_id').references(() => knowledgeItems.id, { onDelete: 'set null' }),
+  /** When the current capture started (a `capturing` row older than 15 minutes goes back to the queue). */
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  createdAt: createdAt(),
+  capturedAt: timestamp('captured_at', { withTimezone: true }),
+}, (t) => [uniqueIndex('finds_url_uq').on(t.url), index('finds_status_created_idx').on(t.status, t.createdAt)]);

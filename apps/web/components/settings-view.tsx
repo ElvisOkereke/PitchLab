@@ -122,7 +122,7 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
         <h2 id="connections-title">Connections</h2>
         <ul className="plain stack">
           {PROVIDERS.map(([k, label, words]) => {
-            const ok = data.worker ? data.worker.providers[k] : null;
+            const ok = data.worker ? (data.worker.providers[k] ?? false) : null;
             return (
               <li key={k} data-testid={HINT_ID[k]}>
                 <span className="name">{label}</span> <Badge ok={ok} yes={words?.[0] ?? 'connected'} no={words?.[1] ?? 'not set'} />
