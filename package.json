@@ -4,12 +4,14 @@
   "type": "module",
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "test": "npm test -w packages/core && npm test -w apps/web",
+    "test": "npm test -w packages/core && npm test -w packages/capture && npm test -w apps/web",
     "web": "npm run dev -w apps/web",
     "reset-password": "npm run reset-password -w apps/web --",
     "gen": "npm run gen -w packages/core --",
     "worker": "npm run gen -w packages/core -- worker",
     "db:migrate": "npm run db:migrate -w packages/core",
-    "db:copy": "npm run db:copy -w packages/core --"
+    "db:copy": "npm run db:copy -w packages/core --",
+    "capture:setup": "npm run setup -w packages/capture --",
+    "capture:login": "npm run login -w packages/capture"
   }
 }
