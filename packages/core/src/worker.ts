@@ -102,8 +102,13 @@ export type WorkerOptions = {
    * (the loop then checks the queues again before the next). A throw is logged and ignored.
    */
   executeFinds?: () => Promise<boolean>;
-  /** Telegram: called once on every pass (a short, non-blocking poll). A throw is logged and ignored. */
+  /**
+   * Telegram: a short, non-blocking poll. It runs on its own timer (every `telegramIntervalMs`), so the bot answers while a
+   * run, mission, capture or feeds job is in progress; with `once`, once per pass. A throw is logged and ignored.
+   */
   pollTelegram?: () => Promise<void>;
+  /** Pause between Telegram polls (default 2 s). */
+  telegramIntervalMs?: number;
   /** With `once`, still run the feeds (gen worker --once --feeds). */
   feedsOnce?: boolean;
   heartbeat: () => Promise<void>;
@@ -232,10 +237,26 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       o.log(`telegram poll failed: ${errorMessage(err)}`);
     }
   };
+  // The Telegram loop runs beside the main loop and stops with it.
+  const telegramLoop = o.pollTelegram && !o.once
+    ? (async () => {
+        while (!o.signal.aborted) {
+          await poll();
+          await sleep(o.telegramIntervalMs ?? 2000, o.signal);
+        }
+      })()
+    : null;
+  try {
+    await mainLoop();
+  } finally {
+    await telegramLoop;
+  }
+
+  async function mainLoop(): Promise<void> {
   while (!o.signal.aborted) {
     await maintain();
     await beat();
-    await poll();
+    if (o.once) await poll();
     // D2-R3: a stop requested while the heartbeat was in flight must not start a run.
     if (o.signal.aborted) return;
     const id = await claimNextRun(o.db);
@@ -324,5 +345,6 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       await finish();
     }
     if (o.once) return;
+  }
   }
 }

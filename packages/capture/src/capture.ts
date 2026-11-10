@@ -246,7 +246,12 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions, ha
   const spawn = opts.spawn ?? defaultSpawn;
   const timeoutMs = opts.timeoutMs ?? TOOL_TIMEOUT_MS;
   const t = toolPaths(opts.toolsDir);
-  const cookies = COOKIE_PLATFORMS.includes(platform) ? ['--cookies-from-browser', `chromium:${opts.profileDir}`] : [];
+  // Cookies only once `npm run capture:login` has created the profile's cookie store; before that yt-dlp would stop with
+  // "could not find chromium cookies database", where a public post may well download without a login.
+  const needsLogin = COOKIE_PLATFORMS.includes(platform);
+  const loggedIn = existsSync(join(opts.profileDir, 'Network', 'Cookies')) || existsSync(join(opts.profileDir, 'Cookies'));
+  const cookies = needsLogin && loggedIn ? ['--cookies-from-browser', `chromium:${opts.profileDir}`] : [];
+  const loginHint = needsLogin && !loggedIn ? ' This may need the capture login: run npm run capture:login, sign in, then press Retry.' : '';
 
   /** A readable, sanitised reason a tool run failed, or null when it succeeded. */
   const failure = (name: string, run: ToolRun): string | null => {
@@ -278,7 +283,7 @@ async function capture(url: string, platform: Platform, opts: CaptureOptions, ha
     if (info) for (const k of ['uploader', 'uploader_id', 'channel', 'creator']) if (typeof info[k] === 'string') handles.push(info[k] as string);
     if (error || !info) {
       log(`capture: ${error}`);
-      return withFallback({ ok: false, platform, error: error ?? 'yt-dlp failed.' }, url, opts);
+      return withFallback({ ok: false, platform, error: `${error ?? 'yt-dlp failed.'}${loginHint}` }, url, opts);
     }
 
     await mkdir(opts.tmpDir, { recursive: true });

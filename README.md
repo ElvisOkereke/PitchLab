@@ -152,7 +152,7 @@ missions** card.
 
   | Source | What | Needs |
   |---|---|---|
-  | Reddit | posts and top comments from searches and a rotating list of subreddits | nothing (public pages, 1 request per 2 s) |
+  | Reddit | posts and top comments from searches and a rotating list of subreddits | nothing (public RSS feeds, 1 request per 6 s; Reddit refuses its .json to logged-out clients) |
   | Bluesky | posts matching the topics | nothing, unless the search asks for sign-in: then `BLUESKY_HANDLE` and an app password in `BLUESKY_APP_PASSWORD` |
   | Hacker News | new Show HN and Ask HN posts | nothing |
   | arXiv | new papers | nothing |

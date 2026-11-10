@@ -48,7 +48,7 @@ import { createScraperStep } from './research/scraper';
 import { fileURLToPath } from 'node:url';
 import { addFinds, FINDS_SEED_MAX, listFinds, resolveFindsSeed } from './finds/store';
 import { captureToolsPresent, openCapture } from './finds/capture';
-import { pollTelegram, sendTelegram } from './finds/telegram';
+import { pollTelegram, sendTelegram, withBackoff } from './finds/telegram';
 import { createFindsExecutor, runQueuedFinds, type RunFindsDeps } from './finds/run';
 import { TELEGRAM_OWNER_KEY, ensurePairingCode, markTelegramPinned, pinTelegramOwner, resetTelegramPairing } from './dashboard/telegram';
 
@@ -258,9 +258,10 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
         }
       },
       // A short poll (timeout 0) on every pass, so the worker is never held waiting for messages.
-      pollTelegram: telegramToken ? async () => {
+      // After a failure, polls back off (10 s doubling to 5 min) and only the first failure and the recovery are logged.
+      pollTelegram: telegramToken ? withBackoff(async () => {
         await pollTelegram({ db, token: telegramToken, log: out, timeoutSec: 0, ownerChatId: env.TELEGRAM_OWNER_CHAT_ID });
-      } : undefined,
+      }, { log: out }) : undefined,
       executeFinds: async () => {
         busy = true;
         try {

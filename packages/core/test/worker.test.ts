@@ -451,6 +451,20 @@ describe('runWorker finds and Telegram', () => {
     expect(n).toBe(3);
   });
 
+  it('keeps polling Telegram on its own timer while a long job runs', async () => {
+    const db = await testDb();
+    await createRun(db, cfg);
+    const stop = new AbortController();
+    let polls = 0;
+    let pollsDuringRun = 0;
+    let running = false;
+    await runWorker({ db, intervalMs: 5, telegramIntervalMs: 5, signal: stop.signal, log: quietLog, heartbeat: async () => {}, executeValidation: noValidation,
+      execute: async () => { running = true; await new Promise((r) => setTimeout(r, 120)); running = false; stop.abort(); return 'succeeded'; },
+      pollTelegram: async () => { polls++; if (running) pollsDuringRun++; } });
+    expect(pollsDuringRun).toBeGreaterThanOrEqual(3);
+    expect(polls).toBeGreaterThanOrEqual(pollsDuringRun);
+  });
+
   it('runs the finds job after runs, validation jobs and missions, before the feeds', async () => {
     const db = await testDb();
     const missionId = await insertMissionRow(db);

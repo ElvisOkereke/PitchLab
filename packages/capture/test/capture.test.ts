@@ -140,6 +140,8 @@ describe('captureLink', () => {
       ['https://www.youtube.com/shorts/x', false],
       ['https://www.threads.net/@a/post/1', false],
     ];
+    mkdirSync(join(profileDir, 'Network'), { recursive: true });
+    writeFileSync(join(profileDir, 'Network', 'Cookies'), 'sqlite');
     for (const [url, cookies] of cases) {
       resetCapturePacing();
       const { spawn, calls } = tools();
@@ -155,6 +157,26 @@ describe('captureLink', () => {
         }
       }
     }
+  });
+
+  it('skips cookies until the capture login has run, and a failed Instagram or TikTok capture then says to log in', async () => {
+    for (const url of ['https://www.instagram.com/reel/abc/', 'https://www.tiktok.com/@a/video/1']) {
+      resetCapturePacing();
+      const ok = tools();
+      expect((await captureLink(url, opts({ spawn: ok.spawn }))).ok).toBe(true);
+      for (const c of ok.calls) expect(c.args).not.toContain('--cookies-from-browser');
+
+      resetCapturePacing();
+      const bad = tools({ meta: { code: 1, stderr: 'ERROR: [Instagram] abc: Requested content is not available, rate-limit reached or login required' } });
+      const res = await captureLink(url, opts({ spawn: bad.spawn }));
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error).toMatch(/run npm run capture:login.*then press Retry/);
+    }
+    // YouTube never needs the login, so its errors carry no hint.
+    resetCapturePacing();
+    const yt = tools({ meta: { code: 1, stderr: 'ERROR: Video unavailable' } });
+    const res = await captureLink('https://www.youtube.com/shorts/x', opts({ spawn: yt.spawn }));
+    if (!res.ok) expect(res.error).not.toMatch(/capture:login/);
   });
 
   it('defaults to a 3-minute timeout per tool', () => {

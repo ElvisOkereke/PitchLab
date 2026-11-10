@@ -229,3 +229,30 @@ export async function pollTelegram(deps: TelegramDeps): Promise<{ received: numb
     await sendTelegram(deps, chatId, reply);
   }
 }
+
+const BACKOFF_FIRST_MS = 10_000;
+const BACKOFF_MAX_MS = 5 * 60_000;
+
+/**
+ * Wraps the per-pass poll: after a failure (Telegram rate limiting, a timeout, a network drop) the next polls are skipped
+ * for 10 s, doubling up to 5 minutes, so a bad spell neither hammers the API nor floods the log. Only the first failure
+ * and the recovery are logged. Never throws.
+ */
+export function withBackoff(poll: () => Promise<void>, o: { log: (m: string) => void; now?: () => number }): () => Promise<void> {
+  const now = o.now ?? Date.now;
+  let failures = 0;
+  let nextAt = 0;
+  return async () => {
+    if (now() < nextAt) return;
+    try {
+      await poll();
+      if (failures > 0) o.log(`telegram: reachable again after ${failures} failed poll${failures === 1 ? '' : 's'}`);
+      failures = 0;
+      nextAt = 0;
+    } catch (err) {
+      failures++;
+      if (failures === 1) o.log(`telegram poll failed: ${err instanceof Error ? err.message : String(err)} (retrying with a growing delay; repeats are not logged)`);
+      nextAt = now() + Math.min(BACKOFF_FIRST_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+    }
+  };
+}
