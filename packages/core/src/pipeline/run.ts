@@ -7,6 +7,7 @@ import { deepCase } from './deep-case';
 import { gate } from './gate';
 import { harvest } from './harvest';
 import { ideate } from './ideate';
+import { passthrough } from './engine/passthrough';
 import { score } from './score';
 import { screen } from './screen';
 import { STAGES, type RunConfig, type Stage, type StageDeps, type StageFn } from './types';
@@ -15,6 +16,10 @@ import { verify } from './verify';
 /** The real stage functions, in pipeline order. */
 export const DEFAULT_STAGE_IMPLS: Record<Stage, StageFn> = {
   harvest: (deps, run) => harvest(deps, run), // third parameter is opts, not an input
+  sketch: passthrough,
+  archive: passthrough,
+  tournament: passthrough,
+  evolve: passthrough,
   ideate,
   dedupe,
   screen,
@@ -27,6 +32,10 @@ export const DEFAULT_STAGE_IMPLS: Record<Stage, StageFn> = {
 /** The id list whose emptiness means there is nothing left for later stages to do. */
 const EMPTY_KEY: Record<Stage, string | null> = {
   harvest: 'signalIds',
+  sketch: 'sketchIds',
+  archive: 'sketchIds',
+  tournament: 'sketchIds',
+  evolve: 'sketchIds',
   ideate: 'ideaIds',
   dedupe: 'ideaIds',
   screen: 'ideaIds',

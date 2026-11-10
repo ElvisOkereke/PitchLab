@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { CaseSections } from '../case/schema';
 import type { ValueToUser, PriceHint, Barriers, IdeaAudience, BusinessModel } from '../pipeline/business-models';
 import type { RunConfig } from '../pipeline/types';
+import { EDGE_KINDS } from '../pipeline/engine/kinds';
 import type { ValidationJobOptions } from '../dashboard/validation-jobs';
 import type { StepResult } from '../validation/run';
 import type { Scorecard } from '../bench/scorecard';
@@ -162,6 +163,10 @@ export const ideas = pgTable('ideas', {
   scaleResult: jsonb('scale_result').$type<unknown>(),
   /** Research library items the idea drew on. */
   libraryItemIds: uuid('library_item_ids').array(),
+  /** The sketch this idea expands (engine v2); null for v1 and owner ideas. */
+  sketchId: uuid('sketch_id'),
+  /** The sketch's tournament Elo when it was expanded (engine v2); null otherwise. */
+  elo: real('elo'),
   signalIds: uuid('signal_ids').array().notNull(),
   embedding: vector('embedding', { dimensions: 1536 }),
   screenScores: jsonb('screen_scores').$type<unknown>(),
@@ -466,6 +471,8 @@ export const knowledgeItems = pgTable('knowledge_items', {
   industries: text('industries').array().notNull(),
   voice: text('voice', { enum: SIGNAL_VOICES }),
   facts: jsonb('facts').notNull(),
+  /** Strength assessment (library-assess.v1, evidence strength 1-5 and why); null until assessed. */
+  assessment: jsonb('assessment').$type<unknown>(),
   embedding: vector('embedding', { dimensions: 1536 }),
   contentHash: text('content_hash').notNull(),
   status: knowledgeStatus('status').notNull().default('active'),
@@ -548,3 +555,64 @@ export const finds = pgTable('finds', {
   createdAt: createdAt(),
   capturedAt: timestamp('captured_at', { withTimezone: true }),
 }, (t) => [uniqueIndex('finds_url_uq').on(t.url), index('finds_status_created_idx').on(t.status, t.createdAt)]);
+
+export const sketchStatus = pgEnum('sketch_status', ['kept', 'duplicate', 'near_killed', 'evolved']);
+export const sketchOperator = pgEnum('sketch_operator', ['sharpen', 'combine', 'simplify']);
+export const matchPhase = pgEnum('match_phase', ['main', 'final']);
+export const matchVerdict = pgEnum('match_verdict', ['a', 'b', 'draw', 'error']);
+export const matchResult = pgEnum('match_result', ['a', 'b', 'draw']);
+export const judgeSplit = pgEnum('judge_split', ['train', 'test']);
+
+/** A short idea candidate (engine v2): sketched per lens, filtered by the archive, ranked by the tournament, then expanded into an idea. */
+export const sketches = pgTable('sketches', {
+  id: id(),
+  runId: uuid('run_id').notNull().references(() => runs.id),
+  lensId: text('lens_id').references(() => lenses.id),
+  title: text('title').notNull(),
+  buyer: text('buyer').notNull(),
+  problem: text('problem').notNull(),
+  howItEarns: text('how_it_earns').notNull(),
+  businessModel: text('business_model').notNull(),
+  edge: text('edge').notNull(),
+  edgeKind: text('edge_kind', { enum: EDGE_KINDS }).notNull(),
+  whyNotTrivial: text('why_not_trivial').notNull(),
+  /** 'earn' or 'save': whether the buyer makes money or saves it. */
+  earnOrSave: text('earn_or_save').notNull(),
+  signalIds: uuid('signal_ids').array().notNull(),
+  libraryItemIds: uuid('library_item_ids').array().notNull(),
+  embedding: vector('embedding', { dimensions: 1536 }),
+  /** The diversity cell (buyer kind, business model, edge kind) the archive files it under. */
+  cell: text('cell'),
+  status: sketchStatus('status').notNull(),
+  elo: real('elo'),
+  parentSketchId: uuid('parent_sketch_id').references((): AnyPgColumn => sketches.id),
+  operator: sketchOperator('operator'),
+  createdAt: createdAt(),
+}, (t) => [index('sketches_run_idx').on(t.runId)]);
+
+/** One judged pairing in a run's tournament. Keyed by round and pair so a resumed run neither repeats nor double-counts a match. */
+export const tournamentMatches = pgTable('tournament_matches', {
+  id: id(),
+  runId: uuid('run_id').notNull().references(() => runs.id),
+  phase: matchPhase('phase').notNull(),
+  round: integer('round').notNull(),
+  aId: uuid('a_id').notNull().references(() => sketches.id),
+  bId: uuid('b_id').notNull().references(() => sketches.id),
+  verdictAB: matchVerdict('verdict_ab').notNull(),
+  verdictBA: matchVerdict('verdict_ba').notNull(),
+  result: matchResult('result').notNull(),
+  confidence: real('confidence').notNull(),
+  reasons: jsonb('reasons').$type<unknown>().notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('tournament_matches_pair_uq').on(t.runId, t.phase, t.round, t.aId, t.bId)]);
+
+/** A kept-versus-killed pair of ideas the judge is calibrated on (train: few-shot examples, test: held out for accuracy). */
+export const judgePairs = pgTable('judge_pairs', {
+  id: id(),
+  keptIdeaId: uuid('kept_idea_id').notNull().references(() => ideas.id),
+  killedIdeaId: uuid('killed_idea_id').notNull().references(() => ideas.id),
+  pairHash: text('pair_hash').notNull(),
+  split: judgeSplit('split').notNull(),
+  reason: text('reason'),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex('judge_pairs_pair_hash_uq').on(t.pairHash)]);

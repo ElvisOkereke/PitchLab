@@ -32,7 +32,27 @@ export const FactsSchemas = {
     why: z.string().optional(),
     foundedYear: z.number().optional(),
     endedYear: z.number().optional(),
-    funding: z.string().optional(),
+    // A free-text string on older entries; the dossier writes the structured form.
+    funding: z.union([z.string(), z.object({ stage: z.string().optional(), amount: z.string().optional(), date: z.string().optional() })]).optional(),
+    // Company dossier (engine v2, dossier.v1). All optional: entries from before dossiers still parse.
+    whoPays: z.string().optional(),
+    pricingUnit: z.string().optional(),
+    priceRange: z.string().optional(),
+    revenueDrivers: z.array(z.string()).optional(),
+    acquisition: z.array(z.string()).optional(),
+    moat: z.string().optional(),
+    useCases: z.array(z.string()).optional(),
+    whyItWorked: z.string().optional(),
+    whyItDied: z.string().optional(),
+    comps: z.array(z.string()).optional(),
+    traction: z.object({
+      customers: z.number().optional(),
+      reviewCount: z.number().optional(),
+      hiring: z.boolean().optional(),
+      rank: z.number().optional(),
+    }).optional(),
+    dossierAt: z.string().optional(),
+    dossierStatus: z.enum(['done', 'unmatched', 'failed']).optional(),
   }),
   pricing: z.object({
     product: z.string(),

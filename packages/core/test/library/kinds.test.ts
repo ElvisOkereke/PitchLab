@@ -11,6 +11,24 @@ const valid = {
   pricing: { product: 'p', pricePoints: [{ amount: 10, currency: 'USD', unit: 'month' }], buyer: 'smb', complaints: [] },
 } as const;
 
+describe('startup dossier fields', () => {
+  const base = { name: 'Acme', whatItDoes: 'x', businessModel: 'saas', outcome: 'dead' };
+  it('parse with and without the optional dossier fields', () => {
+    expect(FactsSchemas.startup.safeParse(base).success).toBe(true);
+    const full = {
+      ...base, whoPays: 'clinics', pricingUnit: 'per seat', priceRange: '$20-50', revenueDrivers: ['seats'], acquisition: ['seo'],
+      moat: 'data', useCases: ['intake'], whyItWorked: 'a', whyItDied: 'b', comps: ['Beta'],
+      funding: { stage: 'seed', amount: '$2M', date: '2024-05' }, traction: { customers: 40, reviewCount: 12, hiring: true, rank: 3 },
+      dossierAt: '2026-11-10T00:00:00.000Z', dossierStatus: 'done',
+    };
+    expect(FactsSchemas.startup.safeParse(full).success).toBe(true);
+    expect(parseFacts('startup', full)).toEqual(full);
+    expect(FactsSchemas.startup.safeParse({ ...base, dossierStatus: 'unmatched' }).success).toBe(true);
+    expect(FactsSchemas.startup.safeParse({ ...base, dossierStatus: 'failed' }).success).toBe(true);
+    expect(FactsSchemas.startup.safeParse({ ...base, dossierStatus: 'weird' }).success).toBe(false);
+  });
+});
+
 describe('library kinds', () => {
   it('lists six kinds and three slice A kinds', () => {
     expect(KNOWLEDGE_KINDS).toEqual(['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market']);

@@ -19,3 +19,15 @@ export const STAGE_LABEL: Record<CaseStage, string> = {
 export function formatScore(v: number | null | undefined): string {
   return v === null || v === undefined || !Number.isFinite(v) ? '–' : v.toFixed(1);
 }
+
+/** Plain-English names for the engine v2 run stages; the older stages keep their own names. */
+const RUN_STAGE_LABEL: Record<string, string> = {
+  sketch: 'sketch ideas',
+  archive: 'filter repeats',
+  tournament: 'rank ideas',
+  evolve: 'improve top ideas',
+};
+
+export function runStageLabel(stage: string): string {
+  return RUN_STAGE_LABEL[stage] ?? stage;
+}

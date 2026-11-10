@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
 import { runs, runStages } from '../../src/db/schema';
 import { createRun, executeRun, executeRunWithSetup } from '../../src/pipeline/run';
+import { passthrough } from '../../src/pipeline/engine/passthrough';
 import { defaultRunConfig, STAGES, type Stage, type StageDeps, type StageFn } from '../../src/pipeline/types';
 import { testDb } from '../helpers/db';
 
@@ -35,7 +36,7 @@ describe('executeRun', () => {
     expect(seen.map((c) => c.stage)).toEqual([...STAGES]);
     expect(seen[0]!.input).toBeUndefined();
     expect(seen[1]!.input).toEqual({ ...FULL, n: 0 });
-    expect(seen[7]!.input).toEqual({ ...FULL, n: 6 });
+    expect(seen[STAGES.length - 1]!.input).toEqual({ ...FULL, n: STAGES.length - 2 });
     expect(seen.every((c) => c.runId === id)).toBe(true);
 
     const [run] = await db.select().from(runs).where(eq(runs.id, id));
@@ -43,9 +44,9 @@ describe('executeRun', () => {
     expect(run!.startedAt).toBeInstanceOf(Date);
     expect(run!.finishedAt).toBeInstanceOf(Date);
     const stages = await db.select().from(runStages).where(eq(runStages.runId, id));
-    expect(stages).toHaveLength(8);
+    expect(stages).toHaveLength(STAGES.length);
     expect(stages.every((r) => r.status === 'done' && r.finishedAt instanceof Date)).toBe(true);
-    expect(stages.find((r) => r.stage === 'gate')!.output).toEqual({ ...FULL, n: 4 });
+    expect(stages.find((r) => r.stage === 'gate')!.output).toEqual({ ...FULL, n: STAGES.indexOf('gate') });
   });
 
   it('stores a failed stage error with credentials scrubbed, the message otherwise kept (D2-R1)', async () => {
@@ -97,8 +98,8 @@ describe('executeRun', () => {
 
     failGate = false;
     expect(await executeRun(deps(db), id, stageImpls)).toBe('succeeded');
-    expect(calls).toEqual(['harvest', 'ideate', 'dedupe', 'screen', 'gate', 'gate', 'case', 'verify', 'score']);
-    expect(await db.select().from(runStages).where(eq(runStages.runId, id))).toHaveLength(8);
+    expect(calls).toEqual(['harvest', 'sketch', 'archive', 'tournament', 'evolve', 'ideate', 'dedupe', 'screen', 'gate', 'gate', 'case', 'verify', 'score']);
+    expect(await db.select().from(runStages).where(eq(runStages.runId, id))).toHaveLength(STAGES.length);
     const [done] = await db.select().from(runs).where(eq(runs.id, id));
     expect(done).toMatchObject({ status: 'succeeded', error: null });
   });
@@ -110,6 +111,7 @@ describe('executeRun', () => {
     const inputs: unknown[] = [];
     const stageImpls: Partial<Record<Stage, StageFn>> = Object.fromEntries(STAGES.map((s) => [s, async () => FULL]));
     stageImpls.harvest = async () => ({ signalIds: ['from-harvest'] });
+    for (const s of ['sketch', 'archive', 'tournament', 'evolve'] as const) stageImpls[s] = passthrough;
     stageImpls.ideate = async (_d, _r, input) => {
       inputs.push(input);
       if (fail) throw new Error('boom');
@@ -130,9 +132,9 @@ describe('executeRun', () => {
       return s === 'screen' ? { ideaIds: [] } : FULL;
     }]));
     expect(await executeRun(deps(db), id, stageImpls)).toBe('succeeded');
-    expect(calls).toEqual(['harvest', 'ideate', 'dedupe', 'screen']);
+    expect(calls).toEqual(['harvest', 'sketch', 'archive', 'tournament', 'evolve', 'ideate', 'dedupe', 'screen']);
     const stages = await db.select().from(runStages).where(eq(runStages.runId, id));
-    expect(stages).toHaveLength(8);
+    expect(stages).toHaveLength(STAGES.length);
     expect(stages.every((r) => r.status === 'done')).toBe(true);
     expect(stages.find((r) => r.stage === 'screen')!.output).toEqual({ ideaIds: [] });
     expect(stages.find((r) => r.stage === 'score')!.output).toEqual({});
@@ -143,9 +145,9 @@ describe('executeRun', () => {
 
   it.each([
     ['harvest', { signalIds: [] }, 1],
-    ['gate', { passed: [], advisory: [] }, 5],
-    ['case', { caseIds: [] }, 6],
-    ['verify', { caseIds: [] }, 7],
+    ['gate', { passed: [], advisory: [] }, 9],
+    ['case', { caseIds: [] }, 10],
+    ['verify', { caseIds: [] }, 11],
   ] as const)('short-circuits on an empty %s output', async (stage, empty, expectedCalls) => {
     const db = await testDb();
     const { id } = await createRun(db, defaultRunConfig({ seedType: 'open' }));

@@ -79,6 +79,22 @@ describe('model config', () => {
   });
 });
 
+describe('engine v2 model stages', () => {
+  it('has sketch and judge with the specified defaults, judge a different family from ideate', () => {
+    expect(MODEL_STAGES).toEqual(expect.arrayContaining(['sketch', 'judge']));
+    expect(DEFAULT_MODELS.sketch).toBe('claude-sonnet-5-5');
+    expect(DEFAULT_MODELS.judge).toBe('gpt-6-sol');
+    expect(family(DEFAULT_MODELS.judge)).not.toBe(family(DEFAULT_MODELS.ideate));
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, judge: 'claude-sonnet-5-5' })).toThrow(/judge/);
+  });
+  it('sketch follows ideate and judge follows gate for overrides, unless they have their own', () => {
+    expect(resolveModelConfig({ ideate: 'claude-haiku-5-5' }).sketch).toBe('claude-haiku-5-5');
+    expect(resolveModelConfig({ gate: 'gemini-3.1-pro' }).judge).toBe('gemini-3.1-pro');
+    expect(resolveModelConfig({ gate: 'gemini-3.1-pro', judge: 'gpt-6-sol' }).judge).toBe('gpt-6-sol');
+    expect(resolveModelConfig({}).sketch).toBe('claude-sonnet-5-5');
+  });
+});
+
 describe('costOf', () => {
   afterEach(() => vi.restoreAllMocks());
 

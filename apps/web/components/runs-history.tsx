@@ -6,6 +6,7 @@ import { IdeaRating } from './idea-rating';
 import { KeepOpenDetails } from './keep-open-details';
 import { runCost, seedSummary } from '@/lib/run-format';
 import { runsHref } from '@/lib/runs-query';
+import { runStageLabel } from '@/lib/stages';
 import { formatDateTime } from '@/lib/time';
 
 const ERROR_SHOWN = 200;
@@ -83,7 +84,7 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                       <ul className="plain">
                         {r.stages.map((s) => (
                           <li key={s.stage}>
-                            {s.stage}: {s.status} · {formatDateTime(s.startedAt)} → {formatDateTime(s.finishedAt)}
+                            {runStageLabel(s.stage)}: {s.status} · {formatDateTime(s.startedAt)} → {formatDateTime(s.finishedAt)}
                           </li>
                         ))}
                       </ul>

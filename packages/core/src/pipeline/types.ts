@@ -20,6 +20,8 @@ export type RunConfig = {
   dedupeThreshold: number;
   /** Set when the owner re-runs a gate-killed idea from the dashboard: the idea this run overturns (feedback signal). */
   overturnOfIdeaId?: string;
+  /** Which generation engine the run uses; absent reads as v2 (see usesEngineV2). */
+  engine?: 'v1' | 'v2';
 };
 
 export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, 'seedType'>): RunConfig {
@@ -35,7 +37,12 @@ export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, '
   };
 }
 
-export const STAGES = ['harvest', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'verify', 'score'] as const;
+/** True unless the run asks for engine v1 or starts from an owner idea (which skips sketching and the tournament). */
+export function usesEngineV2(cfg: RunConfig): boolean {
+  return cfg.engine !== 'v1' && cfg.seedType !== 'idea';
+}
+
+export const STAGES = ['harvest', 'sketch', 'archive', 'tournament', 'evolve', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'verify', 'score'] as const;
 export type Stage = (typeof STAGES)[number];
 
 export type StageDeps = {
