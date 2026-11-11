@@ -48,3 +48,12 @@ export async function insertCase(db: Db, ideaId: string, overrides: Partial<type
   }).returning();
   return row!;
 }
+
+/** A scale estimate that clears the gate's buyer floor (20,000 businesses, with a source). */
+export const FLOOR_ESTIMATE = {
+  buyerUnit: 'businesses' as const,
+  population: { count: 100_000, basis: 'US firms in the sector', source: 'https://stats.example/sector' },
+  shareWithProblem: { pct: 50, basis: 'b', source: 'https://s.example/a' },
+  shareWillingToPay: { pct: 10, basis: 'b', source: 'https://s.example/b' },
+  shareReachable: { pct: 20, basis: 'b' },
+};

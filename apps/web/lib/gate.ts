@@ -7,6 +7,7 @@ export const CHECK_LABEL: Record<string, string> = {
   reachability: 'Reachability',
   evidence: 'Evidence',
   scale: 'Revenue ceiling',
+  buyers: 'Buyer floor',
   trivial: 'Not trivial',
   comps: 'Comps',
 };

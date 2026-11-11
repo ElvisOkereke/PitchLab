@@ -62,3 +62,15 @@ export async function getSender(db: Db): Promise<{ sender: Sender | null; missin
     missing: [],
   };
 }
+
+/** Default buyer floors of the gate's `buyers` check: 20,000 businesses, 1,000,000 individuals. */
+export const DEFAULT_MIN_BUYERS = { businesses: 20_000, individuals: 1_000_000 } as const;
+
+/** The gate's buyer floors (`gate.minBuyers.businesses`, `gate.minBuyers.individuals`): a finite number of at least 0, else the default. */
+export async function getMinBuyers(db: Db): Promise<{ businesses: number; individuals: number }> {
+  const read = async (unit: 'businesses' | 'individuals') => {
+    const v = await getSetting(db, `gate.minBuyers.${unit}`);
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_MIN_BUYERS[unit];
+  };
+  return { businesses: await read('businesses'), individuals: await read('individuals') };
+}

@@ -1672,7 +1672,7 @@ describe('ideate v15 expands sketches (engine v2)', () => {
     const r = versioned({ structured: { ideate: [expanded(['S3', 'S1', 'S2']), expanded(['S1'])] } });
     // The evolve output (Ruling R1): the harvest fields spread, the final sketch ids, the harvest's signal ids.
     const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: t.rows.map((x) => x.id), sketchIds: ids, variants: 0 });
-    expect(r.versions).toEqual(['ideate.v15', 'ideate.v15']);
+    expect(r.versions).toEqual(['ideate.v16', 'ideate.v16']);
     const prompts = structuredPrompts(r);
     for (const name of ['Alpha', 'Beta', 'Gamma']) {
       for (const f of ['buyer', 'problem', 'edge', 'hard part']) expect(block(prompts[0]!, 'sketches')).toContain(`${name} ${f}`);
@@ -1701,7 +1701,7 @@ describe('ideate v15 expands sketches (engine v2)', () => {
     const r = versioned({ structured: { ideate: [expanded(['S1', 'S2'])] } });
     // Evolve order: Beta, Gamma, Alpha, Delta.
     const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [], sketchIds: [ids[1], ids[2], ids[0], ids[3]] });
-    expect(r.versions).toEqual(['ideate.v15']);
+    expect(r.versions).toEqual(['ideate.v16']);
     const sk = block(structuredPrompts(r)[0]!, 'sketches');
     expect(sk).toContain('Beta hard part');
     expect(sk).toContain('Gamma hard part');

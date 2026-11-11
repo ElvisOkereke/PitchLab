@@ -8,8 +8,9 @@ import { gate } from '../../src/pipeline/gate';
 import * as screenModule from '../../src/pipeline/screen';
 import { barrierScore, eloBand, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand, screen, weightedScreenTotal } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
-import { knowledgeItems, signals, type SignalVoice } from '../../src/db/schema';
-import { getIdea, insertCase, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
+import { eq } from 'drizzle-orm';
+import { ideas, knowledgeItems, signals, type SignalVoice } from '../../src/db/schema';
+import { FLOOR_ESTIMATE, getIdea, insertCase, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
 type TestDb = Awaited<ReturnType<typeof testDb>>;
@@ -720,7 +721,8 @@ describe('screen', () => {
       expect((await getIdea(db, alone.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('"Alone"') && l.includes('1 independent sources') && l.includes('no demand source'))).toBe(true);
       expect(logs).toContain('screen: 1 of 2 candidates have too little evidence for the gate (fewer than 3 independent sources and no demand source) and cannot advance');
-      // The gate's evidence rule agrees.
+      // The gate's evidence rule agrees (the idea clears the buyer floor).
+      await db.update(ideas).set({ scaleEstimate: FLOOR_ESTIMATE }).where(eq(ideas.id, demand.id));
       const research = { text: 'r', sources: [] };
       const verdicts = { verdicts: ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'trivial'].map((check) => ({ check, pass: true, reasoning: 'ok', sourceUrls: [] })) };
       const gated = await gate(deps(db, fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts] } })), run, { ideaIds: out.ideaIds });

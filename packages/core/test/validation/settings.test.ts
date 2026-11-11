@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm';
 import {
   landingEvents, landingPages, outreachDrafts, outreachEvents, prospects, settings, suppressions, validationPacks,
 } from '../../src/db/schema';
-import { SENDER_KEYS, getSender, getSetting, setSetting } from '../../src/validation/settings';
+import { SENDER_KEYS, getMinBuyers, getSender, getSetting, setSetting } from '../../src/validation/settings';
 import { insertCase, insertIdea, insertRun, testDb } from '../helpers/db';
 import { defaultRunConfig } from '../../src/pipeline/types';
 
@@ -125,5 +125,17 @@ describe('settings', () => {
     expect((await getSender(db)).sender).toEqual({
       name: 'Pat Owner', company: 'Pat Co', address: '1 Main St, Toronto ON M5V 1A1', contact: 'https://pat.example', email: 'pat@pat.example',
     });
+  });
+});
+
+describe('getMinBuyers (gate.minBuyers.*)', () => {
+  it('defaults to 20,000 businesses and 1,000,000 individuals; overrides apply; bad values fall back', async () => {
+    const db = await testDb();
+    expect(await getMinBuyers(db)).toEqual({ businesses: 20_000, individuals: 1_000_000 });
+    await setSetting(db, 'gate.minBuyers.businesses', 5000);
+    await setSetting(db, 'gate.minBuyers.individuals', 'many');
+    expect(await getMinBuyers(db)).toEqual({ businesses: 5000, individuals: 1_000_000 });
+    await setSetting(db, 'gate.minBuyers.businesses', -1);
+    expect((await getMinBuyers(db)).businesses).toBe(20_000);
   });
 });

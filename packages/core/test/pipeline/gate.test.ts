@@ -8,11 +8,14 @@ import { computeScale } from '../../src/pipeline/business-models';
 import { evaluateEvidence, meetsEvidenceRule } from '../../src/pipeline/evidence';
 import { setSetting } from '../../src/validation/settings';
 import { StructuredOutputError } from '../../src/llm/router';
-import { countEvidence, countEvidenceForSignals, gate } from '../../src/pipeline/gate';
+import { buyerFloorVerdict, countEvidence, countEvidenceForSignals, gate } from '../../src/pipeline/gate';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { ideationContext } from '../../src/library/context';
-import { getIdea, insertIdea, insertRun, testDb, unit } from '../helpers/db';
+import { FLOOR_ESTIMATE, getIdea, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
+
+/** Like the shared helper, but an idea clears the buyer floor unless the test passes its own scaleEstimate. */
+const insertIdea: typeof insertBareIdea = (db, runId, overrides = {}) => insertBareIdea(db, runId, { scaleEstimate: FLOOR_ESTIMATE, ...overrides });
 import { fakeRouter } from '../helpers/fake-router';
 
 // Pass-through spy: the gate's library lookup runs for real, and its options can be checked.
@@ -154,7 +157,7 @@ describe('gate', () => {
     expect(out).toEqual({ passed: [], advisory: [] });
     expect((await getIdea(db, idea.id)).status).toBe('gated_out');
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(10);
     expect(rows.filter((r) => r.model === 'gpt-6-sol')).toHaveLength(6);
     const ev = rows.find((r) => r.check === 'evidence')!;
     expect(ev.pass).toBe(false);
@@ -219,7 +222,7 @@ describe('gate', () => {
     await expect(gate(deps(db, router), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
   });
 
-  it('is idempotent: running twice leaves exactly 9 verdict rows', async () => {
+  it('is idempotent: running twice leaves exactly 10 verdict rows', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
     const idea = await twoHostIdea(db, run.id, 'generated');
@@ -227,7 +230,7 @@ describe('gate', () => {
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(10);
   });
 
   it('excludes IP and dotless hosts from independent sources', async () => {
@@ -655,7 +658,7 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
     const { out, idea, verdict, rows } = await scaled('generated', sourced, price(100, 'month')); // 2,000 buyers x $1,200
     expect(out.passed).toEqual([idea.id]);
     expect(idea.status).toBe('advanced');
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(10);
     expect(verdict).toMatchObject({ pass: true, model: 'rule', promptVersion: 'scale-rule.v1', sources: [] });
     expect(verdict.reasoning).toContain('200,000 businesses × 50% with the problem × 10% willing to pay × 20% reachable = 2,000 paying buyers');
     expect(verdict.reasoning).toContain('× $1,200 a year = $2,400,000 revenue ceiling');
@@ -708,7 +711,8 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
 
   it('passes an idea with no estimate (older idea) with that note', async () => {
     const { out, idea, verdict } = await scaled('generated', null, price(10, 'month'));
-    expect(out.passed).toEqual([idea.id]);
+    expect(out.passed).toEqual([]); // the scale check passes, but the buyer floor kills an idea with no estimate
+    expect(idea.status).toBe('gated_out');
     expect(verdict).toMatchObject({ pass: true, model: 'rule', promptVersion: 'scale-rule.v1', reasoning: 'no estimate (older idea)' });
   });
 
@@ -951,5 +955,92 @@ describe('gate comps verdict (code, advisory, never kills)', () => {
     expect(out).toEqual({ passed: [idea.id], advisory: [] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
     expect(rows.find((r) => r.check === 'comps')!.pass).toBe(false);
+  });
+});
+
+describe('gate buyer floor (buyers): a sourced population at the floor, in code', () => {
+  type Est = Parameters<typeof computeScale>[0];
+  const floors = { businesses: 20_000, individuals: 1_000_000 };
+  const est = (unit: 'businesses' | 'individuals', count: number, source?: string): Est => ({
+    buyerUnit: unit,
+    population: { count, basis: 'basis', ...(source === undefined ? {} : { source }) },
+    shareWithProblem: { pct: 50, basis: 'b', source: 'https://s.example/a' },
+    shareWillingToPay: { pct: 10, basis: 'b', source: 'https://s.example/b' },
+    shareReachable: { pct: 20, basis: 'b' },
+  });
+
+  it('passes at exactly the floor for each unit, fails just under it', () => {
+    expect(buyerFloorVerdict(est('businesses', 20_000, 'https://s.example'), floors).pass).toBe(true);
+    expect(buyerFloorVerdict(est('businesses', 19_999, 'https://s.example'), floors).pass).toBe(false);
+    expect(buyerFloorVerdict(est('individuals', 1_000_000, 'https://s.example'), floors).pass).toBe(true);
+    expect(buyerFloorVerdict(est('individuals', 999_999, 'https://s.example'), floors).pass).toBe(false);
+  });
+
+  it('fails with no estimate, and with a missing, empty or whitespace-only source', () => {
+    expect(buyerFloorVerdict(null, floors)).toMatchObject({ pass: false });
+    expect(buyerFloorVerdict(null, floors).text).toMatch(/no estimate/);
+    for (const source of [undefined, '', '   \t\n']) {
+      const v = buyerFloorVerdict(est('businesses', 500_000, source), floors);
+      expect(v.pass).toBe(false);
+      expect(v.text).toContain('no source');
+    }
+  });
+
+  it('an unknown unit uses the businesses floor', () => {
+    const odd = { ...est('individuals', 50_000, 'https://s.example'), buyerUnit: 'teams' } as unknown as Est;
+    expect(buyerFloorVerdict(odd, floors).pass).toBe(true);
+    expect(buyerFloorVerdict(odd, { businesses: 60_000, individuals: 1 }).pass).toBe(false);
+  });
+
+  it('the text has the count, the source and the floor', () => {
+    const v = buyerFloorVerdict(est('businesses', 30_000, 'https://fmcsa.example/stats'), floors);
+    expect(v.text).toContain('30,000');
+    expect(v.text).toContain('https://fmcsa.example/stats');
+    expect(v.text).toContain('20,000');
+    expect(v.text).toContain('businesses');
+  });
+
+  async function floored(origin: 'generated' | 'owner', e: Est | null, setting?: unknown) {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: origin === 'owner' ? 'idea' : 'open', minSignals: 1 }));
+    if (setting !== undefined) await setSetting(db, 'gate.minBuyers.businesses', setting);
+    const idea = await twoHostIdea(db, run.id, origin);
+    await db.update(ideas).set({
+      scaleEstimate: e, scaleResult: e ? computeScale(e, null, null) : null,
+      ...(origin === 'owner' ? { status: 'advanced' as const } : {}),
+    }).where(eq(ideas.id, idea.id));
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    return { out, idea: await getIdea(db, idea.id), verdict: rows.find((r) => r.check === 'buyers')!, rows };
+  }
+
+  it('kills a generated idea with no sourced population; stores a rule verdict', async () => {
+    const { out, idea, verdict } = await floored('generated', est('businesses', 500_000));
+    expect(out.passed).toEqual([]);
+    expect(idea.status).toBe('gated_out');
+    expect(verdict).toMatchObject({ pass: false, model: 'rule', sources: [] });
+    expect(verdict.reasoning).toContain('no source');
+  });
+
+  it('passes a sourced population at the floor', async () => {
+    const { out, idea, verdict } = await floored('generated', est('businesses', 20_000, 'https://s.example'));
+    expect(out.passed).toEqual([idea.id]);
+    expect(verdict.pass).toBe(true);
+  });
+
+  it('is advisory for owner ideas: stored as a fail, never kills', async () => {
+    const { out, idea, verdict } = await floored('owner', null);
+    expect(out.passed).toEqual([idea.id]);
+    expect(out.advisory[0]!.failedChecks).toContain('buyers');
+    expect(idea.status).toBe('advanced');
+    expect(verdict.pass).toBe(false);
+  });
+
+  it('the settings override changes the floor; bad values fall back to the default', async () => {
+    const e = est('businesses', 30_000, 'https://s.example');
+    expect((await floored('generated', e)).verdict.pass).toBe(true);
+    expect((await floored('generated', e, 50_000)).verdict.pass).toBe(false);
+    expect((await floored('generated', e, 'lots')).verdict.pass).toBe(true);
   });
 });

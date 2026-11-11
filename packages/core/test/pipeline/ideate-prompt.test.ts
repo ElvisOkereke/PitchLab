@@ -299,8 +299,9 @@ describe('ideate.v15 prompt', () => {
     });
   const lines = (f: string) => readFileSync(join(__dirname, '../../prompts', f), 'utf8').replace(/\r\n/g, '\n').split('\n');
 
-  it('is the latest ideate prompt; v14 stays and loads when pinned', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v15');
+  it('is the latest ideate prompt (v16); v15 and v14 stay and loads when pinned', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v16');
+    expect(loadPrompt('ideate', 15).version).toBe('ideate.v15');
     expect(loadPrompt('ideate', 14).version).toBe('ideate.v14');
     expect(() => loadPrompt('ideate', 99)).toThrow(/not found/);
   });
@@ -320,5 +321,20 @@ describe('ideate.v15 prompt', () => {
       const line = v14.find((l) => l.startsWith(prefix))!;
       expect(v15Lines, prefix).toContain(line);
     }
+  });
+});
+
+describe('ideate.v16 and sketch.v2: the consumer rule', () => {
+  const RULE = 'Consumer ideas only when the buyer pool is at least 1M individuals with a cited source.';
+  const lines = (f: string) => readFileSync(join(__dirname, '../../prompts', f), 'utf8').replace(/\r\n/g, '\n').split('\n');
+
+  it('v16 is v15 plus the consumer rule; sketch.v2 adds the rule and a buyer pool line', () => {
+    expect(lines('ideate.v16.md')).toContain(RULE);
+    expect(lines('ideate.v15.md')).not.toContain(RULE);
+    for (const l of lines('ideate.v15.md').filter((x) => x.trim() !== '')) expect(lines('ideate.v16.md'), l).toContain(l);
+    expect(lines('sketch.v2.md')).toContain(RULE);
+    expect(lines('sketch.v2.md').join('\n')).toMatch(/buyer pool: <who, about how many, source hint>/);
+    expect(loadPrompt('sketch').version).toBe('sketch.v2');
+    expect(loadPrompt('sketch', 1).version).toBe('sketch.v1');
   });
 });

@@ -580,7 +580,7 @@ export async function ideate(
     return { ideaIds, dropped: 0, dropReasons: {}, requested: 1, returned: 1, truncatedCalls, failedCalls: 0, toCopyLowered, mix: null };
   }
 
-  // Engine v2 (spec §10): the input is the evolve output (Ruling R1), whose final sketches are expanded with ideate.v15.
+  // Engine v2 (spec §10): the input is the evolve output (Ruling R1), whose final sketches are expanded with ideate.v16 (v15 plus the consumer rule).
   // A v2 run without sketch ids (a stage output from before engine v2) and every v1 run generate with ideate.v14.
   // At most ideaCount sketches are expanded: the first ones in the evolve order (best first).
   const sketchIds = usesEngineV2(cfg) && Array.isArray(input.sketchIds)
@@ -613,7 +613,7 @@ export async function ideate(
   const asList = (items: string[]) => (items.length ? items.map((s) => `- ${s}`).join('\n') : '(none yet)');
   const gateKilled = wrapUntrusted('gate-killed', asList(sold));
   const alreadyCovered = wrapUntrusted('already-covered', asList(covered));
-  const prompt = loadPrompt('ideate', sketchIds ? 15 : 14);
+  const prompt = loadPrompt('ideate', sketchIds ? 16 : 14);
   const pending: IdeaInsert[] = [];
   let dropped = 0;
   let requested = 0;
@@ -776,7 +776,7 @@ export async function ideate(
     if (dropped > 0) log(`ideate: dropped ${dropped} invalid (top reasons: ${topReasons(dropReasons)})`);
     log(`ideate: asked for ${requested} ideas, got ${returned} back (cut off: ${truncatedCalls}, failed calls: ${failedCalls})`);
     if (toCopyLowered > 0) log(`ideate: ${toCopyLowered} toCopy score(s) lowered to 3 (no moat mechanism named)`);
-    log(`ideate: ${ideaIds.length} ideas from ${finalSketches.length} sketches (ideate.v15)`);
+    log(`ideate: ${ideaIds.length} ideas from ${finalSketches.length} sketches (ideate.v16)`);
     return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, toCopyLowered, mix: { ...mix, reask: false } };
   }
 

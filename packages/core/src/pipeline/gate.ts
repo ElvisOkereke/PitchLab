@@ -6,9 +6,9 @@ import { gateVerdicts, ideas, knowledgeItems, markets, signals, sketches } from 
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
-import { getMinRevenueCeiling } from '../validation/settings';
+import { getMinBuyers, getMinRevenueCeiling } from '../validation/settings';
 import {
-  ScaleEstimateSchema, UNSOURCED_MAX_BAND, currentScale, scaleShares, userPaysNothing, type PriceHint, type ScaleFields,
+  ScaleEstimateSchema, UNSOURCED_MAX_BAND, currentScale, scaleShares, userPaysNothing, type PriceHint, type ScaleEstimate, type ScaleFields,
 } from './business-models';
 import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
 import { nearestComps, type Comp } from './engine/evolve';
@@ -22,7 +22,7 @@ export { COMMUNITY_PLATFORMS, countEvidence, countEvidenceForSignals } from './e
 
 /** The model's checks (gate.v7 adds `trivial`); the code verdicts follow in ORDER. */
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'trivial'] as const;
-const ORDER = [...CHECKS, 'evidence', 'scale', 'comps'] as const;
+const ORDER = [...CHECKS, 'evidence', 'scale', 'buyers', 'comps'] as const;
 
 const judgeSchema = z
   .object({
@@ -118,6 +118,29 @@ export function scaleVerdict(
   return { pass, reasoning: `${pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.`}${tail}` };
 }
 
+/** The buyers code rule's version, stored on the buyers verdict. */
+export const BUYERS_RULE_VERSION = 'buyers-rule.v1';
+
+/**
+ * The gate's buyer floor (no model): the population the idea's scale estimate names must be sourced and at least the floor
+ * for its buyer unit (businesses, or individuals; any other unit uses the businesses floor). It fails with no estimate,
+ * and with a missing, empty or whitespace-only source. The text gives the count, the source (or "no source") and the
+ * floor. Owner ideas are advisory (the caller never kills them).
+ */
+export function buyerFloorVerdict(
+  estimate: ScaleEstimate | null, floors: { businesses: number; individuals: number },
+): { pass: boolean; text: string } {
+  if (!estimate) return { pass: false, text: `no estimate: the buyer pool is unknown (floor: ${num(floors.businesses)} businesses or ${num(floors.individuals)} individuals)` };
+  const unit = estimate.buyerUnit === 'individuals' ? 'individuals' : 'businesses';
+  const floor = floors[unit];
+  const count = estimate.population.count;
+  const source = estimate.population.source?.trim() ?? '';
+  const head = `${num(count)} ${unit}, ${source ? `source: ${capField(source, 300)}` : 'no source'}; floor ${num(floor)} ${unit}`;
+  if (!source) return { pass: false, text: `${head}: the population has no source` };
+  const pass = count >= floor;
+  return { pass, text: `${head}: ${pass ? 'at least the floor' : 'under the floor'}` };
+}
+
 /** The comps code rule's version, stored on the comps verdict. */
 export const COMPS_RULE_VERSION = 'comps-rule.v1';
 const COMP_NAME_MAX = 120;
@@ -185,6 +208,7 @@ export async function gate(
   const gatePrompt = loadPrompt('gate');
   const gateModel = router.modelFor('gate');
   const minRevenueCeiling = await getMinRevenueCeiling(db);
+  const minBuyers = await getMinBuyers(db);
   // Engine v2 ideas: the sketch's whyNotTrivial, shown to the judge as the idea's own claim for the trivial check.
   const sketchIdList = [...new Set(ordered.flatMap((i) => (i.sketchId ? [i.sketchId] : [])))];
   const whyNotTrivial = new Map(sketchIdList.length
@@ -266,6 +290,14 @@ Why not trivial (the idea's own unverified claim): ${capField(why, WHY_NOT_TRIVI
     values.push({
       ideaId: idea.id, check: 'scale', pass: scale.pass, reasoning: scale.reasoning,
       sources: [], model: 'rule', promptVersion: SCALE_RULE_VERSION,
+    });
+    // The buyers code rule (no model): a sourced population at the floor; kills generated ideas only (advisory for owner ideas).
+    const estimate = ScaleEstimateSchema.safeParse(idea.scaleEstimate);
+    const buyers = buyerFloorVerdict(estimate.success ? estimate.data : null, minBuyers);
+    results.set('buyers', buyers.pass);
+    values.push({
+      ideaId: idea.id, check: 'buyers', pass: buyers.pass, reasoning: buyers.text,
+      sources: [], model: 'rule', promptVersion: BUYERS_RULE_VERSION,
     });
     // The comps code rule (no model, advisory): the nearest library startups, dossier entries first; never kills.
     const comps = compsVerdict(idea.embedding ? await nearestComps(db, idea.embedding, COMPS_PER_SKETCH) : []);

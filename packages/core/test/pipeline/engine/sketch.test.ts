@@ -91,7 +91,7 @@ describe('sketch', () => {
 
     const ps = prompts(t.router);
     expect(ps).toHaveLength(2);
-    expect(t.ctxs.map((c) => [c.runId, c.promptVersion])).toEqual([[t.run.id, 'sketch.v1'], [t.run.id, 'sketch.v1']]);
+    expect(t.ctxs.map((c) => [c.runId, c.promptVersion])).toEqual([[t.run.id, 'sketch.v2'], [t.run.id, 'sketch.v2']]);
     expect(ps[0]).toContain('pat1');
     expect(ps[1]).toContain('pat2');
     for (const p of ps) expect(p).toContain('Do not repeat or rephrase these');
