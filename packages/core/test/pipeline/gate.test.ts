@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it, vi } from 'vitest';
-import { gateVerdicts, ideas, knowledgeItems, signals } from '../../src/db/schema';
+import { gateVerdicts, ideas, knowledgeItems, signals, sketches } from '../../src/db/schema';
 import { loadPrompt } from '../../src/llm/prompts';
 import { computeScale } from '../../src/pipeline/business-models';
 import { evaluateEvidence, meetsEvidenceRule } from '../../src/pipeline/evidence';
@@ -23,7 +23,7 @@ vi.mock('../../src/library/context', async (importOriginal) => {
 
 const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
 
-const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
+const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'trivial'] as const;
 const verdicts = (omit?: string) => ({
   verdicts: CHECKS.filter((c) => c !== omit).map((check) => ({ check, pass: true, reasoning: `${check} ok`, sourceUrls: [] as string[] })),
 });
@@ -37,7 +37,7 @@ async function twoHostIdea(db: Awaited<ReturnType<typeof testDb>>, runId: string
   return insertIdea(db, runId, { origin, signalIds: sigs.map((s) => s.id) });
 }
 
-describe('gate.v4 checks kept in gate.v5 and gate.v6', () => {
+describe('gate.v4 checks kept in gate.v5, gate.v6 and gate.v7', () => {
   it('control kills only what a company could switch off: official APIs pass with a fallback or alternatives', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
@@ -69,7 +69,7 @@ describe('gate.v4 checks kept in gate.v5 and gate.v6', () => {
     expect(autonomy).toMatch(/note the labour/i);
     expect(autonomy).not.toContain('really consulting labour');
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v6');
+    expect(rows.find((r) => r.check === 'autonomy')!.promptVersion).toBe('gate.v7');
   });
 
   it('judges reachability for individuals by channels, keeping the business wording', async () => {
@@ -154,8 +154,8 @@ describe('gate', () => {
     expect(out).toEqual({ passed: [], advisory: [] });
     expect((await getIdea(db, idea.id)).status).toBe('gated_out');
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows).toHaveLength(7);
-    expect(rows.filter((r) => r.model === 'gpt-6-sol')).toHaveLength(5);
+    expect(rows).toHaveLength(9);
+    expect(rows.filter((r) => r.model === 'gpt-6-sol')).toHaveLength(6);
     const ev = rows.find((r) => r.check === 'evidence')!;
     expect(ev.pass).toBe(false);
     expect(ev.model).toBe('rule');
@@ -219,7 +219,7 @@ describe('gate', () => {
     await expect(gate(deps(db, router), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
   });
 
-  it('is idempotent: running twice leaves exactly 7 verdict rows', async () => {
+  it('is idempotent: running twice leaves exactly 9 verdict rows', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
     const idea = await twoHostIdea(db, run.id, 'generated');
@@ -227,7 +227,7 @@ describe('gate', () => {
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(9);
   });
 
   it('excludes IP and dotless hosts from independent sources', async () => {
@@ -287,7 +287,7 @@ describe('gate', () => {
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
     await gate(deps(db, router), run, { ideaIds: [idea.id] });
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v6')).toBe(true);
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v7')).toBe(true);
     const judge = router.calls.find((c) => c.stage === 'gate')!.prompt;
     expect(judge).toContain('If the idea claims no functional gap and no edge, judge `generic` on the competitor research and the already-sold startups alone.');
     for (const { prompt } of router.calls) {
@@ -440,8 +440,7 @@ describe('gate.v5', () => {
     return { db, idea, prompt, generic: prompt.split('\n').find((l) => l.startsWith('- generic:'))! };
   }
 
-  it('gate.v6 is gate.v5 plus one line saying scale is checked in code; keeps v5 and v4; stores gate.v6 on the model verdicts', async () => {
-    expect(loadPrompt('gate').version).toBe('gate.v6');
+  it('gate.v6 is gate.v5 plus one line saying scale is checked in code; keeps v5 and v4; stores the latest version on the model verdicts', async () => {
     for (const v of [4, 5]) expect(existsSync(join(__dirname, `../../prompts/gate.v${v}.md`))).toBe(true);
     const lines = (f: string) => readFileSync(join(__dirname, '../../prompts', f), 'utf8').split(String.fromCharCode(10)).map((l) => l.trimEnd());
     const v5 = lines('gate.v5.md');
@@ -453,7 +452,7 @@ describe('gate.v5', () => {
     expect(v5.filter((l) => !v6.includes(l))).toEqual([]);
     const { db, idea } = await judgePrompt();
     const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
-    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v6')).toBe(true);
+    expect(rows.filter((r) => r.model !== 'rule').every((r) => r.promptVersion === 'gate.v7')).toBe(true);
   });
 
   it('generic passes an unserved function or a concrete, checkable edge against named incumbents the research does not contradict', async () => {
@@ -656,7 +655,7 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
     const { out, idea, verdict, rows } = await scaled('generated', sourced, price(100, 'month')); // 2,000 buyers x $1,200
     expect(out.passed).toEqual([idea.id]);
     expect(idea.status).toBe('advanced');
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(9);
     expect(verdict).toMatchObject({ pass: true, model: 'rule', promptVersion: 'scale-rule.v1', sources: [] });
     expect(verdict.reasoning).toContain('200,000 businesses × 50% with the problem × 10% willing to pay × 20% reachable = 2,000 paying buyers');
     expect(verdict.reasoning).toContain('× $1,200 a year = $2,400,000 revenue ceiling');
@@ -797,5 +796,160 @@ describe('gate scale check (scale-rule.v1): the revenue ceiling in code, after e
     const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
     const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
     expect(out.advisory).toEqual([{ ideaId: idea.id, failedChecks: ['evidence', 'scale'] }]);
+  });
+});
+
+// ---- gate.v7 (engine v2, spec §9): the trivial check (model) and the comps verdict (code, advisory) ----
+describe('gate.v7 trivial check', () => {
+  const lines = (f: string) => readFileSync(join(__dirname, '../../prompts', f), 'utf8').replace(/\r\n/g, '\n').split('\n').map((l) => l.trimEnd());
+  const failing = (check: string) => ({ verdicts: verdicts().verdicts.map((v) => (v.check === check ? { ...v, pass: false, reasoning: 'a spreadsheet does it' } : v)) });
+
+  it('gate.v7 is gate.v6 plus the trivial check (six checks); v6 stays', () => {
+    expect(loadPrompt('gate').version).toBe('gate.v7');
+    expect(existsSync(join(__dirname, '../../prompts/gate.v6.md'))).toBe(true);
+    const v6 = lines('gate.v6.md');
+    const v7 = lines('gate.v7.md');
+    const trivial = v7.find((l) => l.startsWith('- trivial:'))!;
+    expect(trivial).toMatch(/a person with a spreadsheet/);
+    expect(trivial).toMatch(/one prompt to a frontier model given the data the idea needs/);
+    expect(trivial).toMatch(/most of the value/);
+    expect(trivial).toMatch(/name the specific hard part/i);
+    expect(v7.find((l) => l.startsWith('Rule on exactly these six checks.'))).toBeDefined();
+    expect(v7).toContain('Do not judge evidence volume; that is checked separately. Do not return any check other than these six.');
+    // Every other v6 line is kept as it was.
+    const changed = v6.filter((l) => !v7.includes(l));
+    expect(changed).toHaveLength(2);
+    expect(changed.every((l) => /five/.test(l))).toBe(true);
+  });
+
+  it('the gate schema requires trivial exactly once', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const idea = await insertIdea(db, run.id);
+    const missing = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts('trivial')] } });
+    await expect(gate(deps(db, missing), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
+    const twice = verdicts();
+    twice.verdicts.push({ check: 'trivial', pass: true, reasoning: 'again', sourceUrls: [] });
+    const dup = fakeRouter({ research: { competitors: [research] }, structured: { gate: [twice] } });
+    await expect(gate(deps(db, dup), run, { ideaIds: [idea.id] })).rejects.toBeInstanceOf(StructuredOutputError);
+  });
+
+  it('a trivial fail kills a generated idea', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [failing('trivial')] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(out).toEqual({ passed: [], advisory: [] });
+    expect((await getIdea(db, idea.id)).status).toBe('gated_out');
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    expect(rows.find((r) => r.check === 'trivial')).toMatchObject({ pass: false, reasoning: 'a spreadsheet does it', promptVersion: 'gate.v7' });
+  });
+
+  it('a trivial fail is advisory for an owner idea', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'owner');
+    await db.update(ideas).set({ status: 'advanced' }).where(eq(ideas.id, idea.id));
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [failing('trivial')] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(out).toEqual({ passed: [idea.id], advisory: [{ ideaId: idea.id, failedChecks: ['trivial'] }] });
+    expect((await getIdea(db, idea.id)).status).toBe('advanced');
+  });
+
+  it("shows a v2 idea's sketch whyNotTrivial to the judge as the idea's own claim", async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    const [sk] = await db.insert(sketches).values({
+      runId: run.id, title: 't', buyer: 'b', problem: 'p', howItEarns: 'h', businessModel: 'subscription', edge: 'e', edgeKind: 'data',
+      whyNotTrivial: 'Needs a year of\nmatched claim outcomes', earnOrSave: 'earn', signalIds: [], libraryItemIds: [], status: 'kept',
+    }).returning();
+    const idea = await insertIdea(db, run.id, { sketchId: sk!.id });
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const judge = router.calls.find((c) => c.stage === 'gate')!.prompt;
+    expect(judge).toContain("Why not trivial (the idea's own unverified claim): Needs a year of matched claim outcomes");
+  });
+});
+
+describe('gate comps verdict (code, advisory, never kills)', () => {
+  type TestDb = Awaited<ReturnType<typeof testDb>>;
+  async function startup(db: TestDb, o: { name: string; vec: number[]; outcome?: 'active' | 'dead' | 'acquired'; whoPays?: string; dossier?: boolean }) {
+    return (await upsertKnowledgeItem(db, {
+      kind: 'startup', title: o.name, summary: 'S', quote: 'q', audience: 'business', countries: ['US'], industries: [],
+      facts: {
+        name: o.name, whatItDoes: 'does it', businessModel: 'saas', outcome: o.outcome ?? 'active',
+        ...(o.whoPays ? { whoPays: o.whoPays } : {}), ...(o.dossier ? { dossierStatus: 'done' } : {}),
+      },
+      source: { url: `https://${o.name.toLowerCase()}.example/`, domain: `${o.name.toLowerCase()}.example`, sourceType: 'web', quote: 'q', quoteVerified: true },
+    }, o.vec, {})).itemId;
+  }
+  /** A unit vector with cosine `sim` to unit(0). */
+  const near = (sim: number, spare: number) => { const v = unit(0).map(() => 0); v[0] = sim; v[spare] = Math.sqrt(1 - sim * sim); return v; };
+  async function gated(seed: (db: TestDb) => Promise<void>, o: { embedding?: number[] | null } = {}) {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', minSignals: 1 }));
+    await seed(db);
+    const idea = await twoHostIdea(db, run.id, 'generated');
+    await db.update(ideas).set({ embedding: o.embedding === undefined ? unit(0) : o.embedding }).where(eq(ideas.id, idea.id));
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    return { out, idea: await getIdea(db, idea.id), comps: rows.find((r) => r.check === 'comps')! };
+  }
+
+  it('lists up to 5 comps with who pays and the outcome, dossier entries first', async () => {
+    const { out, idea, comps } = await gated(async (db) => {
+      // Far apart from each other (pairwise cosine under 0.5), so the library keeps them as separate entries.
+      await startup(db, { name: 'Dossierco', vec: near(0.3, 9), whoPays: 'freight brokers', dossier: true, outcome: 'acquired' });
+      for (let i = 0; i < 5; i++) await startup(db, { name: `Plain${i}`, vec: near(0.7 - i * 0.04, 10 + i), whoPays: `payer ${i}` });
+      await startup(db, { name: 'Deadco', vec: near(0.68, 20), outcome: 'dead' });
+    });
+    expect(out.passed).toEqual([idea.id]);
+    expect(comps).toMatchObject({ pass: true, model: 'rule', promptVersion: 'comps-rule.v1' });
+    const listed = comps.reasoning.split('\n').filter((l) => l.startsWith('- '));
+    expect(listed).toEqual([
+      '- Dossierco (acquired, dossier): who pays: freight brokers',
+      '- Plain0 (active): who pays: payer 0',
+      '- Deadco (dead): who pays: unknown',
+      '- Plain1 (active): who pays: payer 1',
+      '- Plain2 (active): who pays: payer 2',
+    ]);
+    expect(comps.reasoning.split('\n')[0]).toBe('5 comps (nearest library startups, dossier entries first):');
+  });
+
+  it('says "no comps found" when the library has none near, or the idea has no embedding, and still passes the idea', async () => {
+    const empty = await gated(async () => {});
+    expect(empty.comps).toMatchObject({ pass: false, model: 'rule' });
+    expect(empty.comps.reasoning).toMatch(/^no comps found/);
+    expect(empty.out.passed).toEqual([empty.idea.id]);
+    expect(empty.idea.status).toBe('advanced');
+
+    const noVec = await gated(async (db) => { await startup(db, { name: 'Rival', vec: unit(0) }); }, { embedding: null });
+    expect(noVec.comps.reasoning).toMatch(/^no comps found/);
+    expect(noVec.out.passed).toEqual([noVec.idea.id]);
+  });
+
+  it('says "only dead comps" when every comp is dead, and still passes the idea', async () => {
+    const { out, idea, comps } = await gated(async (db) => {
+      await startup(db, { name: 'Gone1', vec: near(0.9, 30), outcome: 'dead', whoPays: 'landlords' });
+      await startup(db, { name: 'Gone2', vec: near(0.8, 31), outcome: 'dead' });
+    });
+    expect(comps.pass).toBe(false);
+    expect(comps.reasoning.split('\n')[0]).toMatch(/^only dead comps/);
+    expect(comps.reasoning).toContain('- Gone1 (dead): who pays: landlords');
+    expect(out).toEqual({ passed: [idea.id], advisory: [] });
+    expect(idea.status).toBe('advanced');
+  });
+
+  it('comps never kill and never count as an owner flag', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', minSignals: 1 }));
+    const idea = await twoHostIdea(db, run.id, 'owner');
+    const router = fakeRouter({ research: { competitors: [research] }, structured: { gate: [verdicts()] } });
+    const out = await gate(deps(db, router), run, { ideaIds: [idea.id] });
+    expect(out).toEqual({ passed: [idea.id], advisory: [] });
+    const rows = await db.select().from(gateVerdicts).where(eq(gateVerdicts.ideaId, idea.id));
+    expect(rows.find((r) => r.check === 'comps')!.pass).toBe(false);
   });
 });

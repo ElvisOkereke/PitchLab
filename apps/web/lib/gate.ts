@@ -7,6 +7,8 @@ export const CHECK_LABEL: Record<string, string> = {
   reachability: 'Reachability',
   evidence: 'Evidence',
   scale: 'Revenue ceiling',
+  trivial: 'Not trivial',
+  comps: 'Comps',
 };
 
 export const checkLabel = (check: string) => CHECK_LABEL[check] ?? check;

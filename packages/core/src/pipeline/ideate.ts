@@ -1,7 +1,7 @@
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { ideaReviews, ideas, lenses } from '../db/schema';
+import { ideaReviews, ideas, lenses, signals, sketches } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { StructuredOutputError, type CallCtx } from '../llm/types';
 import { capField, wrapUntrusted } from '../llm/untrusted';
@@ -14,7 +14,8 @@ import {
 import { meetsEvidenceRule } from './evidence';
 import { asRecord, bareId, enumValue, topReasons } from './normalize';
 import { buildSeedContext, byId, renderSignals, seededRandom, type Known } from './seed-context';
-import type { RunConfig, StageDeps } from './types';
+import { SKETCH_TEXT_MAX } from './engine/kinds';
+import { usesEngineV2, type RunConfig, type StageDeps } from './types';
 
 export { hasDemandEvidence } from './evidence';
 export {
@@ -280,6 +281,33 @@ const lensIdeasSchema = z.object({
   ideas: z.array(z.preprocess(normalizeIdea, lensIdeaSchema).catch((ctx) =>
     (ctx ? new DroppedIdea([...new Set(ctx.error.issues.map((i) => reasonKey(i, normalizeIdea(ctx.input))))]) : undefined) as unknown as LensIdea)),
 });
+/** ideate.v15 (engine v2): a generated idea also names the label of the sketch it expands (`S1`, `S2`, …). */
+const sketchIdeaSchema = lensIdeaSchema.extend({ sketch: z.string() });
+type SketchIdea = z.infer<typeof sketchIdeaSchema>;
+/** normalizeIdea, and a label written as a number (`1`) read as text. */
+const normalizeSketchIdea = (raw: unknown): unknown => {
+  const idea = normalizeIdea(raw);
+  const r = asRecord(idea);
+  if (r && typeof r.sketch === 'number') r.sketch = String(r.sketch);
+  return idea;
+};
+const sketchIdeasSchema = z.object({
+  ideas: z.array(z.preprocess(normalizeSketchIdea, sketchIdeaSchema).catch((ctx) =>
+    (ctx ? new DroppedIdea([...new Set(ctx.error.issues.map((i) => reasonKey(i, normalizeSketchIdea(ctx.input))))]) : undefined) as unknown as SketchIdea)),
+});
+/** Drop reasons of a v15 idea whose label names no sketch of its call, or a sketch another idea of the call already expands. */
+export const SKETCH_UNKNOWN_DROP = 'sketch:unknown';
+export const SKETCH_DUPLICATE_DROP = 'sketch:duplicate';
+
+/**
+ * The 0-based index of the sketch a v15 label names, or null: the first number in the label (`S2`, `Sketch 2`, `[S2]`
+ * and `2` all name the second sketch), when it is between 1 and `n`.
+ */
+export function sketchIndex(label: string, n: number): number | null {
+  const m = /\d+/.exec(label.slice(0, 40));
+  const i = m ? Number(m[0]) - 1 : -1;
+  return Number.isInteger(i) && i >= 0 && i < n ? i : null;
+}
 /** Owner ideas never get invented incumbents or gaps (those columns stay null); the money fields are optional. */
 const ownerIdeaSchema = z.object({
   ...ideaFields,
@@ -295,6 +323,31 @@ const ownerIdeaSchema = z.object({
 
 type IdeaInsert = typeof ideas.$inferInsert;
 type LensRow = typeof lenses.$inferSelect;
+type SketchRow = typeof sketches.$inferSelect;
+
+/**
+ * The <sketches> block of an ideate.v15 call: each sketch labelled S1, S2, … in call order, its text fields capped at
+ * SKETCH_TEXT_MAX (one line each), its signals as the urls shown in <signals> (ids not shown are left out).
+ */
+function renderSketches(list: SketchRow[], urlOf: Map<string, string>): string {
+  const cap = (s: string) => capField(s, SKETCH_TEXT_MAX);
+  return list.map((s, i) => {
+    const urls = s.signalIds.flatMap((id) => urlOf.get(id) ?? []);
+    return [
+      `- label: S${i + 1}`,
+      `  title: ${cap(s.title)}`,
+      `  buyer: ${cap(s.buyer)}`,
+      `  problem: ${cap(s.problem)}`,
+      `  how it earns: ${cap(s.howItEarns)}`,
+      `  business model: ${cap(s.businessModel)}`,
+      `  edge (${s.edgeKind}): ${cap(s.edge)}`,
+      `  why not trivial: ${cap(s.whyNotTrivial)}`,
+      `  earn or save: ${cap(s.earnOrSave)}`,
+      `  signals: ${urls.length ? urls.join(' ') : '(none)'}`,
+      `  library ids: ${s.libraryItemIds.length ? s.libraryItemIds.join(', ') : '(none)'}`,
+    ].join('\n');
+  }).join('\n');
+}
 
 /**
  * Idempotent per run (R20): in one transaction, drop any ideas an earlier attempt left for this run and insert
@@ -482,7 +535,7 @@ export type IdeateOutput = {
 export async function ideate(
   { db, router, log }: StageDeps,
   run: { id: string; config: RunConfig },
-  input: { signalIds: string[] },
+  input: { signalIds: string[]; sketchIds?: unknown } & Record<string, unknown>,
 ): Promise<IdeateOutput> {
   const cfg = run.config;
   let truncatedCalls = 0;
@@ -525,18 +578,38 @@ export async function ideate(
     return { ideaIds, dropped: 0, dropReasons: {}, requested: 1, returned: 1, truncatedCalls, failedCalls: 0, toCopyLowered, mix: null };
   }
 
-  const { market, allLenses, chosen, passed, withSegmentsSeed, focusFor, libraryFor } = await buildSeedContext(
+  // Engine v2 (spec §10): the input is the evolve output (Ruling R1), whose final sketches are expanded with ideate.v15.
+  // A v2 run without sketch ids (a stage output from before engine v2) and every v1 run generate with ideate.v14.
+  const sketchIds = usesEngineV2(cfg) && Array.isArray(input.sketchIds)
+    ? [...new Set(input.sketchIds.filter((x): x is string => typeof x === 'string'))]
+    : null;
+  if (usesEngineV2(cfg) && !sketchIds) log('ideate: an engine v2 run with no sketch ids; generating ideas with ideate.v14');
+  const sketchRows = sketchIds?.length ? await db.select().from(sketches).where(inArray(sketches.id, sketchIds)) : [];
+  const sketchById = new Map(sketchRows.map((s) => [s.id, s]));
+  const finalSketches = (sketchIds ?? []).map((id) => {
+    const s = sketchById.get(id);
+    if (!s) throw new Error(`ideate: unknown sketch ${id}`);
+    return s;
+  });
+
+  const { market, allLenses, chosen, passed: harvested, withSegmentsSeed, focusFor, libraryFor } = await buildSeedContext(
     { db, router, log }, run, input.signalIds, 'ideate',
   );
+  // A sketch may cite a harvest signal past the first MAX_SIGNALS (an evolve variant): it is shown too, so it can be cited.
+  const shownIds = new Set(harvested.map((s) => s.id));
+  const missingIds = [...new Set(finalSketches.flatMap((s) => s.signalIds))].filter((id) => !shownIds.has(id));
+  const extra = missingIds.length ? await db.select().from(signals).where(inArray(signals.id, missingIds)) : [];
+  const passed = [...harvested, ...extra];
   const signalsText = renderSignals(passed);
   const signalUrls = new Set(passed.map((s) => s.url));
+  const urlOf = new Map(passed.map((s) => [s.id, s.url]));
 
   // What competitors already sell (gate kills on `generic`) and what already has a case, so ideation steers away.
   const { sold, covered } = await loadAlreadySold(db);
   const asList = (items: string[]) => (items.length ? items.map((s) => `- ${s}`).join('\n') : '(none yet)');
   const gateKilled = wrapUntrusted('gate-killed', asList(sold));
   const alreadyCovered = wrapUntrusted('already-covered', asList(covered));
-  const prompt = loadPrompt('ideate');
+  const prompt = loadPrompt('ideate', sketchIds ? 15 : 14);
   const pending: IdeaInsert[] = [];
   let dropped = 0;
   let requested = 0;
@@ -546,47 +619,60 @@ export async function ideate(
   const dropReasons: Record<string, number> = {};
 
   /**
-   * One ideate call for at most IDEAS_PER_CALL ideas. A call the router gives up on (StructuredOutputError, after its
-   * re-asks; for example every answer cut off) contributes 0 ideas and the run goes on; any other error (network,
-   * budget) propagates as before.
+   * One ideate call for at most IDEAS_PER_CALL ideas: invented with ideate.v14, or, with `o.sketches`, one per given
+   * sketch with ideate.v15 (`count` is then the number of sketches). A call the router gives up on (StructuredOutputError,
+   * after its re-asks; for example every answer cut off) contributes 0 ideas and the run goes on; any other error
+   * (network, budget) propagates as before.
    */
-  const generate = async (lens: LensRow, count: number, o: { withSegments: boolean; gap: string }): Promise<IdeaInsert[]> => {
+  const generate = async (
+    lens: LensRow, count: number, o: { withSegments: boolean; gap: string; sketches?: SketchRow[] },
+  ): Promise<IdeaInsert[]> => {
     const library = await libraryFor(lens);
+    requested += count;
+    const shared = {
+      market: `${market.name} (${market.countries.join(', ')})`,
+      lensName: lens.name,
+      lensPattern: lens.pattern,
+      lensHint: lens.promptHint,
+      focus: wrapUntrusted('focus', focusFor(o.withSegments)),
+      signals: wrapUntrusted('signals', signalsText),
+      alreadySold: wrapUntrusted('already-sold', library.alreadySold),
+      lessons: wrapUntrusted('lessons', library.lessons),
+      pricing: wrapUntrusted('pricing', library.pricing),
+      changing: wrapUntrusted('changing', library.changing),
+      markets: wrapUntrusted('markets', library.markets),
+      seenInTheWild: wrapUntrusted('seen-in-the-wild', library.seenInTheWild),
+      gateKilled,
+      alreadyCovered,
+      count: String(count),
+      minSignals: String(cfg.minSignals),
+    };
     // Titles from earlier calls in this run (earlier lenses and this lens's earlier calls), so each call steers away
     // from buyers/problems already covered. Each shows its audience and business model, so later calls can vary the mix.
-    const priorTitles = pending.map((v) => `- ${capField(v.title, 200)} (${v.audience}, ${v.businessModel})`).join('\n');
-    requested += count;
-    let out: z.infer<typeof lensIdeasSchema>;
+    const priorTitles = () => pending.map((v) => `- ${capField(v.title, 200)} (${v.audience}, ${v.businessModel})`).join('\n');
+    let out: { ideas: (LensIdea | SketchIdea)[] };
     try {
-      out = await router.structured(
-        'ideate',
-        {
-          prompt: prompt.render({
-            market: `${market.name} (${market.countries.join(', ')})`,
-            lensName: lens.name,
-            lensPattern: lens.pattern,
-            lensHint: lens.promptHint,
-            focus: wrapUntrusted('focus', focusFor(o.withSegments)),
-            signals: wrapUntrusted('signals', signalsText),
-            alreadySold: wrapUntrusted('already-sold', library.alreadySold),
-            lessons: wrapUntrusted('lessons', library.lessons),
-            pricing: wrapUntrusted('pricing', library.pricing),
-            changing: wrapUntrusted('changing', library.changing),
-            markets: wrapUntrusted('markets', library.markets),
-            seenInTheWild: wrapUntrusted('seen-in-the-wild', library.seenInTheWild),
-            priorIdeas: wrapUntrusted('prior-ideas', priorTitles || '(none yet)'),
-            gateKilled,
-            alreadyCovered,
-            gap: o.gap,
-            count: String(count),
-            minSignals: String(cfg.minSignals),
-          }),
-          schema: lensIdeasSchema,
-          schemaName: 'ideate_ideas',
-          maxTokens: IDEATE_MAX_TOKENS,
-        },
-        callCtx(prompt.version),
-      );
+      out = o.sketches
+        ? await router.structured(
+          'ideate',
+          {
+            prompt: prompt.render({ ...shared, sketches: wrapUntrusted('sketches', renderSketches(o.sketches, urlOf)) }),
+            schema: sketchIdeasSchema,
+            schemaName: 'ideate_ideas',
+            maxTokens: IDEATE_MAX_TOKENS,
+          },
+          callCtx(prompt.version),
+        )
+        : await router.structured(
+          'ideate',
+          {
+            prompt: prompt.render({ ...shared, priorIdeas: wrapUntrusted('prior-ideas', priorTitles() || '(none yet)'), gap: o.gap }),
+            schema: lensIdeasSchema,
+            schemaName: 'ideate_ideas',
+            maxTokens: IDEATE_MAX_TOKENS,
+          },
+          callCtx(prompt.version),
+        );
     } catch (err) {
       if (!(err instanceof StructuredOutputError)) throw err;
       failedCalls++;
@@ -598,13 +684,28 @@ export async function ideate(
     // `returned` counts every item the model sent; drops are counted only among the first `count`, since items past
     // the requested count are ignored (neither kept nor counted as drops).
     returned += items.length;
-    const valid: LensIdea[] = [];
+    const drop = (reason: string) => {
+      dropped++;
+      dropReasons[reason] = (dropReasons[reason] ?? 0) + 1;
+    };
+    const valid: { idea: LensIdea; sketch: SketchRow | null }[] = [];
+    const claimed = new Set<number>();
     for (const item of items.slice(0, count)) {
       if (item instanceof DroppedIdea) {
         dropped++;
         for (const r of item.reasons) dropReasons[r] = (dropReasons[r] ?? 0) + 1;
+      } else if (item && o.sketches) {
+        // ideate.v15: each idea expands one sketch of this call, named by its label; any other label drops the idea.
+        const { sketch: label, ...idea } = item as SketchIdea;
+        const i = sketchIndex(label, o.sketches.length);
+        if (i === null) drop(SKETCH_UNKNOWN_DROP);
+        else if (claimed.has(i)) drop(SKETCH_DUPLICATE_DROP);
+        else {
+          claimed.add(i);
+          valid.push({ idea, sketch: o.sketches[i]! });
+        }
       } else if (item) {
-        valid.push(item as LensIdea);
+        valid.push({ idea: item as LensIdea, sketch: null });
       }
     }
     const known: Known = new Map(library.sources);
@@ -613,20 +714,22 @@ export async function ideate(
     // neutral complaint (pain) sites, or 1 such complaint plus a demand source (a shown trend, market, rule_change or
     // pricing entry, or an opportunity signal from another site than the complaint). An idea meeting neither is
     // dropped as `evidence:insufficient`.
-    const evidenced = valid.slice(0, count).filter((idea) => {
+    const evidenced = valid.filter(({ idea }) => {
       const cited = new Set(idea.signalUrls);
       if (meetsEvidenceRule(idea, library.kinds, passed.filter((s) => cited.has(s.url)), cfg.minSignals)) return true;
-      dropped++;
-      dropReasons[EVIDENCE_DROP] = (dropReasons[EVIDENCE_DROP] ?? 0) + 1;
+      drop(EVIDENCE_DROP);
       return false;
     });
-    return evidenced.map(({ signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, scale, scaleEstimate, ...f }) => {
+    return evidenced.map(({ idea, sketch }) => {
+      const { signalUrls: urls, libraryItemIds, valueToUser, priceHint, barriers, scale, scaleEstimate, ...f } = idea;
       const cited = new Set(urls);
       const checked = checkToCopy(barriers);
       if (checked.lowered) toCopyLowered++;
       const price = ground(priceHint, 300, known, library.prefixes);
       // Sources are grounded before the result is computed, so a share whose source was not shown is capped.
       const estimate = groundEstimate(scaleEstimate, known, library.prefixes);
+      // Only library entries this lens was shown (or its sketch already cited); invented ids are not stored.
+      const citable = (id: string) => library.ids.has(id) || !!sketch?.libraryItemIds.includes(id);
       return {
         runId: run.id,
         lensId: lens.id,
@@ -638,13 +741,40 @@ export async function ideate(
         scale: scale ? ground(scale, 300, known, library.prefixes) : null,
         scaleEstimate: estimate,
         scaleResult: computeScale(estimate, price, f.businessModel),
-        // Only library entries this lens was shown; invented ids are not stored.
-        libraryItemIds: [...new Set(libraryItemIds.filter((id) => library.ids.has(id)))],
+        libraryItemIds: [...new Set(libraryItemIds.filter(citable))],
         signalIds: passed.filter((s) => cited.has(s.url)).map((s) => s.id),
+        // Engine v2: the sketch it expands and that sketch's final tournament Elo (screen adds it as a band).
+        ...(sketch ? { sketchId: sketch.id, elo: sketch.elo } : {}),
         status: 'candidate' as const,
       };
     });
   };
+
+  if (sketchIds) {
+    // Engine v2: the final sketches, grouped by their lens (for its library context) in rank order, IDEAS_PER_CALL per
+    // call. Expansion never invents ideas, so there is no mix re-ask; the mix is still reported.
+    const lensById = new Map(allLenses.map((l) => [l.id, l]));
+    const groups = new Map<string, { lens: LensRow; list: SketchRow[] }>();
+    for (const s of finalSketches) {
+      const lens = (s.lensId && lensById.get(s.lensId)) || chosen[0]!;
+      const g = groups.get(lens.id) ?? { lens, list: [] };
+      g.list.push(s);
+      groups.set(lens.id, g);
+    }
+    for (const { lens, list } of groups.values()) {
+      for (let i = 0; i < list.length; i += IDEAS_PER_CALL) {
+        const batch = list.slice(i, i + IDEAS_PER_CALL);
+        pending.push(...await generate(lens, batch.length, { withSegments: withSegmentsSeed, gap: '', sketches: batch }));
+      }
+    }
+    const mix = checkMix(pending, Math.min(MIN_MODELS, finalSketches.length));
+    const ideaIds = await replaceRunIdeas(db, run.id, pending);
+    if (dropped > 0) log(`ideate: dropped ${dropped} invalid (top reasons: ${topReasons(dropReasons)})`);
+    log(`ideate: asked for ${requested} ideas, got ${returned} back (cut off: ${truncatedCalls}, failed calls: ${failedCalls})`);
+    if (toCopyLowered > 0) log(`ideate: ${toCopyLowered} toCopy score(s) lowered to 3 (no moat mechanism named)`);
+    log(`ideate: ${ideaIds.length} ideas from ${finalSketches.length} sketches (ideate.v15)`);
+    return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, toCopyLowered, mix: { ...mix, reask: false } };
+  }
 
   // Each lens asks for its share in calls of at most IDEAS_PER_CALL, in lens order (R20: same run id, same calls).
   const count = Math.ceil(cfg.ideaCount / chosen.length);

@@ -30,6 +30,20 @@ export function moneyBand(multiple: number | null): number {
   return multiple >= 10 ? 5 : multiple >= 5 ? 4 : multiple >= 3 ? 3 : multiple >= 1.5 ? 2 : 1;
 }
 
+/**
+ * Engine v2 (spec §11): the tournament Elo as a band added to the screen total, so the judge and the screen agree on
+ * order unless the code bands strongly disagree. `elo`'s rank among the non-null `allElos` (how many are strictly
+ * higher, so ties share the better band): the top quartile (rank under a quarter of them) is 2, the second quartile 1,
+ * the rest 0. A null Elo (engine v1, owner ideas) is 0.
+ */
+export function eloBand(elo: number | null | undefined, allElos: readonly (number | null | undefined)[]): 0 | 1 | 2 {
+  if (typeof elo !== 'number' || !Number.isFinite(elo)) return 0;
+  const known = allElos.filter((e): e is number => typeof e === 'number' && Number.isFinite(e));
+  if (known.length === 0) return 0;
+  const share = known.filter((e) => e > elo).length / known.length;
+  return share < 0.25 ? 2 : share < 0.5 ? 1 : 0;
+}
+
 /** The neutral money case band for those models: no multiple to reward or punish. */
 export const USER_PAYS_NOTHING_BAND = 3;
 const USER_PAYS_NOTHING_NOTE = 'user pays nothing (ad/affiliate funded)';
@@ -243,6 +257,7 @@ export async function screen(
     });
 
   const prompt = loadPrompt('screen');
+  const allElos = generated.map((i) => i.elo);
   const scored: Scored[] = [];
   let noMultiple = 0;
   let paysNothing = 0;
@@ -290,8 +305,10 @@ export async function screen(
       scale: { value: scale.value, note: scale.note },
       upside: { value: upside.value, note: upside.note },
     };
-    const total = weightedScreenTotal(scores);
-    log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}`);
+    // Engine v2: the tournament Elo band (top quartile +2, second +1) among this run's generated ideas; 0 without an Elo.
+    const band = eloBand(idea.elo, allElos);
+    const total = weightedScreenTotal(scores) + band;
+    log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}${band ? ` (Elo band +${band})` : ''}`);
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
     scored.push({
       id: idea.id, title: idea.title, total, index, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience,

@@ -8,15 +8,18 @@ export type LoadedPrompt = { version: string; render(vars: Record<string, string
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Loads the highest `prompts/<name>.v<N>.md`; `{{var}}` substitution that throws on unknown/unfilled vars. */
-export function loadPrompt(name: string): LoadedPrompt {
+/**
+ * Loads the highest `prompts/<name>.v<N>.md`, or exactly version `pinned` when given (a stage that keeps an older
+ * prompt for one path, like ideate.v14 for engine v1); `{{var}}` substitution that throws on unknown/unfilled vars.
+ */
+export function loadPrompt(name: string, pinned?: number): LoadedPrompt {
   const re = new RegExp(`^${escapeRe(name)}\\.v(\\d+)\\.md$`);
   let best = -1;
   for (const f of readdirSync(PROMPTS_DIR)) {
     const m = re.exec(f);
-    if (m) best = Math.max(best, Number(m[1]));
+    if (m && (pinned === undefined || Number(m[1]) === pinned)) best = Math.max(best, Number(m[1]));
   }
-  if (best < 0) throw new Error(`Prompt not found: ${name}`);
+  if (best < 0) throw new Error(`Prompt not found: ${pinned === undefined ? name : `${name}.v${pinned}`}`);
   const version = `${name}.v${best}`;
   // Git on Windows (core.autocrlf) may check prompts out with CRLF; prompts are always rendered with LF.
   const template = readFileSync(join(PROMPTS_DIR, `${version}.md`), 'utf8').replace(/\r\n/g, '\n');

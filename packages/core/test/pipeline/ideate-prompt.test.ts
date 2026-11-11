@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadPrompt } from '../../src/llm/prompts';
@@ -7,7 +7,7 @@ import { BUSINESS_MODELS } from '../../src/pipeline/business-models';
 const banned = (w: string) => new RegExp('\\b' + w + '\\b', 'i');
 
 const render = (gap = '') =>
-  loadPrompt('ideate').render({
+  loadPrompt('ideate', 14).render({
     market: 'Canada + US', lensName: 'L', lensPattern: 'P', lensHint: 'H', focus: '<focus></focus>',
     signals: '<signals></signals>', priorIdeas: '<prior-ideas></prior-ideas>', count: '3', minSignals: '3',
     gateKilled: '<gate-killed></gate-killed>', alreadyCovered: '<already-covered></already-covered>',
@@ -16,8 +16,8 @@ const render = (gap = '') =>
   });
 
 describe('ideate prompt', () => {
-  it('is v14 and carries no benchmark-specific examples', () => {
-    expect(loadPrompt('ideate').version).toBe('ideate.v14');
+  it('v14 (engine v1) carries no benchmark-specific examples', () => {
+    expect(loadPrompt('ideate', 14).version).toBe('ideate.v14');
     const text = render();
     for (const w of ['lead', 'leads', 'contact form', 'agency', 'uptime']) {
       expect(text).not.toMatch(banned(w));
@@ -284,5 +284,41 @@ describe('ideate prompt', () => {
   });
   it('v8 is kept', () => {
     expect(existsSync(join(__dirname, '../../prompts/ideate.v8.md'))).toBe(true);
+  });
+});
+
+// ideate.v15 (engine v2, spec §10): v14's rules, but each call expands given sketches instead of inventing ideas.
+describe('ideate.v15 prompt', () => {
+  const v15 = () =>
+    loadPrompt('ideate').render({
+      market: 'Canada + US', lensName: 'L', lensPattern: 'P', lensHint: 'H', focus: '<focus></focus>',
+      signals: '<signals></signals>', sketches: '<sketches></sketches>', count: '3', minSignals: '3',
+      gateKilled: '<gate-killed></gate-killed>', alreadyCovered: '<already-covered></already-covered>',
+      alreadySold: '<already-sold></already-sold>', lessons: '<lessons></lessons>', pricing: '<pricing></pricing>',
+      changing: '<changing></changing>', markets: '<markets></markets>', seenInTheWild: '<seen-in-the-wild></seen-in-the-wild>',
+    });
+  const lines = (f: string) => readFileSync(join(__dirname, '../../prompts', f), 'utf8').replace(/\r\n/g, '\n').split('\n');
+
+  it('is the latest ideate prompt; v14 stays and loads when pinned', () => {
+    expect(loadPrompt('ideate').version).toBe('ideate.v15');
+    expect(loadPrompt('ideate', 14).version).toBe('ideate.v14');
+    expect(() => loadPrompt('ideate', 99)).toThrow(/not found/);
+  });
+
+  it('expands the given sketches, keeping buyer, problem, edge and whyNotTrivial, and invents nothing', () => {
+    const text = v15();
+    expect(text).toMatch(/Expand these sketches; keep their buyer, problem, edge and whyNotTrivial; do not invent new ideas\./);
+    expect(text).toContain('<sketches></sketches>');
+    expect(text).toMatch(/`sketch`/);
+    expect(text).not.toMatch(/Generate exactly/);
+  });
+
+  it("keeps v14's hard requirements, quality bar and field rules", () => {
+    const v14 = lines('ideate.v14.md');
+    const v15Lines = lines('ideate.v15.md');
+    for (const prefix of ['- Evidence:', '- Not already sold or covered:', '- A real functional difference:', '- Control:', '- Automation:', '- Named buyer:', '- `edge`:', '- `scaleEstimate`:', '- `barriers`:']) {
+      const line = v14.find((l) => l.startsWith(prefix))!;
+      expect(v15Lines, prefix).toContain(line);
+    }
   });
 });

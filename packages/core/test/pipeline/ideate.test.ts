@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { CONSUMER_LENSES, CONSUMER_SEGMENTS } from '../../src/db/seed';
 import { eq } from 'drizzle-orm';
-import { gateVerdicts, ideaReviews, ideas, lenses, signals } from '../../src/db/schema';
+import { gateVerdicts, ideaReviews, ideas, lenses, signals, sketches } from '../../src/db/schema';
 import { computeScorecard } from '../../src/bench/scorecard';
 import { rateIdea } from '../../src/dashboard/idea-ratings';
 import { upsertKnowledgeItem } from '../../src/library/store';
@@ -1615,5 +1615,89 @@ describe('ideate: seen in the wild', () => {
     expect(block(p!, 'focus')).toMatch(/Consumer segments: \S/);
     const embeds = t.router.calls.filter((c) => c.kind === 'embed');
     expect(embeds[0]!.prompt).toContain('Dog walking routes');
+  });
+});
+
+// ---- ideate.v15: engine v2 expands the final sketches (spec §10) ----
+
+describe('ideate v15 expands sketches (engine v2)', () => {
+  /** Wraps a fake router to record each structured call's prompt version. */
+  const versioned = (script: FakeScript) => {
+    const router = fakeRouter(script);
+    const inner = router.structured.bind(router);
+    const versions: string[] = [];
+    router.structured = (async (stage, req, ctx) => {
+      versions.push(ctx.promptVersion);
+      return inner(stage, req, ctx);
+    }) as ModelRouter['structured'];
+    return Object.assign(router, { versions });
+  };
+  type TestDb = Awaited<ReturnType<typeof testDb>>;
+  async function insertSketches(db: TestDb, runId: string, list: { title: string; elo: number | null; lensId?: string; signalIds?: string[] }[]) {
+    const rows = await db.insert(sketches).values(list.map((s) => ({
+      runId, lensId: s.lensId ?? 'tl1', title: s.title, buyer: `${s.title} buyer`, problem: `${s.title} problem`, howItEarns: `${s.title} earns`,
+      businessModel: 'subscription', edge: `${s.title} edge`, edgeKind: 'data' as const, whyNotTrivial: `${s.title} hard part`, earnOrSave: 'earn',
+      signalIds: s.signalIds ?? [], libraryItemIds: [], status: 'kept' as const, elo: s.elo,
+    }))).returning({ id: sketches.id });
+    return rows.map((r) => r.id);
+  }
+  /** One expanded idea per label (`S1`, `S2`, …). */
+  const expanded = (labels: string[], urls: string[] = []) => ({
+    ideas: labels.map((sketch, i) => ({ ...mk(1, urls, { title: `X${sketch}${i}` }).ideas[0], sketch })),
+  });
+
+  it('a v2 run calls ideate.v15 with the sketch fields, IDEAS_PER_CALL sketches per call; ideas carry sketch_id and elo', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const ids = await insertSketches(t.db, t.run.id, [
+      { title: 'Alpha', elo: 1300 }, { title: 'Beta', elo: 1250 }, { title: 'Gamma', elo: 1200 }, { title: 'Delta', elo: 1100 },
+    ]);
+    const r = versioned({ structured: { ideate: [expanded(['S3', 'S1', 'S2']), expanded(['S1'])] } });
+    // The evolve output (Ruling R1): the harvest fields spread, the final sketch ids, the harvest's signal ids.
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: t.rows.map((x) => x.id), sketchIds: ids, variants: 0 });
+    expect(r.versions).toEqual(['ideate.v15', 'ideate.v15']);
+    const prompts = structuredPrompts(r);
+    for (const name of ['Alpha', 'Beta', 'Gamma']) {
+      for (const f of ['buyer', 'problem', 'edge', 'hard part']) expect(block(prompts[0]!, 'sketches')).toContain(`${name} ${f}`);
+    }
+    expect(block(prompts[0]!, 'sketches')).not.toContain('Delta');
+    expect(block(prompts[1]!, 'sketches')).toContain('Delta hard part');
+    expect(prompts[0]).toMatch(/expand these sketches; keep their buyer, problem, edge and whyNotTrivial; do not invent new ideas/i);
+    expect(out.ideaIds).toHaveLength(4);
+    expect(out).toMatchObject({ requested: 4, returned: 4, dropped: 0 });
+    expect(out.mix!.reask).toBe(false);
+    const stored = await t.db.select().from(ideas);
+    const bySketch = new Map(stored.map((i) => [i.sketchId, i]));
+    expect(bySketch.get(ids[0]!)).toMatchObject({ elo: 1300, title: 'XS11', lensId: 'tl1', origin: 'generated' });
+    expect(bySketch.get(ids[2]!)).toMatchObject({ elo: 1200, title: 'XS30' });
+    expect(bySketch.get(ids[3]!)).toMatchObject({ elo: 1100 });
+    expect(stored.every((i) => i.sketchId !== null)).toBe(true);
+  });
+
+  it('drops an idea that names no sketch of its call, or a sketch already expanded', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 12 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const ids = await insertSketches(t.db, t.run.id, [{ title: 'Alpha', elo: 1300 }, { title: 'Beta', elo: null }, { title: 'Gamma', elo: 1200 }]);
+    const r = versioned({ structured: { ideate: [expanded(['Sketch 2', 'S7', 'S2'])] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [], sketchIds: ids });
+    expect(out.ideaIds).toHaveLength(1);
+    expect(out.dropReasons).toMatchObject({ 'sketch:unknown': 1, 'sketch:duplicate': 1 });
+    const [row] = await t.db.select().from(ideas);
+    expect(row).toMatchObject({ sketchId: ids[1], elo: null });
+  });
+
+  it('a v1 run still uses ideate.v14 and stores no sketch', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1, engine: 'v1' });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const ids = await insertSketches(t.db, t.run.id, [{ title: 'Alpha', elo: 1300 }]);
+    const r = versioned({ structured: { ideate: [mk(1, [])] } });
+    await ideate({ ...t.deps, router: r }, t.run, { signalIds: [], sketchIds: ids });
+    expect(r.versions).toEqual(['ideate.v14']);
+    expect(structuredPrompts(r)[0]).toContain('Generate exactly 1 ideas');
+    const [row] = await t.db.select().from(ideas);
+    expect(row).toMatchObject({ sketchId: null, elo: null });
   });
 });

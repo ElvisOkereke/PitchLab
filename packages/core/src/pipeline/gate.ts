@@ -2,7 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { ideationContext, renderIdeationContext } from '../library/context';
 import type { Db } from '../db/client';
-import { gateVerdicts, ideas, knowledgeItems, markets, signals } from '../db/schema';
+import { gateVerdicts, ideas, knowledgeItems, markets, signals, sketches } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { BANNED_DOMAINS } from '../tools/banned-sources';
@@ -11,14 +11,19 @@ import {
   ScaleEstimateSchema, UNSOURCED_MAX_BAND, currentScale, scaleShares, userPaysNothing, type PriceHint, type ScaleFields,
 } from './business-models';
 import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
+import { nearestComps, type Comp } from './engine/evolve';
+import { COMPS_PER_SKETCH } from './engine/kinds';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 // The evidence helpers moved to ./evidence (shared with ideate); re-exported so existing imports keep working.
 export { COMMUNITY_PLATFORMS, countEvidence, countEvidenceForSignals } from './evidence';
 
-const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability'] as const;
-const ORDER = [...CHECKS, 'evidence', 'scale'] as const;
+/** The model's checks (gate.v7 adds `trivial`); the code verdicts follow in ORDER. */
+const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'trivial'] as const;
+const ORDER = [...CHECKS, 'evidence', 'scale', 'comps'] as const;
+/** Verdicts that are only shown, never a failed check: they never kill and are never an owner idea's flag. */
+const NEVER_KILLS: ReadonlySet<string> = new Set(['comps']);
 
 const judgeSchema = z
   .object({
@@ -114,6 +119,33 @@ export function scaleVerdict(
   return { pass, reasoning: `${pass ? `${sum}, at least the ${usd(line)} line.` : `Too small: ${sum}, under the ${usd(line)} line.`}${tail}` };
 }
 
+/** The comps code rule's version, stored on the comps verdict. */
+export const COMPS_RULE_VERSION = 'comps-rule.v1';
+const COMP_NAME_MAX = 120;
+const WHY_NOT_TRIVIAL_MAX = 600;
+const COMP_PAYS_MAX = 200;
+
+/**
+ * The gate's comps verdict (no model, engine v2 spec §9): the idea's nearest library startups (nearestComps: dossier
+ * entries first, then by cosine), up to COMPS_PER_SKETCH, each with its outcome and who pays. Advisory: it never kills.
+ * It fails (a flag shown on the case and the Board) with "no comps found" when there are none (or the idea has no
+ * embedding), and "only dead comps" when every comp is dead.
+ */
+export function compsVerdict(comps: readonly Comp[]): { pass: boolean; reasoning: string } {
+  if (comps.length === 0) return { pass: false, reasoning: 'no comps found: no library startup is near this idea' };
+  const lines = comps.slice(0, COMPS_PER_SKETCH).map((c) => {
+    const outcome = typeof c.facts.outcome === 'string' && c.facts.outcome.trim() ? capField(c.facts.outcome, 20) : 'unknown';
+    const pays = typeof c.facts.whoPays === 'string' && c.facts.whoPays.trim() ? capField(c.facts.whoPays, COMP_PAYS_MAX) : 'unknown';
+    return `- ${capField(c.name, COMP_NAME_MAX)} (${outcome}${c.dossier ? ', dossier' : ''}): who pays: ${pays}`;
+  });
+  const n = lines.length;
+  const allDead = comps.slice(0, n).every((c) => c.facts.outcome === 'dead');
+  const head = allDead
+    ? `only dead comps: all ${n} nearest library startups died`
+    : `${n} comp${n === 1 ? '' : 's'} (nearest library startups, dossier entries first):`;
+  return { pass: !allDead, reasoning: [head, ...lines].join('\n') };
+}
+
 /**
  * The given library entries that can be demand sources (trend, market, rule_change, pricing): one bounded query by id.
  * Ideas store only the library ids their ideate call was shown (ideate drops the rest), so a stored id stands for a
@@ -154,6 +186,11 @@ export async function gate(
   const gatePrompt = loadPrompt('gate');
   const gateModel = router.modelFor('gate');
   const minRevenueCeiling = await getMinRevenueCeiling(db);
+  // Engine v2 ideas: the sketch's whyNotTrivial, shown to the judge as the idea's own claim for the trivial check.
+  const sketchIdList = [...new Set(ordered.flatMap((i) => (i.sketchId ? [i.sketchId] : [])))];
+  const whyNotTrivial = new Map(sketchIdList.length
+    ? (await db.select({ id: sketches.id, why: sketches.whyNotTrivial }).from(sketches).where(inArray(sketches.id, sketchIdList))).map((r) => [r.id, r.why] as const)
+    : []);
 
   const passed: string[] = [];
   const advisory: { ideaId: string; failedChecks: string[] }[] = [];
@@ -189,11 +226,16 @@ export async function gate(
     const alreadySold = idea.embedding
       ? renderIdeationContext(await ideationContext(db, idea.embedding, { countries, alreadySoldMax: 15, lessonsMax: 0, pricingMax: 0, changingMax: 0, marketsMax: 0 })).alreadySold
       : 'none found';
+    const why = idea.sketchId ? whyNotTrivial.get(idea.sketchId) : undefined;
+    const judgedIdea = why?.trim()
+      ? wrapUntrusted('idea', `${ideaBlock(idea)}
+Why not trivial (the idea's own unverified claim): ${capField(why, WHY_NOT_TRIVIAL_MAX)}`)
+      : wrappedIdea;
     const judged = await router.structured(
       'gate',
       {
         prompt: gatePrompt.render({
-          idea: wrappedIdea,
+          idea: judgedIdea,
           signals: wrapUntrusted('signals', sigRows.map((s) => `- url: ${capField(s.url, 2000)}\n  quote: ${capField(s.quote, 1000)}`).join('\n')),
           competitors: wrapUntrusted('competitors', research.text),
           competitorUrls: wrapUntrusted('competitor-urls', sourceUrls.join('\n')),
@@ -226,7 +268,15 @@ export async function gate(
       ideaId: idea.id, check: 'scale', pass: scale.pass, reasoning: scale.reasoning,
       sources: [], model: 'rule', promptVersion: SCALE_RULE_VERSION,
     });
-    const failed = ORDER.filter((c) => !results.get(c));
+    // The comps code rule (no model, advisory): the nearest library startups, dossier entries first; never kills.
+    const comps = compsVerdict(idea.embedding ? await nearestComps(db, idea.embedding, COMPS_PER_SKETCH) : []);
+    results.set('comps', comps.pass);
+    values.push({
+      ideaId: idea.id, check: 'comps', pass: comps.pass, reasoning: comps.reasoning,
+      sources: [], model: 'rule', promptVersion: COMPS_RULE_VERSION,
+    });
+    // A failed check kills a generated idea; owner ideas are advisory for every check (scale and trivial included).
+    const failed = ORDER.filter((c) => !NEVER_KILLS.has(c) && !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';
     // One transaction per idea: replace verdicts and set status together (idempotent on re-run, R20).
     await db.transaction(async (tx) => {

@@ -216,6 +216,21 @@ describe('computePassAudit', () => {
       expect(gateCheckLabel('generic')).toBe('generic');
     });
 
+    it('a flagged comps verdict (advisory, gate.v7) is never counted as a kill reason', async () => {
+      const db = await testDb();
+      const { passId, runIds } = await newPass(db);
+      for (let i = 0; i < 10; i++) {
+        const idea = await insertIdea(db, runIds[0]!, { status: 'gated_out' });
+        await db.insert(gateVerdicts).values([
+          { ideaId: idea.id, check: 'comps', pass: false, reasoning: 'no comps found', model: 'rule', promptVersion: 'comps-rule.v1' },
+          { ideaId: idea.id, check: i < 4 ? 'trivial' : 'generic', pass: false, reasoning: 'r', model: 'm', promptVersion: 'p' },
+        ]);
+      }
+      const audit = await computePassAudit(db, passId);
+      expect(audit.gateKills).toEqual({ trivial: 4, generic: 6 });
+      expect(audit.flags).toEqual(['The generic check failed 60% of the ideas the gate rejected (limit 50%)']);
+    });
+
     it('niche share fires above 30% but not at 30%', async () => {
       const db = await testDb();
       const build = async (niche: number) => {
