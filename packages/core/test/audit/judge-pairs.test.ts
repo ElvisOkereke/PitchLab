@@ -129,3 +129,31 @@ describe('fewShotPairs', () => {
     expect(got[0]!.kept).toMatchObject({ title: expect.any(String), buyer: 'b', problem: 'p' });
   });
 });
+
+describe('fewShotPairs: exclusion and privacy', () => {
+  it('drops pairs that share an idea with excludeIdeaIds', async () => {
+    const { db } = await fixture();
+    await syncJudgePairs(db);
+    const rows = await db.select().from(judgePairs).where(eq(judgePairs.split, 'train'));
+    const banned = rows[0]!.keptIdeaId;
+    const got = await fewShotPairs(db, 20, undefined, { excludeIdeaIds: new Set([banned]) });
+    const [bannedIdea] = await db.select({ t: ideas.title }).from(ideas).where(eq(ideas.id, banned));
+    expect(got.length).toBe(rows.filter((r) => r.keptIdeaId !== banned && r.killedIdeaId !== banned).length);
+    expect(got.some((g) => g.kept.title === bannedIdea!.t || g.killed.title === bannedIdea!.t)).toBe(false);
+    expect((await fewShotPairs(db, 20)).length).toBe(rows.length);
+  });
+
+  it('scrubs emails and handles from a model reason before storing it', async () => {
+    const { db } = await fixture();
+    await syncJudgePairs(db);
+    const router = fakeRouter({ text: { review: Array.from({ length: 20 }, () => 'because jo@example.com and @jodoe liked it') } });
+    const got = await fewShotPairs(db, 3, router);
+    expect(got.length).toBeGreaterThan(0);
+    const stored = (await db.select().from(judgePairs)).map((r) => r.reason).filter(Boolean) as string[];
+    expect(stored.length).toBe(got.length);
+    for (const r of [...stored, ...got.map((g) => g.reason)]) {
+      expect(r).not.toContain('jo@example.com');
+      expect(r).not.toContain('@jodoe');
+    }
+  });
+});

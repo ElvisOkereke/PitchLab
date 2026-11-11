@@ -1,13 +1,14 @@
 import { and, eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../../../src/db/client';
-import { knowledgeItems, lenses, llmCalls, runs, signals, sketches, tournamentMatches } from '../../../src/db/schema';
+import { judgePairs, knowledgeItems, lenses, llmCalls, runs, signals, sketches, tournamentMatches } from '../../../src/db/schema';
 import { JUDGE_CALLS_MAX, SWISS_ROUNDS } from '../../../src/pipeline/engine/kinds';
 import { runTournament, tournament } from '../../../src/pipeline/engine/tournament';
 import { defaultRunConfig } from '../../../src/pipeline/types';
 import type { ModelRouter } from '../../../src/llm/types';
 import { fetchPage } from '../../../src/tools/fetch-page';
-import { testDb } from '../../helpers/db';
+import { syncJudgePairs } from '../../../src/audit/judge-pairs';
+import { insertCase, insertIdea, testDb } from '../../helpers/db';
 import { fakeRouter } from '../../helpers/fake-router';
 
 const RUN_ID = '00000000-0000-4000-8000-0000000000aa';
@@ -229,5 +230,24 @@ describe('tournament stage', () => {
     const out = await tournament(t.deps(router), t.run, { sketchIds: [], signalIds: ['s'] });
     expect(out).toMatchObject({ sketchIds: [], signalIds: ['s'], matches: 0, spentUsd: 0 });
     expect(router.calls).toHaveLength(0);
+  });
+});
+
+describe('tournament few-shot reasons', () => {
+  it('writes and stores a missing pair reason once, under the run', async () => {
+    const t = await setup(2);
+    const kept = await insertIdea(t.db, RUN_ID, { title: 'KeptIdea' });
+    await insertCase(t.db, kept.id, { stage: 'live', slug: 'kept-idea' });
+    const killed = await insertIdea(t.db, RUN_ID, { title: 'KilledIdea' });
+    await insertCase(t.db, killed.id, { stage: 'killed', slug: 'killed-idea' });
+    await syncJudgePairs(t.db);
+    await t.db.update(judgePairs).set({ split: 'train' });
+    const judge = stubJudge();
+    let reasonCalls = 0;
+    const router = { ...judge.router, structured: judge.router.structured.bind(judge.router), modelFor: () => 'm', text: async () => { reasonCalls++; return 'because it earns more'; } } as unknown as ModelRouter;
+    await runTournament(t.deps(router), t.run, { phase: 'main', sketchIds: t.ids, rounds: 1, maxCalls: 10 });
+    expect(reasonCalls).toBe(1);
+    expect((await t.db.select().from(judgePairs))[0]!.reason).toBe('because it earns more');
+    expect(judge.prompts[0]).toContain('because it earns more');
   });
 });

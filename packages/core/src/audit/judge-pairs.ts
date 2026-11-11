@@ -6,6 +6,7 @@ import { cases, ideas, judgePairs } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import type { ModelRouter } from '../llm/types';
 import { capField, wrapUntrusted } from '../llm/untrusted';
+import { scrubPersonal } from '../research/privacy';
 import { FEWSHOT_PAIRS_MAX, TRAIN_SHARE } from '../pipeline/engine/kinds';
 import type { FewShot, SketchView } from '../pipeline/engine/schema';
 
@@ -107,11 +108,20 @@ const fallbackReason = (hints: string[]): string => (hints.length ? capField(hin
  * Few-shot examples for the tournament judge: Board pairs from the training split only, at most `n`. Pairs are taken in
  * hash order, preferring pairs that bring ideas not shown yet. A missing reason is written once through `judge-reason.v1`
  * (from the owner's tags and notes) and stored; without a router, or when that call fails, the pair gets a plain
- * reason made from the owner's tags and notes (not stored, so a later call with a router still fills it).
+ * reason made from the owner's tags and notes (not stored, so a later call with a router still fills it). A model reason
+ * is privacy-scrubbed before it is stored. `excludeIdeaIds` drops pairs that share an idea with it (calibration passes the
+ * ideas of its test pairs, so the judge cannot win by recognising an idea it was shown as an example).
  */
-export async function fewShotPairs(db: Db, n: number = FEWSHOT_PAIRS_MAX, router?: ModelRouter): Promise<FewShot[]> {
+export async function fewShotPairs(
+  db: Db,
+  n: number = FEWSHOT_PAIRS_MAX,
+  router?: ModelRouter,
+  opts: { runId?: string | null; excludeIdeaIds?: ReadonlySet<string> } = {},
+): Promise<FewShot[]> {
   if (n <= 0) return [];
-  const pool = await db.select().from(judgePairs).where(eq(judgePairs.split, 'train')).orderBy(asc(judgePairs.pairHash)).limit(POOL_MAX);
+  const exclude = opts.excludeIdeaIds;
+  const pool = (await db.select().from(judgePairs).where(eq(judgePairs.split, 'train')).orderBy(asc(judgePairs.pairHash)).limit(POOL_MAX))
+    .filter((p) => !exclude || !(exclude.has(p.keptIdeaId) || exclude.has(p.killedIdeaId)));
   const used = new Set<string>();
   const chosen: typeof pool = [];
   for (const p of pool) {
@@ -151,8 +161,8 @@ export async function fewShotPairs(db: Db, n: number = FEWSHOT_PAIRS_MAX, router
               hints: wrapUntrusted('owner-hints', hints.length ? hints.join('\n') : '(no tags or notes)'),
             }),
             maxTokens: REASON_MAX_TOKENS,
-          }, { runId: null, promptVersion: prompt.version });
-          reason = capField(text, REASON_MAX);
+          }, { runId: opts.runId ?? null, promptVersion: prompt.version });
+          reason = capField(scrubPersonal(text), REASON_MAX);
           if (reason) await db.update(judgePairs).set({ reason }).where(and(eq(judgePairs.id, p.id), isNull(judgePairs.reason)));
         } catch {
           reason = '';

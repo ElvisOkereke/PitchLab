@@ -7,7 +7,7 @@ import {
   type AuditJudgeOpts, type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { estimateScale } from './audit/scale-estimate';
-import { calibrateJudge, writeJudgeReport } from './audit/judge-calibration';
+import { runJudgeAudit } from './audit/judge-calibration';
 import { agreementPct, renderBacktestMarkdown, runBacktest } from './audit/backtest';
 import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
@@ -914,12 +914,7 @@ async function auditJudgeCommand(opts: AuditJudgeOpts): Promise<number> {
   const env = loadEnv();
   const db = await openDb(env.DATABASE_URL);
   try {
-    const report = await calibrateJudge({ db, router: buildRouter(env, db), log: out, limit: opts.limit });
-    const date = new Date().toISOString().slice(0, 10);
-    const path = writeJudgeReport(report, AUDIT_DIR, date);
-    if (report.tooFew) out(`Too few pairs: ${report.pairs} held-out pair(s) is under 10, so the numbers are noise.`);
-    out(`Judged ${report.pairs} pair(s): accuracy ${report.accuracy.toFixed(2)} (goal 0.70), position consistency ${report.consistency.toFixed(2)} (goal 0.80), cost $${report.spentUsd.toFixed(4)}.`);
-    out(`Written to ${path}`);
+    await runJudgeAudit({ db, router: buildRouter(env, db), log: out, limit: opts.limit, dir: AUDIT_DIR, date: new Date().toISOString().slice(0, 10), out });
     return 0;
   } finally {
     await closeDb(db);

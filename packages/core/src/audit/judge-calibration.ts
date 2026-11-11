@@ -61,8 +61,9 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
   await syncJudgePairs(db);
   const limit = Math.max(1, Math.min(deps.limit ?? JUDGE_PAIRS_MAX, JUDGE_PAIRS_MAX));
   const pairs = await db.select().from(judgePairs).where(eq(judgePairs.split, 'test')).orderBy(asc(judgePairs.pairHash)).limit(limit);
-  const fewShot = pairs.length ? await fewShotPairs(db, undefined, router) : [];
   const ideaIds = [...new Set(pairs.flatMap((p) => [p.keptIdeaId, p.killedIdeaId]))];
+  // No example may share an idea with a pair being judged (idea-level leakage would inflate accuracy).
+  const fewShot = pairs.length ? await fewShotPairs(db, undefined, router, { excludeIdeaIds: new Set(ideaIds) }) : [];
   const rows = ideaIds.length ? await db.select().from(ideas).where(inArray(ideas.id, ideaIds)) : [];
   const views = new Map(rows.map((r) => [r.id, ideaView(r)]));
   const ctx = { runId: null, promptVersion: loadPrompt('judge').version };
@@ -144,4 +145,16 @@ export function writeJudgeReport(r: JudgeReport, dir: string, date: string): str
   const path = join(dir, `judge-${date}.md`);
   writeFileSync(path, renderJudgeReport(r, date), 'utf8');
   return path;
+}
+
+/** The `gen audit judge` work: calibrate, write the report under `dir`, print a summary and the path. */
+export async function runJudgeAudit(
+  deps: CalibrateDeps & { dir: string; date: string; out: (s: string) => void },
+): Promise<{ report: JudgeReport; path: string }> {
+  const report = await calibrateJudge(deps);
+  const path = writeJudgeReport(report, deps.dir, deps.date);
+  if (report.tooFew) deps.out(`Too few pairs: ${report.pairs} held-out pair(s) is under ${JUDGE_MIN_PAIRS}, so the numbers are noise.`);
+  deps.out(`Judged ${report.pairs} pair(s): accuracy ${f2(report.accuracy)} (goal ${f2(JUDGE_ACCURACY_GOAL)}), position consistency ${f2(report.consistency)} (goal ${f2(JUDGE_CONSISTENCY_GOAL)}), cost $${report.spentUsd.toFixed(4)}.`);
+  deps.out(`Written to ${path}`);
+  return { report, path };
 }

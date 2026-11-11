@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { calibrateJudge, renderJudgeReport, writeJudgeReport, type JudgeReport } from '../../src/audit/judge-calibration';
+import { calibrateJudge, renderJudgeReport, runJudgeAudit, writeJudgeReport, type JudgeReport } from '../../src/audit/judge-calibration';
 import { syncJudgePairs } from '../../src/audit/judge-pairs';
 import type { Db } from '../../src/db/client';
 import { ideaReviews, judgePairs } from '../../src/db/schema';
@@ -142,5 +142,35 @@ describe('writeJudgeReport', () => {
     const path = writeJudgeReport(r, dir, '2026-11-10');
     expect(path).toBe(join(dir, 'judge-2026-11-10.md'));
     expect(readFileSync(path, 'utf8')).toBe(renderJudgeReport(r, '2026-11-10'));
+  });
+});
+
+describe('calibration leakage and the CLI work', () => {
+  it('never uses a train pair sharing an idea with a judged test pair as an example', async () => {
+    const { db, k, x } = await board(3, 3);
+    const rows = await db.select().from(judgePairs);
+    // One test pair K0-X0; every other pair is train (K0 and X0 each appear in train pairs too).
+    await db.update(judgePairs).set({ split: 'train' });
+    const target = rows.find((r) => r.keptIdeaId === k[0]!.id && r.killedIdeaId === x[0]!.id)!;
+    await db.update(judgePairs).set({ split: 'test' }).where(eq(judgePairs.id, target.id));
+    const prompts: string[] = [];
+    const base = scripted(() => ({ winner: 'A' }));
+    const router = { ...base, structured: (s: string, req: { prompt: string; schema: { parse(x: unknown): unknown } }) => { prompts.push(req.prompt); return (base as never as { structured: (a: string, b: unknown) => Promise<unknown> }).structured(s, req); } } as unknown as ModelRouter;
+    await calibrateJudge({ db, router, log: () => {} });
+    const examples = prompts[0]!.slice(prompts[0]!.indexOf('<examples>'), prompts[0]!.indexOf('</examples>'));
+    for (const t of ['K0', 'X0']) expect(examples).not.toMatch(new RegExp(`"${t}"`));
+    expect(examples).toContain('K1'); // a pair with no judged idea is still an example
+  });
+
+  it('runJudgeAudit writes the file under the directory and prints its path', async () => {
+    const { db } = await board(4, 4);
+    await allTest(db);
+    const dir = join(mkdtempSync(join(tmpdir(), 'judge-cli-')), 'output', 'audit');
+    const lines: string[] = [];
+    const { path } = await runJudgeAudit({ db, router: scripted((a) => ({ winner: a.startsWith('K') ? 'A' : 'B' })), dir, date: '2026-11-10', out: (s) => lines.push(s), log: () => {} });
+    expect(path).toBe(join(dir, 'judge-2026-11-10.md'));
+    expect(readFileSync(path, 'utf8')).toContain('Judge calibration, 2026-11-10');
+    expect(lines.some((l) => l === `Written to ${path}`)).toBe(true);
+    expect(lines.some((l) => l.startsWith('Judged 16 pair(s)'))).toBe(true);
   });
 });

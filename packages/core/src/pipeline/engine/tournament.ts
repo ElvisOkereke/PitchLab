@@ -106,7 +106,7 @@ export async function runTournament(
     }]));
     let fewShot: FewShot[] = [];
     try {
-      fewShot = await fewShotPairs(db);
+      fewShot = await fewShotPairs(db, undefined, router, { runId: run.id });
     } catch (err) {
       log(`tournament: few-shot pairs unavailable (${errorMessage(err)}), judging without them`);
     }
