@@ -39,6 +39,8 @@ function pilotSiteArg(v: string): string {
 export type RunOpts = {
   seed: RunConfig['seedType'];
   sectors?: string; lenses?: string; file?: string; ideas?: string; advance?: string;
+  /** Generation engine (default v2; an owner idea always runs v1). */
+  engine?: 'v1' | 'v2';
   /** Finds seed: the find ids given after --finds (none: the 10 most recent captured finds). */
   findIds?: string[];
 };
@@ -120,6 +122,11 @@ function budgetArg(v: string): number {
 
 /** --max-usd for the library backfills: a dollar amount from 0.5 to 25 (the global backfill cap is 25). */
 export const BACKFILL_MAX_USD = 25;
+/**
+ * `gen library assess` default cap. With the dossier backfill run as `gen dossiers run --max-usd 15`, the two together
+ * stay under the $25 backfill total.
+ */
+export const ASSESS_DEFAULT_USD = 5;
 function maxUsdArg(v: string): number {
   const n = Number(v);
   if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > BACKFILL_MAX_USD) throw new CliError(`--max-usd is a dollar amount from 0.5 to ${BACKFILL_MAX_USD}, got: ${v}`, 2);
@@ -190,6 +197,7 @@ export function buildProgram(h: CliHandlers): Command {
     .option('--finds [ids...]', 'start from your finds: the ids given, or the 10 most recent captured finds')
     .option('--ideas <n>', 'number of ideas to generate')
     .option('--advance <n>', 'number of ideas to advance to the gate')
+    .addOption(new Option('--engine <version>', 'generation engine: v2 (sketch, tournament, evolve; the default) or v1').choices(['v1', 'v2']))
     .action(async (raw: Omit<RunOpts, 'seed' | 'findIds'> & { seed?: RunConfig['seedType']; finds?: true | string[] }) => {
       const { finds, seed, ...rest } = raw;
       if (finds !== undefined) {
@@ -226,9 +234,9 @@ export function buildProgram(h: CliHandlers): Command {
     });
 
   program.command('dossiers')
-    .description('Company dossiers for startup entries: "gen dossiers run" builds the next ones now, within the daily cap (dossiers.dailyUsd) and --max-usd / --limit (costs model calls)')
+    .description('Company dossiers for startup entries: "gen dossiers run" builds the next ones now, within the daily cap (dossiers.dailyUsd) and --limit; an explicit --max-usd replaces the daily cap for this run (a backfill; costs model calls)')
     .argument('<action>', '"run"')
-    .option('--max-usd <usd>', `most to spend this run, 0.5 to ${BACKFILL_MAX_USD}`, maxUsdArg)
+    .option('--max-usd <usd>', `most to spend this run, 0.5 to ${BACKFILL_MAX_USD}; replaces the daily cap for this run (backfill: 15)`, maxUsdArg)
     .option('--limit <n>', 'most startups this run, 1 to 500 (default 25)', limitArg)
     .action(async (action: string, opts: { maxUsd?: number; limit?: number }) => {
       if (action !== 'run') throw new CliError('Usage: gen dossiers run [--max-usd N] [--limit N]', 2);
@@ -238,10 +246,10 @@ export function buildProgram(h: CliHandlers): Command {
   program.command('library')
     .description('Library upkeep: "gen library assess" rates how strong each entry evidence is (cheap model calls, stops at --max-usd)')
     .argument('<action>', '"assess"')
-    .option('--max-usd <usd>', `most to spend, 0.5 to ${BACKFILL_MAX_USD} (default ${BACKFILL_MAX_USD})`, maxUsdArg)
+    .option('--max-usd <usd>', `most to spend, 0.5 to ${BACKFILL_MAX_USD} (default ${ASSESS_DEFAULT_USD})`, maxUsdArg)
     .action(async (action: string, opts: { maxUsd?: number }) => {
       if (action !== 'assess') throw new CliError('Usage: gen library assess [--max-usd N]', 2);
-      process.exitCode = await h.libraryAssess({ maxUsd: opts.maxUsd ?? BACKFILL_MAX_USD });
+      process.exitCode = await h.libraryAssess({ maxUsd: opts.maxUsd ?? ASSESS_DEFAULT_USD });
     });
 
   program.command('finds')

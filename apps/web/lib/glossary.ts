@@ -217,7 +217,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   elo: {
     label: 'Elo',
-    text: 'A rating that rises when a sketch wins a head-to-head match and falls when it loses, starting at 1200. The run page lists the top 12 sketches by Elo. It is a ranking inside one run, not a score out of 5.',
+    text: 'A rating that rises when a sketch wins a head-to-head match and falls when it loses, starting at 1200. The run page lists the sketches that went on, best first, with their Elo. It is a ranking inside one run, not a score out of 5.',
   },
   diversityCell: {
     label: 'Diversity cell',

@@ -28,7 +28,7 @@ export type DossierResult = {
   quotes: string[];
   /** The same quotes with the page each came from. */
   sources?: { url: string; quote: string }[];
-  /** The entry summary with person names removed (always set when the status is done). */
+  /** The entry summary with reported and cued person names removed (always set when the status is done; product names stay). */
   summary?: string;
 };
 
@@ -112,6 +112,7 @@ export function redactNames(s: string, own: ReadonlySet<string>, cueOnly = false
 }
 
 const slugOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const bareHost = (h: string) => h.toLowerCase().replace(/^www\./, '');
 const hostOf = (url: string): string => {
   try {
     return new URL(url).hostname;
@@ -124,9 +125,10 @@ type Page = { url: string; kind: string; text: string };
 
 /**
  * Builds a dossier for one startup entry from its homepage (the entry's own source or a search), pricing page, one
- * funding/acquisition/shutdown search, and (for a dead company) a post-mortem search. A company that no fetched page
- * names is `unmatched` (a bot wall, parked domain or same-named company); then nothing is extracted. Every field is kept
- * only when its quote is verbatim in a fetched page, and person names are removed. Never throws.
+ * funding/acquisition/shutdown search, and (for a dead company) a post-mortem search. A company that no fetched page on
+ * its homepage's domain or the entry's own source domains names is `unmatched` (a bot wall, parked domain or same-named
+ * company); then nothing is extracted. Every field is kept only when its quote is verbatim in a fetched page, and person
+ * names are removed; with no field kept the dossier is `failed`. Never throws.
  */
 export async function buildDossier(item: DossierItem, deps: DossierDeps): Promise<DossierResult> {
   const parsed = FactsSchemas.startup.safeParse(item.facts);
@@ -201,7 +203,10 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
 
   if (pages.length === 0) return { status: 'failed', quotes: [] };
   const lower = name.toLowerCase();
-  if (!pages.some((p) => p.text.toLowerCase().includes(lower))) return { status: 'unmatched', quotes: [] };
+  // A page naming the company must sit on its homepage's domain or one of the entry's own source domains: a search
+  // result naming a same-named company elsewhere is not enough.
+  const ownHosts = new Set([...(home ? [hostOf(home.url)] : []), ...item.sourceUrls.map(hostOf)].filter(Boolean).map(bareHost));
+  if (!pages.some((p) => ownHosts.has(bareHost(hostOf(p.url))) && p.text.toLowerCase().includes(lower))) return { status: 'unmatched', quotes: [] };
 
   let draft: Draft;
   try {
@@ -277,11 +282,15 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
     const traction = { customers: num(t.customers), reviewCount: num(t.reviewCount), hiring: t.hiring ?? undefined, rank: num(t.rank) };
     if (Object.values(traction).some((v) => v !== undefined)) facts.traction = JSON.parse(JSON.stringify(traction)) as StartupFacts['traction'];
   }
+  // Nothing verified: no dossier (a `done` with empty facts would be preferred as a comp and inflate comps coverage).
+  if (Object.keys(facts).length === 0) return { status: 'failed', quotes: [] };
   return {
     status: 'done',
     facts,
     quotes: quotes.map((q) => q.quote),
     sources: quotes,
-    summary: redactNames(stripPeople(item.summary, people), ownWords),
+    // The existing summary loses only reported and cued names: the capitalised-run layer would turn product names
+    // ("Google Maps", "Shopify Plus") into [person] and degrade library text.
+    summary: redactNames(stripPeople(item.summary, people), ownWords, true),
   };
 }

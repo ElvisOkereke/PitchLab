@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, asc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
 import { KEPT_STAGES } from '../bench/scorecard';
 import type { Db } from '../db/client';
 import { cases, ideas, judgePairs } from '../db/schema';
@@ -34,35 +34,43 @@ export function splitOfHash(hash: string): 'train' | 'test' {
   return parseInt(hash.slice(0, 2), 16) / 255 < TRAIN_SHARE ? 'train' : 'test';
 }
 
-/** Idea ids on the kept side (kept case or liked) and the killed side (killed case or disliked); ideas on both sides are left out. */
+/**
+ * Idea ids on the kept side (kept case or liked) and the killed side (killed case or disliked); ideas on both sides are
+ * left out. Each query takes the newest MAX_IDEAS_PER_SIDE (so new decisions always get in), in a fixed order.
+ */
 async function sides(db: Db): Promise<{ kept: string[]; killed: string[] }> {
   const notExample = eq(cases.isExample, false);
   const keptCases = await db.select({ id: cases.ideaId }).from(cases)
-    .where(and(inArray(cases.stage, [...KEPT_STAGES]), notExample)).limit(MAX_IDEAS_PER_SIDE);
+    .where(and(inArray(cases.stage, [...KEPT_STAGES]), notExample)).orderBy(desc(cases.createdAt), desc(cases.id)).limit(MAX_IDEAS_PER_SIDE);
   const killedCases = await db.select({ id: cases.ideaId }).from(cases)
-    .where(and(eq(cases.stage, 'killed'), notExample)).limit(MAX_IDEAS_PER_SIDE);
-  const liked = await db.select({ id: ideas.id }).from(ideas).where(gt(ideas.ownerRating, 0)).limit(MAX_IDEAS_PER_SIDE);
-  const disliked = await db.select({ id: ideas.id }).from(ideas).where(lt(ideas.ownerRating, 0)).limit(MAX_IDEAS_PER_SIDE);
+    .where(and(eq(cases.stage, 'killed'), notExample)).orderBy(desc(cases.createdAt), desc(cases.id)).limit(MAX_IDEAS_PER_SIDE);
+  const liked = await db.select({ id: ideas.id }).from(ideas).where(gt(ideas.ownerRating, 0)).orderBy(desc(ideas.createdAt), desc(ideas.id)).limit(MAX_IDEAS_PER_SIDE);
+  const disliked = await db.select({ id: ideas.id }).from(ideas).where(lt(ideas.ownerRating, 0)).orderBy(desc(ideas.createdAt), desc(ideas.id)).limit(MAX_IDEAS_PER_SIDE);
   const kept = new Set([...keptCases, ...liked].map((r) => r.id));
   const killed = new Set([...killedCases, ...disliked].map((r) => r.id));
   return { kept: [...kept].filter((id) => !killed.has(id)).sort(), killed: [...killed].filter((id) => !kept.has(id)).sort() };
 }
 
-/** Adds the pairs not stored yet; existing rows are never touched. */
+/**
+ * Adds the pairs not stored yet; existing rows are never touched. Cheap and insert-only, so daily maintenance and every
+ * tournament call it. Memory stays bounded: one kept idea's pairs at a time (at most MAX_IDEAS_PER_SIDE rows; the unique
+ * pair hash skips stored ones).
+ */
 export async function syncJudgePairs(db: Db): Promise<{ added: number }> {
   const { kept, killed } = await sides(db);
-  const rows: (typeof judgePairs.$inferInsert)[] = [];
+  if (kept.length === 0 || killed.length === 0) return { added: 0 };
+  let added = 0;
   for (const k of kept) {
+    const rows: (typeof judgePairs.$inferInsert)[] = [];
     for (const x of killed) {
       const pairHash = pairHashOf(k, x);
       rows.push({ keptIdeaId: k, killedIdeaId: x, pairHash, split: splitOfHash(pairHash) });
     }
-  }
-  let added = 0;
-  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    const got = await db.insert(judgePairs).values(rows.slice(i, i + INSERT_CHUNK))
-      .onConflictDoNothing({ target: judgePairs.pairHash }).returning({ id: judgePairs.id });
-    added += got.length;
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      const got = await db.insert(judgePairs).values(rows.slice(i, i + INSERT_CHUNK))
+        .onConflictDoNothing({ target: judgePairs.pairHash }).returning({ id: judgePairs.id });
+      added += got.length;
+    }
   }
   return { added };
 }
@@ -109,8 +117,8 @@ const fallbackReason = (hints: string[]): string => (hints.length ? capField(hin
  * hash order, preferring pairs that bring ideas not shown yet. A missing reason is written once through `judge-reason.v1`
  * (from the owner's tags and notes) and stored; without a router, or when that call fails, the pair gets a plain
  * reason made from the owner's tags and notes (not stored, so a later call with a router still fills it). A model reason
- * is privacy-scrubbed before it is stored. `excludeIdeaIds` drops pairs that share an idea with it (calibration passes the
- * ideas of its test pairs, so the judge cannot win by recognising an idea it was shown as an example).
+ * is privacy-scrubbed before it is stored. `excludeIdeaIds` drops pairs that share an idea with it. (Calibration picks the
+ * examples exactly as the tournament does and instead judges only test pairs sharing no idea with them.)
  */
 export async function fewShotPairs(
   db: Db,
@@ -118,7 +126,18 @@ export async function fewShotPairs(
   router?: ModelRouter,
   opts: { runId?: string | null; excludeIdeaIds?: ReadonlySet<string> } = {},
 ): Promise<FewShot[]> {
-  if (n <= 0) return [];
+  return (await fewShotPairsWithIds(db, n, router, opts)).shots;
+}
+
+/** fewShotPairs plus the ids of the ideas the examples show (calibration keeps its judged pairs clear of them). */
+export async function fewShotPairsWithIds(
+  db: Db,
+  n: number = FEWSHOT_PAIRS_MAX,
+  router?: ModelRouter,
+  opts: { runId?: string | null; excludeIdeaIds?: ReadonlySet<string> } = {},
+): Promise<{ shots: FewShot[]; ideaIds: Set<string> }> {
+  const ideaIds = new Set<string>();
+  if (n <= 0) return { shots: [], ideaIds };
   const exclude = opts.excludeIdeaIds;
   const pool = (await db.select().from(judgePairs).where(eq(judgePairs.split, 'train')).orderBy(asc(judgePairs.pairHash)).limit(POOL_MAX))
     .filter((p) => !exclude || !(exclude.has(p.keptIdeaId) || exclude.has(p.killedIdeaId)));
@@ -135,7 +154,7 @@ export async function fewShotPairs(
     if (chosen.length >= n) break;
     if (!chosen.includes(p)) chosen.push(p);
   }
-  if (chosen.length === 0) return [];
+  if (chosen.length === 0) return { shots: [], ideaIds };
 
   const ids = [...new Set(chosen.flatMap((p) => [p.keptIdeaId, p.killedIdeaId]))];
   const byId = new Map((await db.select().from(ideas).where(inArray(ideas.id, ids))).map((i) => [i.id, i]));
@@ -171,6 +190,8 @@ export async function fewShotPairs(
       if (!reason) reason = fallbackReason(hints);
     }
     out.push({ kept: keptView, killed: killedView, reason });
+    ideaIds.add(kept.id);
+    ideaIds.add(killed.id);
   }
-  return out;
+  return { shots: out, ideaIds };
 }

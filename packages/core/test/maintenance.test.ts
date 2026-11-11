@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import type { Db } from '../src/db/client';
-import { cases, claims, knowledgeItems, knowledgeSources, pageFetches, settings, signals } from '../src/db/schema';
+import { cases, claims, judgePairs, knowledgeItems, knowledgeSources, pageFetches, settings, signals } from '../src/db/schema';
 import { upsertKnowledgeItem } from '../src/library/store';
 import { runMaintenance, runMaintenanceQuietly } from '../src/maintenance';
 import { insertCase, insertIdea, insertRun, testDb, unit } from './helpers/db';
@@ -263,6 +263,21 @@ describe('runMaintenance', () => {
     const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, id));
     // vendor -1, verified quote +1 from 3 = 3
     expect(row!.assessment).toEqual({ directness: 'vendor', bias: 'sells', strength: 3, why: 'kept why', corroboration: 0 });
+  });
+
+  it('splits new Board decisions into judge pairs (insert-only, isolated step)', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const kept = await insertIdea(db, run.id, { title: 'kept' });
+    await insertCase(db, kept.id, { stage: 'live', slug: 'm-kept' });
+    const killed = await insertIdea(db, run.id, { title: 'killed' });
+    await insertCase(db, killed.id, { stage: 'killed', slug: 'm-killed' });
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    const rows = await db.select().from(judgePairs);
+    expect(rows.map((p) => [p.keptIdeaId, p.killedIdeaId])).toEqual([[kept.id, killed.id]]);
+    await runMaintenance(db, NOW);
+    expect(await db.select().from(judgePairs)).toEqual(rows);
   });
 
   it('is idempotent', async () => {

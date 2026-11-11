@@ -423,7 +423,8 @@ function buildMetrics(d: Data): MetricResult[] {
     trivialKillRate: eng.trivial.total === 0 ? noData('No generated idea in this set has a trivial verdict (gate v7).')
       : measured(eng.trivial.killed / eng.trivial.total, `${pctText(eng.trivial.killed, eng.trivial.total, () => true)} (${eng.trivial.killed} of ${eng.trivial.total})`, null),
     compsCoverage: eng.comps.withVerdict === 0 ? noData('No case in this set has a comps verdict (gate v7).')
-      : share(eng.comps.covered, nCases, (v) => v >= COMPS_COVERAGE_TARGET),
+      // Over cases with a comps verdict (v2 cases): a v1 case in the set never had comps checked.
+      : share(eng.comps.covered, eng.comps.withVerdict, (v) => v >= COMPS_COVERAGE_TARGET),
     engineCostPerRun: meanRow(eng.runCosts, (v) => `$${v.toFixed(2)}`, (v) => v <= ENGINE_COST_TARGET, NO_ENGINE),
     repetition: d.within.length === 0 ? noData(NEED_EMBEDDINGS) : (() => {
       const v = mean(d.within);

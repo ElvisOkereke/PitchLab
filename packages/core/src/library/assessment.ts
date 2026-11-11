@@ -25,14 +25,18 @@ function registrable(host: string): string {
 const liveSourceAt = (now: Date) => or(isNull(knowledgeSources.expiresAt), gt(knowledgeSources.expiresAt, now));
 
 /**
- * Distinct registrable domains of other active entries at cosine similarity 0.9 or more, excluding the entry's own
- * domains. Reads at most CORROBORATION_NEIGHBOURS neighbour entries (the closest first).
+ * Corroborating registrable domains: the entry's own live sources on distinct registrable domains beyond the first
+ * (near-duplicates merge into one entry, so their sources live inside it), plus distinct registrable domains of other
+ * active entries at cosine similarity 0.9 or more that are not among the entry's own domains. Reads at most
+ * CORROBORATION_NEIGHBOURS neighbour entries (the closest first).
  */
 export async function countCorroboration(db: Db, itemId: string, now: Date = new Date()): Promise<number> {
-  const [self] = await db.select({ embedding: knowledgeItems.embedding }).from(knowledgeItems).where(eq(knowledgeItems.id, itemId));
-  if (!self?.embedding) return 0;
-  const own = await db.select({ domain: knowledgeSources.domain }).from(knowledgeSources).where(eq(knowledgeSources.itemId, itemId)).limit(DOMAIN_ROWS_MAX);
+  const own = await db.select({ domain: knowledgeSources.domain, live: sql<boolean>`(${liveSourceAt(now)})` }).from(knowledgeSources)
+    .where(eq(knowledgeSources.itemId, itemId)).orderBy(asc(knowledgeSources.domain)).limit(DOMAIN_ROWS_MAX);
   const ownDomains = new Set(own.map((r) => registrable(r.domain)));
+  const ownExtra = Math.max(0, new Set(own.filter((r) => r.live).map((r) => registrable(r.domain))).size - 1);
+  const [self] = await db.select({ embedding: knowledgeItems.embedding }).from(knowledgeItems).where(eq(knowledgeItems.id, itemId));
+  if (!self?.embedding) return ownExtra;
   const neighbours = await db.select({ id: knowledgeItems.id }).from(knowledgeItems)
     .where(and(
       ne(knowledgeItems.id, itemId), eq(knowledgeItems.status, 'active'), isNotNull(knowledgeItems.embedding),
@@ -40,12 +44,12 @@ export async function countCorroboration(db: Db, itemId: string, now: Date = new
     ))
     .orderBy(asc(cosineDistance(knowledgeItems.embedding, self.embedding)), asc(knowledgeItems.id))
     .limit(CORROBORATION_NEIGHBOURS);
-  if (neighbours.length === 0) return 0;
+  if (neighbours.length === 0) return ownExtra;
   const rows = await db.selectDistinct({ domain: knowledgeSources.domain }).from(knowledgeSources)
     .where(and(inArray(knowledgeSources.itemId, neighbours.map((n) => n.id)), liveSourceAt(now)))
     .orderBy(asc(knowledgeSources.domain)).limit(DOMAIN_ROWS_MAX);
   const domains = new Set(rows.map((r) => registrable(r.domain)).filter((d) => !ownDomains.has(d)));
-  return domains.size;
+  return ownExtra + domains.size;
 }
 
 /** What computeStrength needs for one entry, read from the entry, its live sources and its neighbours. */

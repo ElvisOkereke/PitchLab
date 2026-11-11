@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { calibrateJudge, renderJudgeReport, runJudgeAudit, writeJudgeReport, type JudgeReport } from '../../src/audit/judge-calibration';
-import { syncJudgePairs } from '../../src/audit/judge-pairs';
+import { fewShotPairs, syncJudgePairs } from '../../src/audit/judge-pairs';
+import { FEWSHOT_PAIRS_MAX } from '../../src/pipeline/engine/kinds';
 import type { Db } from '../../src/db/client';
 import { ideaReviews, judgePairs } from '../../src/db/schema';
 import { getSetting } from '../../src/validation/settings';
@@ -49,6 +50,19 @@ async function board(kept: number, killed: number) {
   await syncJudgePairs(db);
   return { db, k, x };
 }
+/**
+ * A board of n kept x m killed ideas where only pairs among K{ex} and X{ex} are train (few-shot examples) and every
+ * other pair is test.
+ */
+async function examplesOn(kept: number, killed: number, ex: number[]) {
+  const b = await board(kept, killed);
+  const exIds = new Set([...ex.map((i) => b.k[i]!.id), ...ex.map((i) => b.x[i]!.id)]);
+  await b.db.update(judgePairs).set({ split: 'test' });
+  for (const p of await b.db.select().from(judgePairs)) {
+    if (exIds.has(p.keptIdeaId) && exIds.has(p.killedIdeaId)) await b.db.update(judgePairs).set({ split: 'train' }).where(eq(judgePairs.id, p.id));
+  }
+  return b;
+}
 /** The judge only ever sees test pairs: force every pair to the test split. */
 async function allTest(db: Db) {
   await db.update(judgePairs).set({ split: 'test' });
@@ -82,13 +96,12 @@ describe('calibrateJudge', () => {
   });
 
   it('only judges test pairs and honours the limit', async () => {
-    const { db } = await board(4, 4); // 16
-    const rows = await db.select().from(judgePairs);
-    await db.update(judgePairs).set({ split: 'train' });
-    for (const p of rows.slice(0, 6)) await db.update(judgePairs).set({ split: 'test' }).where(eq(judgePairs.id, p.id));
+    const { db, k, x } = await examplesOn(6, 6, [4, 5]); // 4 train pairs among K4 K5 X4 X5; 16 test pairs clear of them
     const router = scripted((a) => ({ winner: a.startsWith('K') ? 'A' : 'B' }));
-    expect((await calibrateJudge({ db, router, log: () => {} })).pairs).toBe(6);
+    const rep = await calibrateJudge({ db, router, log: () => {} });
+    expect(rep).toMatchObject({ pairs: 16, examples: 4, excludedPairs: 16 });
     expect((await calibrateJudge({ db, router, limit: 2, log: () => {} })).pairs).toBe(2);
+    expect(k.length + x.length).toBe(12);
   });
 
   it('an erroring judge counts as a miss and an inconsistency; no pairs gives zeros', async () => {
@@ -118,7 +131,11 @@ describe('calibrateJudge', () => {
 describe('renderJudgeReport', () => {
   const rep = (o: Partial<JudgeReport>): JudgeReport => ({
     pairs: 20, accuracy: 0.75, consistency: 0.7, byConfidence: { 1: { n: 5, accuracy: 0.4 }, 2: { n: 10, accuracy: 0.8 }, 3: { n: 5, accuracy: 1 } },
-    reviewerAccuracy: 0.6, spentUsd: 0.5, tooFew: false, ...o,
+    reviewerAccuracy: 0.6, spentUsd: 0.5, tooFew: false, examples: 6, excludedPairs: 3, ...o,
+  });
+
+  it('says how many examples the judge saw and how many held-out pairs were left out', () => {
+    expect(renderJudgeReport(rep({}), '2026-11-10')).toMatch(/6 few-shot example\(s\).*3 held-out pair\(s\) share an idea with an example and were left out/);
   });
 
   it('shows both goal lines with pass or fail', () => {
@@ -138,7 +155,7 @@ describe('renderJudgeReport', () => {
 describe('writeJudgeReport', () => {
   it('writes output/audit/judge-<date>.md under the directory and returns the path', () => {
     const dir = join(mkdtempSync(join(tmpdir(), 'judge-')), 'audit');
-    const r: JudgeReport = { pairs: 12, accuracy: 0.8, consistency: 0.9, byConfidence: { 1: { n: 0, accuracy: 0 }, 2: { n: 12, accuracy: 0.8 }, 3: { n: 0, accuracy: 0 } }, reviewerAccuracy: null, spentUsd: 0, tooFew: false };
+    const r: JudgeReport = { pairs: 12, accuracy: 0.8, consistency: 0.9, byConfidence: { 1: { n: 0, accuracy: 0 }, 2: { n: 12, accuracy: 0.8 }, 3: { n: 0, accuracy: 0 } }, reviewerAccuracy: null, spentUsd: 0, tooFew: false, examples: 0, excludedPairs: 0 };
     const path = writeJudgeReport(r, dir, '2026-11-10');
     expect(path).toBe(join(dir, 'judge-2026-11-10.md'));
     expect(readFileSync(path, 'utf8')).toBe(renderJudgeReport(r, '2026-11-10'));
@@ -146,20 +163,26 @@ describe('writeJudgeReport', () => {
 });
 
 describe('calibration leakage and the CLI work', () => {
-  it('never uses a train pair sharing an idea with a judged test pair as an example', async () => {
-    const { db, k, x } = await board(3, 3);
-    const rows = await db.select().from(judgePairs);
-    // One test pair K0-X0; every other pair is train (K0 and X0 each appear in train pairs too).
-    await db.update(judgePairs).set({ split: 'train' });
-    const target = rows.find((r) => r.keptIdeaId === k[0]!.id && r.killedIdeaId === x[0]!.id)!;
-    await db.update(judgePairs).set({ split: 'test' }).where(eq(judgePairs.id, target.id));
+  it('shows the same few-shot examples as the tournament and judges only test pairs sharing no idea with them', async () => {
+    const { db } = await examplesOn(5, 5, [3, 4]);
     const prompts: string[] = [];
     const base = scripted(() => ({ winner: 'A' }));
     const router = { ...base, structured: (s: string, req: { prompt: string; schema: { parse(x: unknown): unknown } }) => { prompts.push(req.prompt); return (base as never as { structured: (a: string, b: unknown) => Promise<unknown> }).structured(s, req); } } as unknown as ModelRouter;
-    await calibrateJudge({ db, router, log: () => {} });
-    const examples = prompts[0]!.slice(prompts[0]!.indexOf('<examples>'), prompts[0]!.indexOf('</examples>'));
-    for (const t of ['K0', 'X0']) expect(examples).not.toMatch(new RegExp(`"${t}"`));
-    expect(examples).toContain('K1'); // a pair with no judged idea is still an example
+    const rep = await calibrateJudge({ db, router, log: () => {} });
+    // The tournament's examples: fewShotPairs with its defaults (FEWSHOT_PAIRS_MAX, train split only).
+    const tournamentShots = await fewShotPairs(db, FEWSHOT_PAIRS_MAX);
+    expect(rep.examples).toBe(tournamentShots.length);
+    expect(rep.examples).toBe(4);
+    expect(rep.pairs).toBe(9); // K0-K2 x X0-X2
+    expect(rep.excludedPairs).toBe(12); // test pairs touching K3, K4, X3 or X4
+    const shown = new Set(tournamentShots.flatMap((p) => [p.kept.title, p.killed.title]));
+    expect([...shown].sort()).toEqual(['K3', 'K4', 'X3', 'X4']);
+    for (const p of prompts) {
+      const examples = p.slice(p.indexOf('<examples>'), p.indexOf('</examples>'));
+      for (const t of shown) expect(examples).toContain(t);
+      const judged = [/Title: (.*)/.exec(p.slice(p.indexOf('<sketch-a>\n')))![1]!, /Title: (.*)/.exec(p.slice(p.indexOf('<sketch-b>\n')))![1]!];
+      for (const t of judged) expect(shown.has(t.trim())).toBe(false);
+    }
   });
 
   it('runJudgeAudit writes the file under the directory and prints its path', async () => {

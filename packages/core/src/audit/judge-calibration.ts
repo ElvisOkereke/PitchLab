@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, asc, desc, eq, inArray, isNull, like, sum } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, like, notInArray, sum } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { ideaReviews, ideas, judgePairs, llmCalls } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -8,7 +8,8 @@ import type { ModelRouter } from '../llm/types';
 import { combine } from '../pipeline/engine/elo';
 import { judgePair } from '../pipeline/engine/judge';
 import { setSetting } from '../validation/settings';
-import { fewShotPairs, ideaView, syncJudgePairs } from './judge-pairs';
+import { FEWSHOT_PAIRS_MAX } from '../pipeline/engine/kinds';
+import { fewShotPairsWithIds, ideaView, syncJudgePairs } from './judge-pairs';
 
 /** Judge goals (spec §5): reported, never enforced. */
 export const JUDGE_ACCURACY_GOAL = 0.7;
@@ -27,6 +28,10 @@ export type JudgeReport = {
   reviewerAccuracy: number | null;
   spentUsd: number;
   tooFew: boolean;
+  /** Few-shot examples the judge was shown (picked exactly as the tournament picks them). */
+  examples: number;
+  /** Test pairs left out because they share an idea with an example (the judge could recognise it). */
+  excludedPairs: number;
 };
 
 export type CalibrateDeps = { db: Db; router: ModelRouter; log?: (m: string) => void; limit?: number };
@@ -51,7 +56,8 @@ async function reviewTotals(db: Db, ideaIds: string[]): Promise<Map<string, numb
 
 /**
  * Judges the held-out (test) Board pairs, each twice with the order swapped, with the owner's training pairs as
- * few-shot examples. Accuracy is the share where the kept idea wins the combined result (a split, draw or error is a
+ * few-shot examples picked exactly as the tournament picks them; test pairs that share an idea with an example are left
+ * out (counted in `excludedPairs`). Accuracy is the share where the kept idea wins the combined result (a split, draw or error is a
  * miss); consistency is the share where both orders agree on a winner. Stores a summary in `audit.judge.latest`.
  */
 export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> {
@@ -60,10 +66,21 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
   const spentBefore = await judgeSpendUsd(db);
   await syncJudgePairs(db);
   const limit = Math.max(1, Math.min(deps.limit ?? JUDGE_PAIRS_MAX, JUDGE_PAIRS_MAX));
-  const pairs = await db.select().from(judgePairs).where(eq(judgePairs.split, 'test')).orderBy(asc(judgePairs.pairHash)).limit(limit);
+  const isTest = eq(judgePairs.split, 'test');
+  const [{ n: testTotal } = { n: 0 }] = await db.select({ n: count() }).from(judgePairs).where(isTest);
+  // The examples first, exactly as the tournament picks them (train split only), so calibration measures the same judge.
+  const { shots: fewShot, ideaIds: shown } = testTotal > 0
+    ? await fewShotPairsWithIds(db, FEWSHOT_PAIRS_MAX, router)
+    : { shots: [], ideaIds: new Set<string>() };
+  // Then only test pairs sharing no idea with an example (idea-level leakage would inflate accuracy).
+  const clear = shown.size
+    ? and(isTest, notInArray(judgePairs.keptIdeaId, [...shown]), notInArray(judgePairs.killedIdeaId, [...shown]))
+    : isTest;
+  const [{ n: clearTotal } = { n: 0 }] = shown.size ? await db.select({ n: count() }).from(judgePairs).where(clear) : [{ n: testTotal }];
+  const excludedPairs = Math.max(0, testTotal - clearTotal);
+  if (excludedPairs) log(`judge: ${excludedPairs} test pair(s) share an idea with the ${fewShot.length} example(s) and are left out`);
+  const pairs = await db.select().from(judgePairs).where(clear).orderBy(asc(judgePairs.pairHash)).limit(limit);
   const ideaIds = [...new Set(pairs.flatMap((p) => [p.keptIdeaId, p.killedIdeaId]))];
-  // No example may share an idea with a pair being judged (idea-level leakage would inflate accuracy).
-  const fewShot = pairs.length ? await fewShotPairs(db, undefined, router, { excludeIdeaIds: new Set(ideaIds) }) : [];
   const rows = ideaIds.length ? await db.select().from(ideas).where(inArray(ideas.id, ideaIds)) : [];
   const views = new Map(rows.map((r) => [r.id, ideaView(r)]));
   const ctx = { runId: null, promptVersion: loadPrompt('judge').version };
@@ -111,6 +128,8 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     reviewerAccuracy: revN ? revScore / revN : null,
     spentUsd: Math.max(0, (await judgeSpendUsd(db)) - spentBefore),
     tooFew: judged < JUDGE_MIN_PAIRS,
+    examples: fewShot.length,
+    excludedPairs,
   };
   await setSetting(db, SETTING_KEY, {
     at: new Date().toISOString(), accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs, tooFew: report.tooFew,
@@ -125,6 +144,7 @@ const goal = (v: number, g: number) => `${f2(v)} against the goal of ${f2(g)}: $
 export function renderJudgeReport(r: JudgeReport, date: string): string {
   const lines = [`# Judge calibration, ${date}`, ''];
   lines.push(`Judged ${r.pairs} held-out Board pair(s), each twice with the order swapped. Cost $${r.spentUsd.toFixed(4)}.`, '');
+  lines.push(`The judge saw ${r.examples} few-shot example(s), picked as the tournament picks them. ${r.excludedPairs} held-out pair(s) share an idea with an example and were left out.`, '');
   if (r.tooFew) lines.push(`**Too few pairs:** ${r.pairs} is under ${JUDGE_MIN_PAIRS}, so these numbers are noise. Keep or kill more cases, then run it again.`, '');
   lines.push('## Goals', '');
   lines.push(`- Accuracy (the kept idea wins): ${goal(r.accuracy, JUDGE_ACCURACY_GOAL)}`);
@@ -154,6 +174,7 @@ export async function runJudgeAudit(
   const report = await calibrateJudge(deps);
   const path = writeJudgeReport(report, deps.dir, deps.date);
   if (report.tooFew) deps.out(`Too few pairs: ${report.pairs} held-out pair(s) is under ${JUDGE_MIN_PAIRS}, so the numbers are noise.`);
+  if (report.excludedPairs) deps.out(`Left out ${report.excludedPairs} held-out pair(s) that share an idea with the ${report.examples} few-shot example(s).`);
   deps.out(`Judged ${report.pairs} pair(s): accuracy ${f2(report.accuracy)} (goal ${f2(JUDGE_ACCURACY_GOAL)}), position consistency ${f2(report.consistency)} (goal ${f2(JUDGE_CONSISTENCY_GOAL)}), cost $${report.spentUsd.toFixed(4)}.`);
   deps.out(`Written to ${path}`);
   return { report, path };

@@ -88,6 +88,6 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'cellsFilled', label: 'Diversity cells filled', target: 'at least 8 per run' },
   { id: 'judgeAccuracy', label: 'Judge accuracy (latest calibration)', target: 'at least 70%' },
   { id: 'trivialKillRate', label: 'Trivial kill rate', target: 'reported, no target' },
-  { id: 'compsCoverage', label: 'Comps coverage', target: 'at least 80% of cases with 2 or more dossier comps' },
+  { id: 'compsCoverage', label: 'Comps coverage', target: 'at least 80% of cases with a comps verdict list 2 or more dossier comps' },
   { id: 'engineCostPerRun', label: 'Engine cost per run (sketch, judge, evolve)', target: 'at most $8' },
 ];

@@ -1675,6 +1675,26 @@ describe('ideate v15 expands sketches (engine v2)', () => {
     expect(stored.every((i) => i.sketchId !== null)).toBe(true);
   });
 
+  it('expands at most ideaCount sketches, the first ones in the evolve order', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 2 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const ids = await insertSketches(t.db, t.run.id, [
+      { title: 'Alpha', elo: 1100 }, { title: 'Beta', elo: 1300 }, { title: 'Gamma', elo: 1250 }, { title: 'Delta', elo: 1200 },
+    ]);
+    const r = versioned({ structured: { ideate: [expanded(['S1', 'S2'])] } });
+    // Evolve order: Beta, Gamma, Alpha, Delta.
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [], sketchIds: [ids[1], ids[2], ids[0], ids[3]] });
+    expect(r.versions).toEqual(['ideate.v15']);
+    const sk = block(structuredPrompts(r)[0]!, 'sketches');
+    expect(sk).toContain('Beta hard part');
+    expect(sk).toContain('Gamma hard part');
+    expect(sk).not.toContain('Alpha');
+    expect(sk).not.toContain('Delta');
+    expect(out.ideaIds).toHaveLength(2);
+    expect(t.logs.some((l) => /2 ideas from 2 sketches/.test(l))).toBe(true);
+  });
+
   it('drops an idea that names no sketch of its call, or a sketch already expanded', async () => {
     const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 12 });
     const t = await setup(config, {});

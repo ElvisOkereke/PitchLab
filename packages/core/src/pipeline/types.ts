@@ -20,7 +20,10 @@ export type RunConfig = {
   dedupeThreshold: number;
   /** Set when the owner re-runs a gate-killed idea from the dashboard: the idea this run overturns (feedback signal). */
   overturnOfIdeaId?: string;
-  /** Which generation engine the run uses; absent reads as v2 (see usesEngineV2). */
+  /**
+   * Which generation engine the run uses. defaultRunConfig sets v2 for every new run; absent (a run stored before engine
+   * v2) reads as v1, so a resumed old run keeps its engine (see usesEngineV2).
+   */
   engine?: 'v1' | 'v2';
 };
 
@@ -33,13 +36,17 @@ export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, '
     researchSearchesPerSector: 3,
     minSignals: 3,
     dedupeThreshold: 0.88,
+    engine: 'v2',
     ...partial,
   };
 }
 
-/** True unless the run asks for engine v1 or starts from an owner idea (which skips sketching and the tournament). */
+/**
+ * True when the run asks for engine v2 (every new run does, via defaultRunConfig) and does not start from an owner idea
+ * (which skips sketching and the tournament). A config without the field (stored before engine v2) is v1.
+ */
 export function usesEngineV2(cfg: RunConfig): boolean {
-  return cfg.engine !== 'v1' && cfg.seedType !== 'idea';
+  return cfg.engine === 'v2' && cfg.seedType !== 'idea';
 }
 
 export const STAGES = ['harvest', 'sketch', 'archive', 'tournament', 'evolve', 'ideate', 'dedupe', 'screen', 'gate', 'case', 'verify', 'score'] as const;

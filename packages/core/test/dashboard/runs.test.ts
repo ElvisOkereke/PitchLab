@@ -69,6 +69,7 @@ describe('queueRun', () => {
     const [row] = await db.select().from(runs).where(eq(runs.id, (r as { id: string }).id));
     expect(row!.status).toBe('queued');
     expect(row!.config).toEqual(defaultRunConfig({ seedType: 'sector', marketId: 'ca-us', sectors: ['HVAC', 'plumbing'], ideaCount: 4, advanceCount: 2 }));
+    expect(row!.config.engine).toBe('v2'); // queueing keeps the engine (RunConfigSchema used to drop it)
 
     expect(await queueRun(db, QueueRunInputSchema.parse({ seedType: 'sector', sectors: ['HVAC', 'underwater basket weaving'] })))
       .toEqual({ ok: false, reason: 'unknown_sector', detail: 'underwater basket weaving' });
@@ -308,5 +309,20 @@ describe('listRuns: tournament view (engine v2)', () => {
     expect(t.uniqueShare).toBe(0.8);
     expect(t.cells).toBe(6);
     expect(t.fallback).toBe('v14');
+  });
+
+  it("lists the sketches that went on (the evolve output, else the tournament's) in their order, not a re-sort by Elo", async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const rows = await db.insert(sketches).values(
+      Array.from({ length: 14 }, (_, i) => sk(run.id, `Sketch ${i}`, { elo: 1300 - i * 10, cell: 'c1' })),
+    ).returning({ id: sketches.id, title: sketches.title });
+    const id = (t: string) => rows.find((r) => r.title === t)!.id;
+    // The caps (at most 2 per cell) left a lower-rated sketch in the list that went on.
+    await db.insert(runStages).values({ runId: run.id, stage: 'tournament', status: 'done', output: { sketchIds: [id('Sketch 0'), id('Sketch 1')] } });
+    let t = (await listRuns(db, { page: 1, pageSize: 5 })).rows.find((r) => r.id === run.id)!.tournament!;
+    expect(t.top.map((x) => x.title)).toEqual(['Sketch 0', 'Sketch 1']);
+    await db.insert(runStages).values({ runId: run.id, stage: 'evolve', status: 'done', output: { sketchIds: [id('Sketch 13'), id('Sketch 0'), id('Sketch 5')] } });
+    t = (await listRuns(db, { page: 1, pageSize: 5 })).rows.find((r) => r.id === run.id)!.tournament!;
+    expect(t.top.map((x) => x.title)).toEqual(['Sketch 13', 'Sketch 0', 'Sketch 5']);
   });
 });

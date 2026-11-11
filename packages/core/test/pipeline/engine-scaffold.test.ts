@@ -5,6 +5,7 @@ import { runStages } from '../../src/db/schema';
 import { passthrough } from '../../src/pipeline/engine/passthrough';
 import { createRun, executeRun } from '../../src/pipeline/run';
 import { defaultRunConfig, STAGES, usesEngineV2, type Stage, type StageDeps, type StageFn } from '../../src/pipeline/types';
+import { RunConfigSchema } from '../../src/dashboard/runs';
 import { testDb } from '../helpers/db';
 
 const deps = (db: Db) => ({ db, router: {}, sources: [], fetchPage: async () => ({}), log: () => {} }) as unknown as StageDeps;
@@ -15,10 +16,20 @@ describe('engine v2 scaffolding', () => {
   });
 
   it('usesEngineV2 is true by default, false for engine v1 and for an owner idea', () => {
+    expect(defaultRunConfig({ seedType: 'open' }).engine).toBe('v2');
     expect(usesEngineV2(defaultRunConfig({ seedType: 'open' }))).toBe(true);
     expect(usesEngineV2(defaultRunConfig({ seedType: 'sector', engine: 'v2' }))).toBe(true);
     expect(usesEngineV2(defaultRunConfig({ seedType: 'open', engine: 'v1' }))).toBe(false);
     expect(usesEngineV2(defaultRunConfig({ seedType: 'idea', ideaText: 'x' }))).toBe(false);
+  });
+
+  it('a stored config without an engine (a run from before engine v2) stays v1', () => {
+    const { engine: _e, ...stored } = defaultRunConfig({ seedType: 'open' });
+    expect(usesEngineV2(stored)).toBe(false);
+    expect(usesEngineV2(RunConfigSchema.parse(stored))).toBe(false);
+    expect(RunConfigSchema.parse(defaultRunConfig({ seedType: 'open' })).engine).toBe('v2');
+    expect(RunConfigSchema.parse({ ...stored, engine: 'v1' }).engine).toBe('v1');
+    expect(RunConfigSchema.safeParse({ ...stored, engine: 'v3' }).success).toBe(false);
   });
 
   it('passthrough returns its input unchanged', async () => {

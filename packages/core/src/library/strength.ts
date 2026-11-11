@@ -11,7 +11,7 @@ export type Assessment = {
   bias: string | null;
   strength: 1 | 2 | 3 | 4 | 5;
   why: string;
-  /** Distinct registrable domains of other active entries at cosine 0.9 or more. */
+  /** Corroborating registrable domains: the entry's own beyond the first, plus other active entries' at cosine 0.9 or more. */
   corroboration: number;
 };
 

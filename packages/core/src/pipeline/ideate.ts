@@ -582,8 +582,9 @@ export async function ideate(
 
   // Engine v2 (spec §10): the input is the evolve output (Ruling R1), whose final sketches are expanded with ideate.v15.
   // A v2 run without sketch ids (a stage output from before engine v2) and every v1 run generate with ideate.v14.
+  // At most ideaCount sketches are expanded: the first ones in the evolve order (best first).
   const sketchIds = usesEngineV2(cfg) && Array.isArray(input.sketchIds)
-    ? [...new Set(input.sketchIds.filter((x): x is string => typeof x === 'string'))]
+    ? [...new Set(input.sketchIds.filter((x): x is string => typeof x === 'string'))].slice(0, Math.max(1, cfg.ideaCount))
     : null;
   const fallback = usesEngineV2(cfg) && !sketchIds;
   if (fallback) log('ideate: WARNING engine v2 run has no sketches; falling back to v14');

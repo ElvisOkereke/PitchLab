@@ -83,6 +83,7 @@ describe('queueBenchmarkPass', () => {
     expect(rows.filter((r) => r.config.seedType === 'open')).toHaveLength(2);
     expect(rows.map((r) => r.id).sort()).toEqual([...q.pass.runIds].sort());
     for (const r of rows) expect(r.status).toBe('queued');
+    for (const r of rows) expect(r.config.engine).toBe('v2');
     const expected = BENCHMARKS[CURRENT_BENCHMARK].seeds.map((s) => defaultRunConfig({ ...s, marketId: QUEUE_MARKET_ID, ideaCount: 12, advanceCount: 3 }));
     expect(rows.map((r) => r.config)).toEqual(expect.arrayContaining(expected));
   });

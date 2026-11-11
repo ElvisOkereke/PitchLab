@@ -26,6 +26,8 @@ export const RunConfigSchema = z.object({
   minSignals: int(1, 10),
   dedupeThreshold: z.number().min(0.5).max(0.99),
   overturnOfIdeaId: z.uuid().optional(),
+  /** Absent on runs stored before engine v2: they stay v1 (usesEngineV2). */
+  engine: z.enum(['v1', 'v2']).optional(),
 }).refine((c) => c.seedType !== 'finds' || (c.findIds?.length ?? 0) > 0, {
   // Queueing (dashboard, CLI) always fixes a finds run to its finds, so a resumed run uses the same ones (R20).
   message: 'A finds run needs its finds.', path: ['findIds'],
@@ -203,14 +205,14 @@ export type RunIdeaRow = {
 };
 /** A case a run produced, as the Runs page links it. */
 export type RunCaseLink = { id: string; slug: string; title: string };
-/** One of the run's top sketches by Elo, as the Runs page lists it. `parent` is set for an evolved variant. */
+/** One of the sketches that went on (evolve output, else tournament output), as the Runs page lists it. `parent` is set for an evolved variant. */
 export type TournamentSketch = {
   id: string; title: string; elo: number | null; cell: string | null; operator: string | null;
   parent: { id: string; title: string } | null;
   /** Evolved variants of this sketch (kept ones). */
   variants: { id: string; title: string; operator: string | null; elo: number | null }[];
 };
-/** A v2 run's tournament: the top sketches by Elo, how many were dropped as repeats, and the archive's figures. Null for runs without sketches. */
+/** A v2 run's tournament: the sketches that went on, how many were dropped as repeats, and the archive's figures. Null for runs without sketches. */
 export type RunTournament = {
   top: TournamentSketch[]; dropped: number; total: number;
   uniqueShare: number | null; cells: number | null; fallback: string | null;
@@ -231,14 +233,21 @@ export type RunListRow = RunRow & {
 /** Most sketch rows read for one page of runs (50 runs of about 60 sketches, with room for variants). */
 const SKETCHES_PER_PAGE_MAX = 5_000;
 
-/** Builds one run's tournament view from its sketch rows and the archive/ideate stage figures. */
+/**
+ * Builds one run's tournament view from its sketch rows and the archive/ideate stage figures. The top list is the list
+ * that went on (`wentOn`: the evolve output's sketch ids, else the tournament's, in their order); only a run that has
+ * not finished its tournament falls back to the kept sketches by Elo.
+ */
 function tournamentOf(
   rows: { id: string; title: string; elo: number | null; cell: string | null; operator: string | null; parentSketchId: string | null; status: string }[],
   figures: { uniqueShare: number | null; cells: number | null; fallback: string | null },
+  wentOn: string[] | null,
 ): RunTournament | null {
   if (rows.length === 0) return null;
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const ranked = rows.filter((r) => r.status === 'kept' && r.elo !== null).sort((a, b) => b.elo! - a.elo! || (a.id < b.id ? -1 : 1)).slice(0, TOP_SKETCHES);
+  const ranked = wentOn
+    ? wentOn.flatMap((id) => byId.get(id) ?? []).slice(0, TOP_SKETCHES)
+    : rows.filter((r) => r.status === 'kept' && r.elo !== null).sort((a, b) => b.elo! - a.elo! || (a.id < b.id ? -1 : 1)).slice(0, TOP_SKETCHES);
   const top = ranked.map((r) => {
     const parent = r.parentSketchId ? byId.get(r.parentSketchId) : undefined;
     return {
@@ -249,6 +258,8 @@ function tournamentOf(
   });
   return { top, dropped: rows.filter((r) => r.status === 'duplicate' || r.status === 'near_killed').length, total: rows.length, ...figures };
 }
+
+const wentOnOf = (v: unknown): string[] | null => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : null);
 
 /** Most cases listed per run on the Runs page. */
 export const RUN_CASES_MAX = 50;
@@ -346,7 +357,10 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
       uniqueShare: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'uniqueShare') = 'number' then (${runStages.output} ->> 'uniqueShare')::float8 end`,
       cells: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'cells') = 'number' then (${runStages.output} ->> 'cells')::float8 end`,
       fallback: sql<string | null>`case when jsonb_typeof(${runStages.output} -> 'fallback') = 'string' then left(${runStages.output} ->> 'fallback', 20) end`,
-    }).from(runStages).where(and(inArray(runStages.runId, ids), inArray(runStages.stage, ['archive', 'ideate']))),
+      // The list that went on (tournament and evolve only; bounded, they hold at most TOP_SKETCHES).
+      wentOn: sql<string[] | null>`case when ${runStages.stage} in ('tournament', 'evolve') and jsonb_typeof(${runStages.output} -> 'sketchIds') = 'array'
+        then jsonb_path_query_array(${runStages.output}, '$.sketchIds[0 to 49]') end`,
+    }).from(runStages).where(and(inArray(runStages.runId, ids), inArray(runStages.stage, ['archive', 'ideate', 'tournament', 'evolve']))),
   ]);
   return {
     total: totalRow?.n ?? 0,
@@ -359,7 +373,8 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
         uniqueShare: figureRows.find((f) => f.runId === r.id && f.stage === 'archive')?.uniqueShare ?? null,
         cells: figureRows.find((f) => f.runId === r.id && f.stage === 'archive')?.cells ?? null,
         fallback: figureRows.find((f) => f.runId === r.id && f.stage === 'ideate')?.fallback ?? null,
-      }),
+      }, wentOnOf(figureRows.find((f) => f.runId === r.id && f.stage === 'evolve')?.wentOn
+        ?? figureRows.find((f) => f.runId === r.id && f.stage === 'tournament')?.wentOn)),
       caseCount: caseCounts.find((c) => c.runId === r.id)?.n ?? 0,
       cases: caseRows.filter((c) => c.runId === r.id).slice(0, RUN_CASES_MAX).map(({ id, slug, title }) => ({ id, slug, title })),
       ideas: ideaRows.filter((i) => i.runId === r.id).map(({ runId: _runId, ...i }) => ({ ...i, caseSlug: i.caseSlug ?? null })),

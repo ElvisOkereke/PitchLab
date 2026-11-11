@@ -1,5 +1,5 @@
 import { and, eq, inArray, like, ne, sum } from 'drizzle-orm';
-import { fewShotPairs } from '../../audit/judge-pairs';
+import { fewShotPairs, syncJudgePairs } from '../../audit/judge-pairs';
 import type { Db } from '../../db/client';
 import { knowledgeItems, llmCalls, signals, sketches, tournamentMatches } from '../../db/schema';
 import { parseAssessment, strengthLabel } from '../../library/strength';
@@ -62,7 +62,8 @@ const matchKey = (round: number, a: string, b: string) => `${round}|${a}|${b}`;
  * Plays `rounds` Swiss rounds (spec §4) over `sketchIds` in one phase and returns every sketch's rating.
  *
  * - Each sketch starts at `o.start` (when given), else its stored elo, else ELO_START (Ruling R3).
- * - Pairing is seeded by run id and phase, so a resumed run computes the same pairs; pairs already played in another
+ * - Pairing is seeded by run id and phase over the sketches in (createdAt, id) order, so a resumed run computes the
+ *   same pairs whatever order the ids come in; pairs already played in another
  *   phase of the run are not replayed where avoidable.
  * - Each match is judged twice, A/B then B/A; only agreeing calls decide it (an error or a split is a draw, logged).
  * - Each match is stored in `tournament_matches` before ratings move; a stored match (same phase, round and pair) is
@@ -78,15 +79,17 @@ export async function runTournament(
   run: { id: string },
   o: { phase: 'main' | 'final'; sketchIds: string[]; rounds: number; maxCalls: number; start?: Map<string, number> },
 ): Promise<Map<string, number>> {
-  const ids = [...new Set(o.sketchIds)];
-  if (ids.length === 0) return new Map();
+  const given = [...new Set(o.sketchIds)];
+  if (given.length === 0) return new Map();
   const found = await db.select({
     id: sketches.id, title: sketches.title, buyer: sketches.buyer, problem: sketches.problem, howItEarns: sketches.howItEarns,
     edge: sketches.edge, whyNotTrivial: sketches.whyNotTrivial, cell: sketches.cell, elo: sketches.elo,
-    signalIds: sketches.signalIds, libraryItemIds: sketches.libraryItemIds,
-  }).from(sketches).where(inArray(sketches.id, ids));
-  const byId = new Map(found.map((r) => [r.id, r as SketchRow]));
-  for (const id of ids) if (!byId.has(id)) throw new Error(`tournament: unknown sketch ${id}`);
+    signalIds: sketches.signalIds, libraryItemIds: sketches.libraryItemIds, createdAt: sketches.createdAt,
+  }).from(sketches).where(inArray(sketches.id, given));
+  const byId = new Map(found.map((r) => [r.id, r as SketchRow & { createdAt: Date }]));
+  for (const id of given) if (!byId.has(id)) throw new Error(`tournament: unknown sketch ${id}`);
+  // Pairing depends only on the set (sketch order by createdAt, id), so a reordered upstream list replays the stored matches.
+  const ids = [...given].sort((a, b) => byId.get(a)!.createdAt.getTime() - byId.get(b)!.createdAt.getTime() || (a < b ? -1 : a > b ? 1 : 0));
 
   const ratings = new Map(ids.map((id) => [id, o.start?.get(id) ?? byId.get(id)!.elo ?? ELO_START]));
   const stored = new Map((await db.select().from(tournamentMatches)
@@ -206,6 +209,13 @@ export async function tournament(
   const sketchIds = Array.isArray(input.sketchIds) ? input.sketchIds : [];
   if (sketchIds.length === 0) return { ...input, sketchIds: [], signalIds, matches: 0, spentUsd: 0, ratings: {} };
 
+  // New Board decisions become judge pairs before the judge picks its few-shot examples (insert-only, never fatal).
+  try {
+    const { added } = await syncJudgePairs(db);
+    if (added) log(`tournament: ${added} new judge pairs from Board decisions`);
+  } catch (err) {
+    log(`tournament: judge pair sync failed (${errorMessage(err)}); judging with the stored pairs`);
+  }
   // The main phase is the first: every sketch starts fresh, so a re-run replays its stored matches from ELO_START.
   await db.update(sketches).set({ elo: null }).where(inArray(sketches.id, sketchIds));
   const ratings = await runTournament({ db, router, log }, run, { phase: 'main', sketchIds, rounds: SWISS_ROUNDS, maxCalls: JUDGE_CALLS_MAX });

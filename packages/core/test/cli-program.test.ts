@@ -117,8 +117,8 @@ describe('gen prospects import / outreach / config', () => {
     await expect(parse(['dossiers', 'nope'])).rejects.toThrow(/gen dossiers run/);
   });
 
-  it('library assess takes --max-usd (default 25, 0.5 to 25) and refuses other actions', async () => {
-    expect((await parse(['library', 'assess'])).libraryAssess).toHaveBeenCalledWith({ maxUsd: 25 });
+  it('library assess takes --max-usd (default 5, 0.5 to 25) and refuses other actions', async () => {
+    expect((await parse(['library', 'assess'])).libraryAssess).toHaveBeenCalledWith({ maxUsd: 5 });
     expect((await parse(['library', 'assess', '--max-usd', '3'])).libraryAssess).toHaveBeenCalledWith({ maxUsd: 3 });
     await expect(parse(['library', 'assess', '--max-usd', '100'])).rejects.toThrow(/--max-usd/);
     await expect(parse(['library', 'nope'])).rejects.toThrow(/gen library assess/);
@@ -159,6 +159,12 @@ describe('gen prospects import / outreach / config', () => {
     expect((await parse(['export', '--all'])).export).toHaveBeenCalledWith(undefined, { all: true });
     expect((await parse(['run', '--seed', 'sector', '--sectors', 'a,b'])).run).toHaveBeenCalledWith({ seed: 'sector', sectors: 'a,b' });
     expect((await parse(['runs'])).runs).toHaveBeenCalled();
+  });
+
+  it('run --engine picks the generation engine (v1 or v2; default v2 via defaultRunConfig)', async () => {
+    expect((await parse(['run', '--seed', 'open', '--engine', 'v1'])).run).toHaveBeenCalledWith({ seed: 'open', engine: 'v1' });
+    expect((await parse(['run', '--finds', '--engine', 'v2'])).run).toHaveBeenCalledWith({ seed: 'finds', engine: 'v2' });
+    await expect(parse(['run', '--seed', 'open', '--engine', 'v3'])).rejects.toThrow(/engine/);
   });
 
   it('run --finds seeds a run from finds: the most recent ones, or the ids given (sources expansion §C)', async () => {

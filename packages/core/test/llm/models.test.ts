@@ -87,6 +87,10 @@ describe('engine v2 model stages', () => {
     expect(family(DEFAULT_MODELS.judge)).not.toBe(family(DEFAULT_MODELS.ideate));
     expect(() => validateModelConfig({ ...DEFAULT_MODELS, judge: 'claude-sonnet-5-5' })).toThrow(/judge/);
   });
+  it('judge must also be a different family from sketch (the judge ranks what sketch wrote)', () => {
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, sketch: 'gpt-6-sol' })).toThrow(/judge.*sketch/);
+    expect(() => validateModelConfig({ ...DEFAULT_MODELS, sketch: 'gemini-3.1-pro' })).not.toThrow();
+  });
   it('sketch follows ideate and judge follows gate for overrides, unless they have their own', () => {
     expect(resolveModelConfig({ ideate: 'claude-haiku-5-5' }).sketch).toBe('claude-haiku-5-5');
     expect(resolveModelConfig({ gate: 'gemini-3.1-pro' }).judge).toBe('gemini-3.1-pro');

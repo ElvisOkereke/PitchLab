@@ -168,3 +168,38 @@ describe('failure back-off', () => {
     expect((await dossierQueue(db, 50, at(24 + 200)())).length).toBe(31);
   });
 });
+
+describe('runDossierJob: final review fixes', () => {
+  it('never rewrites product names in the stored summary', async () => {
+    const db = await testDb();
+    const id = await startup(db, { name: 'Omega' });
+    await db.update(knowledgeItems).set({ summary: 'Omega syncs Google Maps and Shopify Plus stores.' }).where(eq(knowledgeItems.id, id));
+    const r = await run(db, setup(db, { text: `Omega is here. ${LINE}` }));
+    expect(r.done).toBe(1);
+    const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, id));
+    expect(row!.summary).toBe('Omega syncs Google Maps and Shopify Plus stores.');
+  });
+
+  it('a dossier with no verified field is recorded as failed (with the back-off), never done', async () => {
+    const db = await testDb();
+    const id = await startup(db, { name: 'Sigma' });
+    const r = await run(db, setup(db, { text: 'Sigma is here, but the pricing line is not on this page.' }));
+    expect(r).toMatchObject({ done: 0, failed: 1 });
+    const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, id));
+    expect(row!.facts).toMatchObject({ dossierStatus: 'failed', dossierFailures: 1 });
+    expect(await dossierQueue(db, 5, NOW)).toEqual([]);
+  });
+
+  it('an explicit --max-usd overrides the daily cap for that run, and is still a hard cap', async () => {
+    const db = await testDb();
+    for (let i = 0; i < 6; i++) await startup(db, { name: `Kappa${i}` });
+    await setSetting(db, DOSSIERS_DAILY_USD_KEY, 1);
+    const s = setup(db, { cost: 0.6, text: `Kappa0 Kappa1 Kappa2 Kappa3 Kappa4 Kappa5 here. ${LINE}` });
+    const r = await run(db, s, { maxUsd: 2 });
+    expect(r.done).toBe(4);
+    expect(r.spentUsd).toBeCloseTo(2.4);
+    // the worker's run (no --max-usd) still respects the daily cap, which is already spent
+    const again = await run(db, s);
+    expect(again.done + again.unmatched + again.failed).toBe(0);
+  });
+});

@@ -138,6 +138,20 @@ describe('runTournament', () => {
     expect(partElo).toEqual(wholeElo);
   });
 
+  it('pairing depends only on the set: a reordered sketch list replays every stored match (no re-pay, nothing dropped)', async () => {
+    const t = await setup(12);
+    await runTournament(t.deps(stubJudge().router), t.run, { phase: 'main', sketchIds: t.ids, rounds: 3, maxCalls: 300 });
+    const before = (await t.db.select().from(tournamentMatches)).map((m) => m.id).sort();
+    const elo1 = await elos(t.db);
+    await t.db.update(sketches).set({ elo: null });
+    const again = fakeRouter({});
+    await runTournament(t.deps(again), t.run, { phase: 'main', sketchIds: [...t.ids].reverse(), rounds: 3, maxCalls: 300 });
+    expect(again.calls).toHaveLength(0);
+    expect((await t.db.select().from(tournamentMatches)).map((m) => m.id).sort()).toEqual(before);
+    expect(await elos(t.db)).toEqual(elo1);
+    expect(t.logs.some((l) => /removed/.test(l))).toBe(false);
+  });
+
   it('final phase avoids pairs already played in the main phase', async () => {
     const t = await setup(4);
     await runTournament(t.deps(stubJudge().router), t.run, { phase: 'main', sketchIds: t.ids, rounds: 1, maxCalls: 10 });
@@ -222,6 +236,17 @@ describe('tournament stage', () => {
     const out = await tournament(t.deps(stubJudge().router), t.run, { sketchIds: t.ids, signalIds: [] });
     expect(out.sketchIds).toHaveLength(6);
     expect(t.logs.some((l) => /caps left 6 of 12/.test(l))).toBe(true);
+  });
+
+  it('splits new Board decisions into judge pairs at the start, so they become few-shot examples', async () => {
+    const t = await setup(2);
+    const kept = await insertIdea(t.db, RUN_ID, { title: 'KeptIdea' });
+    await insertCase(t.db, kept.id, { stage: 'live', slug: 'kept-idea' });
+    const killed = await insertIdea(t.db, RUN_ID, { title: 'KilledIdea' });
+    await insertCase(t.db, killed.id, { stage: 'killed', slug: 'killed-idea' });
+    expect(await t.db.select().from(judgePairs)).toHaveLength(0);
+    await tournament(t.deps(stubJudge().router), t.run, { sketchIds: t.ids, signalIds: [] });
+    expect(await t.db.select().from(judgePairs)).toHaveLength(1);
   });
 
   it('with no sketches returns an empty list without calls', async () => {

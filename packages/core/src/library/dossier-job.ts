@@ -38,7 +38,7 @@ export type DossierJobDeps = {
   now?: () => Date;
   /** Startups this run (default 25). */
   limit?: number;
-  /** A cap for this run only (`gen dossiers run --max-usd`); the daily cap still applies. */
+  /** A hard cap for this run only (`gen dossiers run --max-usd`); when given it replaces the daily cap for this run (a backfill). */
   maxUsd?: number;
   /** True (a run is queued) stops the job between startups. */
   shouldYield?: () => boolean | Promise<boolean>;
@@ -87,7 +87,7 @@ export async function dossierQueue(db: Db, limit: number, now: Date = new Date()
   return rows.map((r, i) => ({ r, i })).sort((a, b) => rank(a.r) - rank(b.r) || a.i - b.i).slice(0, Math.max(0, limit)).map((x) => x.r.id);
 }
 
-/** Runs unconditionally (`gen dossiers run`, or the worker when due). Never throws; stops at the daily cap or `maxUsd`. */
+/** Runs unconditionally (`gen dossiers run`, or the worker when due). Never throws; stops at `maxUsd` when given, else at the daily cap. */
 export async function runDossierJob(deps: DossierJobDeps): Promise<DossierJobResult> {
   const { db, router, log } = deps;
   const now = (deps.now ?? (() => new Date()))();
@@ -100,10 +100,12 @@ export async function runDossierJob(deps: DossierJobDeps): Promise<DossierJobRes
   };
   await setSetting(db, DOSSIERS_LAST_RUN_KEY, now.toISOString());
   try {
+    // An explicit --max-usd (a backfill) replaces the daily cap for this run; the worker never passes one.
+    const explicit = deps.maxUsd !== undefined;
     const cap = await dossiersDailyUsd(db);
     const before = await dossiersSpentToday(db, now);
     const spent = async () => Math.max(0, (await dossiersSpentToday(db, now)) - before);
-    if (before >= cap) {
+    if (!explicit && before >= cap) {
       warn(`daily cap of $${cap} reached; skipped this run`);
     } else {
       const ctx = { runId: null, missionId: null, promptVersion: loadPrompt('dossier').version };
@@ -112,7 +114,7 @@ export async function runDossierJob(deps: DossierJobDeps): Promise<DossierJobRes
           warn('paused for queued work; the rest waits for the next run');
           break;
         }
-        if (before + (await spent()) >= cap) {
+        if (!explicit && before + (await spent()) >= cap) {
           warn(`daily cap of $${cap} reached; stopped`);
           break;
         }

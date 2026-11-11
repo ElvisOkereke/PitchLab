@@ -3,7 +3,7 @@ import { HelpTip } from './help-tip';
 
 const OPERATOR_LABEL: Record<string, string> = { sharpen: 'sharpened', combine: 'combined', simplify: 'simplified' };
 
-/** A run's tournament: the top sketches by Elo with cell, parent and variants. Everything is rendered as text (R13). */
+/** A run's tournament: the sketches that went on (in their final order) with cell, parent and variants. Everything is rendered as text (R13). */
 export function TournamentView({ runId, t }: { runId: string; t: RunTournament }) {
   const listed = new Set(t.top.map((s) => s.id));
   const link = (id: string, title: string) => (listed.has(id) ? <a href={`#sketch-${id}`}>{title}</a> : <>{title}</>);

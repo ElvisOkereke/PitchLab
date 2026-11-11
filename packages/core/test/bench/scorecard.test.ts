@@ -693,7 +693,7 @@ describe('computeScorecard: engine v2 rows', () => {
     expect(metric(await computeScorecard(db, [r]), 'trivialKillRate')).toMatchObject({ status: 'measured', value: 1 / 3, display: '33% (1 of 3)', meets: null });
   });
 
-  it('comps coverage counts cases whose comps verdict lists two or more dossier comps', async () => {
+  it('comps coverage counts cases whose comps verdict lists two or more dossier comps, over cases with a comps verdict', async () => {
     const db = await testDb();
     const r = await newRun(db);
     const two = 'comps:\n- A (live, dossier): who pays: x\n- B (dead, dossier): who pays: y\n- C (live): who pays: z';
@@ -703,8 +703,11 @@ describe('computeScorecard: engine v2 rows', () => {
       await insertCase(db, idea.id);
       await db.insert(gateVerdicts).values(verdict(idea.id, 'comps', !text.startsWith('no comps'), text));
     }
-    await insertCase(db, (await insertIdea(db, r)).id); // a case with no comps verdict counts as not covered
-    expect(metric(await computeScorecard(db, [r]), 'compsCoverage')).toMatchObject({ status: 'measured', value: 0.4, display: '40% (2 of 5)', meets: false });
+    // A v1 case (no comps verdict) in the same set is left out of the denominator.
+    const v1 = await newRun(db);
+    await insertCase(db, (await insertIdea(db, v1)).id);
+    await insertCase(db, (await insertIdea(db, r)).id);
+    expect(metric(await computeScorecard(db, [r, v1]), 'compsCoverage')).toMatchObject({ status: 'measured', value: 0.5, display: '50% (2 of 4)', meets: false });
   });
 
   it('engine cost per run sums sketch, judge and evolve calls of the set, averaged over runs that made them', async () => {

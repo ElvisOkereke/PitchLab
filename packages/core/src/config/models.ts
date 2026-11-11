@@ -80,6 +80,10 @@ export function validateModelConfig(m: Record<ModelStage, string>): void {
       throw new Error(`Model config: ${stage} model (${m[stage]}) must be a different family from ideate (${m.ideate})`);
     }
   }
+  // The judge ranks what sketch wrote, so it must not share sketch's family either.
+  if (family(m.judge) === family(m.sketch)) {
+    throw new Error(`Model config: judge model (${m.judge}) must be a different family from sketch (${m.sketch})`);
+  }
   for (const stage of WEB_SEARCH_STAGES) {
     if (family(m[stage]) !== 'claude') {
       throw new Error(`Model config: ${stage} model (${m[stage]}) must be a claude model (it uses web search)`);

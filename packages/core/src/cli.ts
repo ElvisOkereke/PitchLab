@@ -423,7 +423,7 @@ async function dossierDeps(db: Db, env: Env): Promise<DossierJobDeps> {
   };
 }
 
-/** `gen dossiers run`: builds the next company dossiers now, within the daily cap, --max-usd and --limit. Costs model calls. */
+/** `gen dossiers run`: builds the next company dossiers now, within --limit and the daily cap (an explicit --max-usd replaces the daily cap for this run). Costs model calls. */
 async function dossiersRunCommand(opts: { maxUsd?: number; limit?: number }): Promise<number> {
   loadDotEnv();
   const env = loadEnv();
@@ -534,6 +534,7 @@ function configFrom(opts: RunOpts): RunConfig {
   if (opts.seed === 'finds' && opts.findIds?.length) partial.findIds = opts.findIds;
   if (opts.ideas !== undefined) partial.ideaCount = positiveInt(opts.ideas);
   if (opts.advance !== undefined) partial.advanceCount = positiveInt(opts.advance);
+  if (opts.engine) partial.engine = opts.engine;
   return defaultRunConfig(partial);
 }
 

@@ -101,6 +101,20 @@ describe('countCorroboration', () => {
     const id = await add(db, { vec: unit(3), domain: 'solo.example' });
     expect(await countCorroboration(db, id)).toBe(0);
   });
+  it("counts the entry's own extra registrable domains (merged duplicates live inside one entry), beyond the first", async () => {
+    const db = await testDb();
+    const self = await add(db, { vec: unit(0), domain: 'a.example.com' });
+    const src = (domain: string) => db.insert(knowledgeSources).values({ itemId: self, url: `https://${domain}/m`, domain, sourceType: 'web', quoteVerified: false, fetchedAt: NOW });
+    expect(await countCorroboration(db, self, NOW)).toBe(0);
+    await src('www.example.com'); // same registrable domain as the first: no extra
+    expect(await countCorroboration(db, self, NOW)).toBe(0);
+    await src('news.other.org');
+    await src('blog.third.co.uk');
+    expect(await countCorroboration(db, self, NOW)).toBe(2);
+    await neighbour(db, 'fourth.io', 0.95, 2); // a neighbour on a new domain adds one more
+    await neighbour(db, 'x.other.org', 0.95, 3); // a neighbour on one of the entry's own domains adds nothing
+    expect(await countCorroboration(db, self, NOW)).toBe(3);
+  });
   it('reads at most 50 neighbour rows', async () => {
     const db = await testDb();
     const self = await add(db, { vec: unit(0), domain: 'self.example' });

@@ -140,3 +140,51 @@ describe('buildDossier', () => {
     expect(dead.researched.some((p) => /post-mortem/i.test(p))).toBe(true);
   });
 });
+
+describe('buildDossier: final review fixes', () => {
+  it('keeps product names in the existing summary (only the people list and cued names are removed)', async () => {
+    const s = setup({
+      pages: { [LAUNCH]: `Acme Billing launched. ${PRICING_LINE}` },
+      extract: { pricingUnit: { value: 'per seat per month', quote: PRICING_LINE }, people: ['John Doe'] },
+    });
+    const r = await buildDossier(item({ summary: 'Syncs Google Maps and Shopify Plus stores for plumbers, said Jane Smith; John Doe built it.' }), s.deps);
+    expect(r.status).toBe('done');
+    expect(r.summary).toContain('Google Maps');
+    expect(r.summary).toContain('Shopify Plus');
+    expect(r.summary).not.toContain('Jane Smith');
+    expect(r.summary).not.toContain('John Doe');
+  });
+
+  it('is failed (never done) when no field could be verified', async () => {
+    const s = setup({
+      pages: { [LAUNCH]: `Acme Billing launched. ${PRICING_LINE}` },
+      extract: { priceRange: { value: '49 to 999 dollars', quote: 'Enterprise plans cost up to 999 dollars per month.' }, people: [] },
+    });
+    const r = await buildDossier(item(), s.deps);
+    expect(r.status).toBe('failed');
+    expect(r.facts).toBeUndefined();
+  });
+
+  it('is unmatched when only a search result names the company (no page on its homepage or own source domain does)', async () => {
+    const news = 'https://news.example.org/acme-bakery';
+    const line = 'Acme Billing, a Florida bakery, raised a 4 million dollar seed round.';
+    const s = setup({
+      pages: { [LAUNCH]: 'A page about something else entirely, with no company name on it.', [news]: line },
+      search: { 'funding OR acquired': [news] },
+      extract: { funding: { stage: 'seed', amount: '4 million dollars', quote: line }, people: [] },
+    });
+    const r = await buildDossier(item(), s.deps);
+    expect(r.status).toBe('unmatched');
+    expect(r.facts).toBeUndefined();
+  });
+
+  it('is matched when the company is named on a page of its own source domain', async () => {
+    const other = 'https://news.example.com/other-story';
+    const s = setup({
+      pages: { [LAUNCH]: 'A page about something else entirely.', [other]: `Acme Billing ships. ${PRICING_LINE}` },
+      search: { 'funding OR acquired': [other] },
+      extract: { pricingUnit: { value: 'per seat per month', quote: PRICING_LINE }, people: [] },
+    });
+    expect((await buildDossier(item(), s.deps)).status).toBe('done');
+  });
+});
