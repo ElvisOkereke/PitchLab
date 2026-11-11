@@ -8,12 +8,13 @@ import { ScaleResultSchema, currentScale, upsideScore, userPaysNothing, valueMul
 import { cosine } from './dedupe';
 import { evaluateEvidence, type EvidenceFailure } from './evidence';
 import { demandLibraryEntries } from './gate';
+import { MAX_PER_BUSINESS_MODEL } from './engine/kinds';
 import { hasEdgeLine, ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
 const MAX_WINNER_SIMILARITY = 0.8;
 /** At most this many generated ideas per business model reach the gate in one run (a null model is not capped). */
-export const MAX_PER_BUSINESS_MODEL = 2;
+export { MAX_PER_BUSINESS_MODEL };
 /** A candidate this close to an idea that already has a case (any run) is a regenerated copy and is skipped. */
 export const MAX_CASE_SIMILARITY = 0.82;
 /** A candidate this close to an idea (any run) the gate already killed is skipped: it would die the same way. */

@@ -33,3 +33,9 @@ export const SketchSchema = z.object({
   libraryItemIds: z.array(z.string()).max(10),
 }).refine((s) => sketchTextLength(s) <= SKETCH_TEXT_MAX, { path: ['text'], message: 'too_long' });
 export type Sketch = z.infer<typeof SketchSchema>;
+
+/** What the judge sees of a sketch or an idea (Ruling R2): an idea row from before v2 has no whyNotTrivial. */
+export type SketchView = { title: string; buyer: string; problem: string; howItEarns: string; edge: string; whyNotTrivial?: string };
+
+/** One few-shot example for the judge: a Board pair the owner decided (training split only), with the reason. */
+export type FewShot = { kept: SketchView; killed: SketchView; reason: string };

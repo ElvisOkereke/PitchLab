@@ -10,6 +10,7 @@ import { ideate } from './ideate';
 import { passthrough } from './engine/passthrough';
 import { archive } from './engine/archive';
 import { sketch } from './engine/sketch';
+import { tournament } from './engine/tournament';
 import { score } from './score';
 import { screen } from './screen';
 import { STAGES, usesEngineV2, type RunConfig, type Stage, type StageDeps, type StageFn } from './types';
@@ -21,7 +22,7 @@ export const DEFAULT_STAGE_IMPLS: Record<Stage, StageFn> = {
   // Engine v2 stages run only for v2 runs; v1 runs and owner ideas pass the harvest output through.
   sketch: (deps, run, input) => (usesEngineV2(run.config) ? sketch(deps, run, input) : passthrough(deps, run, input)),
   archive: (deps, run, input) => (usesEngineV2(run.config) ? archive(deps, run, input) : passthrough(deps, run, input)),
-  tournament: passthrough,
+  tournament: (deps, run, input) => (usesEngineV2(run.config) ? tournament(deps, run, input) : passthrough(deps, run, input)),
   evolve: passthrough,
   ideate,
   dedupe,

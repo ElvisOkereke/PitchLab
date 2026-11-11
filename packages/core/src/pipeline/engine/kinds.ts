@@ -20,3 +20,18 @@ export const SKETCH_TEXT_MAX = 600;
 export const SKETCH_DUPLICATE_SIM = 0.85;
 /** A sketch this close to a gate-killed idea or an owner-killed case is near_killed. */
 export const SKETCH_KILLED_SIM = 0.75;
+
+/** Tournament (spec §4): every sketch starts at ELO_START; each match moves ratings by at most ELO_K. */
+export const ELO_START = 1200;
+export const ELO_K = 24;
+/** Swiss rounds in the main tournament, and at most this many judge calls (two per match) in it. */
+export const SWISS_ROUNDS = 5;
+export const JUDGE_CALLS_MAX = 300;
+/** The final tournament (parents plus evolved variants, spec §6): rounds and judge call cap. */
+export const FINAL_ROUNDS = 3;
+export const FINAL_CALLS_MAX = 120;
+/** How many sketches go on after a tournament, with at most MAX_PER_CELL per diversity cell and MAX_PER_BUSINESS_MODEL per business model. */
+export const TOP_SKETCHES = 12;
+export const MAX_PER_CELL = 2;
+/** At most this many per business model: generated ideas reaching the gate in one run (screen), and sketches leaving a tournament. */
+export const MAX_PER_BUSINESS_MODEL = 2;
