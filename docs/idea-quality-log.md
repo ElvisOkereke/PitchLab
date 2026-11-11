@@ -193,3 +193,32 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
   - **By confidence:** confidence 3 was right 2 of 2, and confidence 1 was right 1 of 5.
   - **Cost:** $1.12.
 - **Reading:** as built, the tournament ranks no better than chance against the owner's past decisions. 38 pairs is small, but it is a clear signal to fix the judge before spending on bench-v3 #3.
+
+## 2026-11-11 (later): judge variants, diversity round merged
+
+- **Judge variants:** calibrated on 79 held-out Board pairs, each judged twice with the order swapped. Total cost about $11.
+
+  | Variant | Accuracy | Position consistency |
+  |---|---|---|
+  | `judge.v1` (first calibration, on 38 pairs) | 0.47 | n/a |
+  | `judge.v2` (owner taste rules) | 0.43 | 0.94 |
+  | `judge.v2` + case context | 0.49 | 0.96 |
+  | Gemini as judge (v1 prompt) | 0.41 | 0.92 |
+  | v2 with 12 examples | no testable pairs left | n/a |
+  | **Reviewer score total (scale + edge + novelty + niche), same pairs** | **0.72** | n/a |
+
+  The pairwise judge on short sketch views does not capture the owner's taste, whatever the prompt or model family. The fallback the owner approved is now live: for engine v2 runs, screen ranks by a reviewer score band, and Elo only breaks ties.
+- **Diversity round merged** (main 50c5f7d):
+  - a broad tiered market (`broad`, 36 sectors, now the default);
+  - no forced consumer quota;
+  - lens weights moved toward important problems, plus a new lens, `industry-shift`;
+  - a `buyers` gate floor (at least 20,000 businesses or 1M individuals, sourced), with the screen pre-filtering on it;
+  - new scorecard rows.
+- **Sourcing gap found at final review:** only 16% of recent ideas kept a population source, because sources are kept only when they are a shown library market entry or a signal URL. The library had 22 market entries.
+  - **Fix:** `gen library seed-markets` queued 39 market missions ($19.50): one per `broad` sector, plus households, adults and workers.
+- **Known reporting gap:** `buyerFloorKillShare` reads about 0% by construction, because the screen filters on the floor first. The real floor-drop share will be computed from stored estimates for bench-v3 #3.
+- **Next:**
+  - the worker runs the market missions;
+  - then bench-v3 #3 (broad market, engine v2, reviewer-ranked screen, buyer floor);
+  - the owner sorts its Board;
+  - then the Research Agent v1 spec (acquisition target screening first).
