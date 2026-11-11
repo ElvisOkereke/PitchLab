@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { eq } from 'drizzle-orm';
@@ -321,18 +323,26 @@ describe('reviewRunIdeas', () => {
     expect(metas).toEqual([{ runId: r.id, promptVersion: 'idea-review.v2' }]);
   });
 
-  it('a router failure (invalid output or any other error) leaves the ideas out of the map, logs once, and does not throw', async () => {
+  it('a model failure (invalid output, or a provider error from either SDK) leaves the ideas out of the map, logs once, and does not throw', async () => {
     const db = await testDb();
     const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const a = await insertIdea(db, r.id, { title: 'A' });
-    for (const err of [new StructuredOutputError('review: still invalid', 'bad'), new Error('network down')]) {
+    for (const err of [new StructuredOutputError('review: still invalid', 'bad'), new Anthropic.APIError(529, { type: 'error' }, 'overloaded', undefined), new OpenAI.APIError(500, { message: 'down' }, 'down', undefined)]) {
       const logs: string[] = [];
       const router: ModelRouter = { ...fakeRouter({}), async structured() { throw err; } };
       const totals = await reviewRunIdeas({ db, router, log: (m) => logs.push(m) }, r.id, [a.id]);
       expect(totals.size).toBe(0);
       expect(logs).toHaveLength(1);
-      expect(logs[0]).toMatch(/review: 1 of 1 ideas unreviewed \(last error: /);
+      expect(logs[0]).toMatch(/review: 1 of 1 ideas still unreviewed \(last error: /);
     }
+  });
+
+  it('a non-provider router error (a database failure inside the router, a code bug) rejects instead of ranking as unreviewed', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const a = await insertIdea(db, r.id, { title: 'A' });
+    const router: ModelRouter = { ...fakeRouter({}), async structured() { throw new Error('insert into "llm_calls" failed'); } };
+    await expect(reviewRunIdeas({ db, router, ...quiet }, r.id, [a.id])).rejects.toThrow('llm_calls');
   });
 
   it('a storage failure rejects instead of being reported as a model failure', async () => {

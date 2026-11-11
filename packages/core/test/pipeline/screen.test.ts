@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import Anthropic from '@anthropic-ai/sdk';
 import { CRITERIA } from '../../src/case/schema';
 import { loadPrompt } from '../../src/llm/prompts';
 import { StructuredOutputError } from '../../src/llm/router';
@@ -71,7 +72,23 @@ const EDGE = { kind: 'cost', claim: 'Half the price of Cass per invoice line', v
 const SCALE = { buyers: '60,000 US freight brokers', basis: 'FMCSA broker registrations' };
 /** The screen-stage calls (a v2 screen also makes review calls first). */
 const screenCalls = (r: { calls: { stage: string; prompt: string }[] }) => r.calls.filter((c) => c.stage === 'screen');
-const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
+/**
+ * Stage deps. A v2 screen reviews first; a test that scripts no review answers (fakeRouter throws a plain Error) gets the
+ * model failure it stands for (invalid output), so the screen carries on unreviewed. Plain errors from other stages pass through.
+ */
+const deps = (db: unknown, router: unknown, log: (m: string) => void = () => {}) => {
+  const r = router as { structured: (stage: string, ...rest: unknown[]) => Promise<unknown> };
+  const wrapped = Object.create(r) as typeof r;
+  wrapped.structured = async (stage, ...rest) => {
+    try {
+      return await r.structured(stage, ...rest);
+    } catch (err) {
+      if (stage === 'review' && err instanceof Error && err.message.startsWith('fakeRouter: no scripted')) throw new StructuredOutputError('review: not scripted', 'n/a');
+      throw err;
+    }
+  };
+  return { db, router: wrapped, log } as unknown as StageDeps;
+};
 /** A unit vector whose cosine with unit(axis) is exactly `sim` (the rest goes on an otherwise unused axis). */
 const atSimilarity = (sim: number, axis = 0, spare = 5) => {
   const v = Array<number>(1536).fill(0);
@@ -118,7 +135,7 @@ describe('screen', () => {
     const money = await insertIdea(db, run.id, { title: 'Money', businessModel: 'ads' });
     const logs: string[] = [];
     const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(4), scores(4), scores(2)] } });
-    const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [...mon.map((i) => i.id), money.id] });
+    const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [...mon.map((i) => i.id), money.id] });
     expect(out.ideaIds).toEqual([mon[0]!.id, mon[1]!.id, money.id]);
     expect((await getIdea(db, mon[2]!.id)).status).toBe('screened_out');
     expect((await getIdea(db, mon[3]!.id)).status).toBe('screened_out');
@@ -151,7 +168,7 @@ describe('screen', () => {
     const fresh = await insertIdea(db, run.id, { title: 'Fresh', embedding: unit(1) });
     const logs: string[] = [];
     const router = fakeRouter({ structured: { screen: [scores(5), scores(3)] } });
-    const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [regenerated.id, fresh.id] });
+    const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [regenerated.id, fresh.id] });
     expect(out.ideaIds).toEqual([fresh.id]);
     expect((await getIdea(db, regenerated.id)).status).toBe('screened_out');
     expect(logs.some((l) => l.includes('Regenerated') && l.includes('case'))).toBe(true);
@@ -221,7 +238,7 @@ describe('screen', () => {
       const given = [scores(2, { novelty: 4 }), scores(4, { novelty: 3 }), scores(3, { novelty: 3 })];
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: given.map((s) => ({ ...s })) } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: ideasIn.map((i) => i.id) });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: ideasIn.map((i) => i.id) });
       expect(out.ideaIds).toEqual([ideasIn[1]!.id, ideasIn[2]!.id]);
       for (const [i, idea] of ideasIn.entries()) {
         const row = await getIdea(db, idea.id);
@@ -278,7 +295,7 @@ describe('screen', () => {
       const distinct = await insertIdea(db, run.id, { title: 'Distinct', embedding: atSimilarity(0.7) });
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(5), scores(4)] } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [copy.id, distinct.id] });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [copy.id, distinct.id] });
       expect(out.ideaIds).toEqual([distinct.id]);
       expect((await getIdea(db, copy.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('Copy') && l.includes(`similarity 0.760 to idea ${killed.id}, which the gate already killed`))).toBe(true);
@@ -303,7 +320,7 @@ describe('screen', () => {
       const nearSibling = await insertIdea(db, run.id, { title: 'Near sibling', embedding: atSimilarity(0.9, 1, 7) });
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(5), scores(4)] } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [self.id, nearSibling.id] });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [self.id, nearSibling.id] });
       expect(out.ideaIds).toEqual([self.id]);
       expect((await getIdea(db, nearSibling.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('Near sibling') && l.includes(sibling.id))).toBe(true);
@@ -335,7 +352,7 @@ describe('screen', () => {
       const ok2 = await insertIdea(db, run.id, { title: 'Ok2' });
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(5), scores(5), scores(3), scores(2)] } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [vendor, oneSite, untagged, none, ok, ok2].map((i) => i.id) });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [vendor, oneSite, untagged, none, ok, ok2].map((i) => i.id) });
       expect(out.ideaIds).toEqual([ok.id, ok2.id]);
       for (const i of [vendor, oneSite, untagged, none]) expect((await getIdea(db, i.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('"Vendor-backed"') && l.includes('2 independent sources') && l.includes('gate needs 3'))).toBe(true);
@@ -429,7 +446,7 @@ describe('screen', () => {
       const data = await insertIdea(db, run.id, { businessModel: 'data_sales', valueToUser: value, priceHint: price(100, 'year') }); // client side: 12x
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(3), scores(3), scores(3)] } });
-      await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [ads.id, aff.id, data.id] });
+      await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [ads.id, aff.id, data.id] });
       for (const i of [ads, aff]) {
         const sc = (await getIdea(db, i.id)).screenScores as Record<string, { value: number; note: string }>;
         expect(sc.moneyCase).toEqual({ value: 3, note: 'no value multiple: user pays nothing (ad/affiliate funded)' });
@@ -447,7 +464,7 @@ describe('screen', () => {
       const b = await insertIdea(db, run.id, { valueToUser: value, priceHint: price(5, 'per use') }); // cannot annualise
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(3), scores(3)] } });
-      await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [a.id, b.id] });
+      await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [a.id, b.id] });
       for (const i of [a, b]) {
         const sc = (await getIdea(db, i.id)).screenScores as Record<string, { value: number }>;
         expect([sc.moneyCase!.value, sc.barrier!.value]).toEqual([2, 3]);
@@ -465,7 +482,7 @@ describe('screen', () => {
       const nulls = [await insertIdea(db, run.id, { businessModel: null }), await insertIdea(db, run.id, { businessModel: null })];
       const logs: string[] = [];
       const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(4), scores(4), scores(3), scores(2), scores(2)] } });
-      const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [...subs, ads, ...nulls].map((i) => i.id) });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [...subs, ads, ...nulls].map((i) => i.id) });
       expect(out.ideaIds).toEqual([subs[0]!.id, subs[1]!.id, ads.id, nulls[0]!.id]);
       expect(logs.some((l) => l.includes('Sub 2') && l.includes('subscription'))).toBe(true);
     });
@@ -718,7 +735,7 @@ describe('screen', () => {
       const demand = await insertIdea(db, run.id, { title: 'Demand', signalIds: await sigs(db, [{ voice: 'operator' }]), libraryItemIds: [await trendItem(db)] });
       const alone = await insertIdea(db, run.id, { title: 'Alone', signalIds: await sigs(db, [{ voice: 'operator' }]) });
       const logs: string[] = [];
-      const out = await screen({ db, router: fakeRouter({ structured: { screen: [scores(3), scores(5)] } }), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [demand.id, alone.id] });
+      const out = await screen(deps(db, fakeRouter({ structured: { screen: [scores(3), scores(5)] } }), (m: string) => logs.push(m)), run, { ideaIds: [demand.id, alone.id] });
       expect(out.ideaIds).toEqual([demand.id]);
       expect((await getIdea(db, alone.id)).status).toBe('screened_out');
       expect(logs.some((l) => l.includes('"Alone"') && l.includes('1 independent sources') && l.includes('no demand source'))).toBe(true);
@@ -737,7 +754,7 @@ describe('screen', () => {
       const oppTrend = await insertIdea(db, run.id, { title: 'Opp+trend', signalIds: await sigs(db, [{ voice: 'operator', kind: 'opportunity' }]), libraryItemIds: [await trendItem(db)] });
       const twoOpp = await insertIdea(db, run.id, { title: 'Two opps', signalIds: await sigs(db, [{ voice: 'operator', kind: 'opportunity' }, { voice: 'neutral', kind: 'opportunity' }]) });
       const logs: string[] = [];
-      const out = await screen({ db, router: fakeRouter({ structured: { screen: [scores(4), scores(4)] } }), log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [oppTrend.id, twoOpp.id] });
+      const out = await screen(deps(db, fakeRouter({ structured: { screen: [scores(4), scores(4)] } }), (m: string) => logs.push(m)), run, { ideaIds: [oppTrend.id, twoOpp.id] });
       expect(out.ideaIds).toEqual([]);
       for (const t of ['"Opp+trend"', '"Two opps"']) {
         expect(logs.some((l) => l.includes(t) && l.includes('no valid evidence route') && !l.includes('no demand source'))).toBe(true);
@@ -857,20 +874,24 @@ describe('engine v2 screen ranks by review band', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
     const [a, b] = [await insertIdea(db, run.id), await insertIdea(db, run.id)];
     const router = reviewRouter([scores(3), scores(4)], () => 12, true);
-    const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [a.id, b.id] });
+    const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [a.id, b.id] });
     expect(out.ideaIds).toEqual([b.id]);
     expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo(total6(scores(4)));
     expect(logs.filter((l) => l.startsWith('review:'))).toHaveLength(1);
     expect(logs).toContain('screen: 2 of 2 ideas ranked without a review');
   });
 
-  it('a model error other than invalid output is also survived', async () => {
+  it('a provider error is also survived, and a non-provider error rejects', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
     const a = await insertIdea(db, run.id);
-    const router = fakeRouter({ structured: { screen: [scores(3)] } }); // no scripted review: the fake throws a plain Error
-    const out = await screen(deps(db, router), run, { ideaIds: [a.id] });
+    const down = reviewRouter([scores(3)], () => 12);
+    down.structured = (async (stage: string) => { if (stage === 'review') throw new Anthropic.APIError(529, { type: 'error' }, 'overloaded', undefined); return scores(3); }) as typeof down.structured;
+    const out = await screen(deps(db, down), run, { ideaIds: [a.id] });
     expect(out.ideaIds).toEqual([a.id]);
+    const bug = reviewRouter([scores(3)], () => 12);
+    bug.structured = (async () => { throw new Error('insert into "llm_calls" failed'); }) as typeof bug.structured;
+    await expect(screen(deps(db, bug), run, { ideaIds: [a.id] })).rejects.toThrow('llm_calls');
   });
 
   it('a v1 screen makes no review call and keeps its plain total', async () => {

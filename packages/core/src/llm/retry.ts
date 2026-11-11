@@ -1,5 +1,6 @@
-import { APIConnectionError as AnthropicConnectionError } from '@anthropic-ai/sdk';
-import { APIConnectionError as OpenAIConnectionError } from 'openai';
+import { APIConnectionError as AnthropicConnectionError, APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
+import { APIConnectionError as OpenAIConnectionError, APIError as OpenAIAPIError } from 'openai';
+import { StructuredOutputError } from './types';
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
 const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT']);
@@ -14,6 +15,16 @@ type ErrLike = { status?: unknown; code?: unknown; headers?: unknown; cause?: un
 function errorType(e: ErrLike): unknown {
   const body = e.error as { type?: unknown; error?: { type?: unknown } } | undefined;
   return e.type ?? body?.error?.type ?? body?.type;
+}
+
+/**
+ * A genuine model or provider failure: invalid structured output, or an error the Anthropic or OpenAI SDK raised (HTTP
+ * status, connection, timeout or abort; all extend the SDK's APIError). Everything else (a database failure while the
+ * router logs the call, an adapter's own plain Error, a code bug) is not, and callers that tolerate model failures
+ * must let it propagate.
+ */
+export function isModelFailure(err: unknown): boolean {
+  return err instanceof StructuredOutputError || err instanceof AnthropicAPIError || err instanceof OpenAIAPIError;
 }
 
 export function isRetryable(err: unknown): boolean {
