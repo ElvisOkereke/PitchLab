@@ -170,3 +170,26 @@ One entry per change and per benchmark pass. Claude writes an entry after each p
     - comp-based worth evidence from successful adjacent companies;
     - an extra validation step before cases reach the Board.
   - Then the next bench pass.
+
+## 2026-11-11: bench-v3 #2 (sources only), engine v2 merged, first judge calibration
+
+- **bench-v3 #2:** 6 runs succeeded, giving 13 cases. These are the sources-only baseline, run before engine v2. They wait on the owner's Board sort.
+- **Engine v2 merged** (main 04deb29). The flow is now:
+  - sketches (about 90 per run);
+  - an archive that drops repeats;
+  - a swapped-pair Elo tournament judged by a different model family (`gpt-6-sol`);
+  - evolve against comps;
+  - ideate v15 expands the top 12;
+  - gate v7 adds `trivial` (kills) and comps (advisory).
+  Runs stored before the merge stay on v1.
+- **Backfills:**
+  - **Source assessment:** 1,499 entries for $0.99.
+  - **Dossiers:** 81 startups for $14.96 (53 done, 24 unmatched, 4 failed). That is about $0.18 each, against a $0.05 estimate. 30% are unmatched (no fetched page names the company on its own domain).
+- **Judge calibration** (`output/audit/judge-2026-11-11.md`):
+  - **Setup:** 38 held-out kept-versus-killed Board pairs, each judged twice with the order swapped, with 6 few-shot examples. 109 test pairs were left out because they share an idea with an example.
+  - **Accuracy:** 0.47 against the 0.70 goal (FAIL). That is chance level.
+  - **Position consistency:** 0.97 (PASS). The judge applies its criteria consistently; the criteria just don't match the owner's taste.
+  - **Reviewer comparison:** the reviewer's score totals scored 0.60 on the same pairs.
+  - **By confidence:** confidence 3 was right 2 of 2, and confidence 1 was right 1 of 5.
+  - **Cost:** $1.12.
+- **Reading:** as built, the tournament ranks no better than chance against the owner's past decisions. 38 pairs is small, but it is a clear signal to fix the judge before spending on bench-v3 #3.
