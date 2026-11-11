@@ -48,7 +48,11 @@ const OWNER_KEEPS_TARGET = 0.5;
 /** Case stages that mean the owner kept the case on the Board (any stage but `new` is decided; `killed` is the other verdict). */
 export const KEPT_STAGES = ['validating', 'pilot', 'live'] as const;
 const TOP_TAGS = 3;
-const CONSUMER_SHARE_TARGET = 0.2;
+const CONSUMER_SHARE_TARGET = 0.3;
+const CONSUMER_ONLY_TARGET = 0.2;
+/** Shares are rounded to this many decimals before a target comparison, so exactly 15% is not lost to float error. */
+const SHARE_DECIMALS = 4;
+const roundShare = (v: number) => Number(v.toFixed(SHARE_DECIMALS));
 const TOP_SECTOR_TARGET = 0.15;
 const UPPER_TIER_TARGET = 0.4;
 /** The market the diversity rows (and the consumer cap) apply to: passes on an earlier market have no data. */
@@ -179,6 +183,8 @@ type Data = {
   /** roi is valueMultiple (else roiMultiple); skip marks a user-pays-nothing case, left out of customer return. */
   caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null; stage: string }[];
   audience: { total: number; consumer: number };
+  /** Broad-market runs only: ideas with an audience, and those with audience `consumer` alone (not `both`). */
+  audienceBroad: { total: number; consumerOnly: number };
   /**
    * Diversity rows (runs on the broad market only): each generated idea spreads one unit over its run's focus sectors
    * (the harvest stage's sectors for open seeds, the config's for sector seeds; runs with none are left out), plus the
@@ -200,7 +206,7 @@ type Data = {
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, diversity: { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, audienceBroad: { total: 0, consumerOnly: 0 }, diversity: { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
   review: { n: 0, medianEdge: null, medianScale: null, niche: 0, rated: 0, agree: 0 }, entrants: { total: 0, wasted: 0 }, cost: 0,
   engine: { uniqueShares: [], cells: [], judge: null, trivial: { total: 0, killed: 0 }, comps: { withVerdict: 0, covered: 0 }, runCosts: [] },
 });
@@ -250,9 +256,10 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const disliked = sql`(${ideas.ownerRating} = -1 or (not coalesce(${rated}, false) and ${killedCase}))`;
   const judged = sql`(${liked} or ${disliked})`;
 
-  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow], archiveRows, [judgeRow], [trivialRow], engineCostRows] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, audienceBroadRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow], archiveRows, [judgeRow], [trivialRow], engineCostRows] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
+    db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
     broadIds.length === 0 ? Promise.resolve([]) : db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generatedBroad, isNotNull(ideas.audience))).groupBy(ideas.audience),
     db.select({ runId: ideas.runId, n: countDistinct(ideas.businessModel) }).from(ideas).where(and(generated, isNotNull(ideas.businessModel))).groupBy(ideas.runId),
     (() => {
@@ -359,7 +366,11 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     demand: { total: Number(demandRow?.total ?? 0), yes: Number(demandRow?.yes ?? 0) },
     audience: {
       total: audienceRows.reduce((t, r) => t + Number(r.n), 0),
-      consumer: audienceRows.filter((r) => r.audience === 'consumer').reduce((t, r) => t + Number(r.n), 0),
+      consumer: audienceRows.filter((r) => r.audience === 'consumer' || r.audience === 'both').reduce((t, r) => t + Number(r.n), 0),
+    },
+    audienceBroad: {
+      total: audienceBroadRows.reduce((t, r) => t + Number(r.n), 0),
+      consumerOnly: audienceBroadRows.filter((r) => r.audience === 'consumer').reduce((t, r) => t + Number(r.n), 0),
     },
     diversity,
     modelCounts: modelRows.map((r) => Number(r.n)),
@@ -482,8 +493,8 @@ function buildMetrics(d: Data): MetricResult[] {
       // Over cases with a comps verdict (v2 cases): a v1 case in the set never had comps checked.
       : share(eng.comps.covered, eng.comps.withVerdict, (v) => v >= COMPS_COVERAGE_TARGET),
     engineCostPerRun: meanRow(eng.runCosts, (v) => `$${v.toFixed(2)}`, (v) => v <= ENGINE_COST_TARGET, NO_ENGINE),
-    topSectorShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.top, dv.sectored, (v) => v <= TOP_SECTOR_TARGET),
-    upperTierShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.upper, dv.sectored, (v) => v >= UPPER_TIER_TARGET),
+    topSectorShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.top, dv.sectored, (v) => roundShare(v) <= TOP_SECTOR_TARGET),
+    upperTierShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.upper, dv.sectored, (v) => roundShare(v) >= UPPER_TIER_TARGET),
     buyerFloorPass: dv.floor.total === 0 ? noData('No gate-passed generated idea from a run on the broad market has a buyers verdict (earlier passes have no data).')
       : share(dv.floor.pass, dv.floor.total, (v) => v === 1),
     repetition: d.within.length === 0 ? noData(NEED_EMBEDDINGS) : (() => {
@@ -500,8 +511,10 @@ function buildMetrics(d: Data): MetricResult[] {
       : share(d.cited.yes, d.cited.total, (v) => v >= REAL_NEED_TARGET),
     demandEvidence: d.demand.total === 0 ? noData('No generated idea in this set records which library entries it used.')
       : share(d.demand.yes, d.demand.total, (v) => v >= DEMAND_EVIDENCE_TARGET),
-    consumerShare: d.audience.total === 0 ? noData('No generated idea from a run on the broad market has an audience (earlier passes have no data).')
-      : share(d.audience.consumer, d.audience.total, (v) => v <= CONSUMER_SHARE_TARGET),
+    consumerShare: d.audience.total === 0 ? noData('No generated idea in this set has an audience.')
+      : share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
+    consumerOnlyShare: d.audienceBroad.total === 0 ? noData('No generated idea from a run on the broad market has an audience (earlier passes have no data).')
+      : { ...share(d.audienceBroad.consumerOnly, d.audienceBroad.total, (v) => v <= CONSUMER_ONLY_TARGET), note: 'Ideas with audience both are not counted as consumer here.' },
     modelVariety: d.modelCounts.length === 0 ? noData('No run in this set has ideas with a business model.') : (() => {
       const v = mean(d.modelCounts);
       return measured(v, `${v.toFixed(1)} per run`, v >= MODEL_VARIETY_TARGET);

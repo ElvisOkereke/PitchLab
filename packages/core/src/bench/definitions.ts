@@ -63,13 +63,13 @@ export type MetricId =
   | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes' | 'ownerKeeps'
   | 'medianEdge' | 'medianScale' | 'nicheShare' | 'reviewerAgreement' | 'costPerCase'
   | 'uniqueSketchShare' | 'cellsFilled' | 'judgeAccuracy' | 'trivialKillRate' | 'compsCoverage' | 'engineCostPerRun'
-  | 'topSectorShare' | 'upperTierShare' | 'buyerFloorPass';
+  | 'consumerOnlyShare' | 'topSectorShare' | 'upperTierShare' | 'buyerFloorPass';
 
 export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string; phase?: 2 | 3 }[] = [
   { id: 'repetition', label: 'Repetition', target: 'below 0.55' },
   { id: 'nearDuplicates', label: 'Near-duplicates', target: 'below 10%' },
   { id: 'buyerVariety', label: 'Buyer variety', target: 'at least 8 per run' },
-  { id: 'consumerShare', label: 'Consumer share', target: 'at most 20%' },
+  { id: 'consumerShare', label: 'Consumer share', target: 'at least 30%' },
   { id: 'modelVariety', label: 'Business-model variety', target: 'at least 4 per run' },
   { id: 'realNeed', label: 'Real-need evidence', target: 'at least 50%' },
   { id: 'demandEvidence', label: 'Demand evidence', target: 'at least 80%' },
@@ -91,6 +91,7 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'trivialKillRate', label: 'Trivial kill rate', target: 'reported, no target' },
   { id: 'compsCoverage', label: 'Comps coverage', target: 'at least 80% of cases with a comps verdict list 2 or more dossier comps' },
   { id: 'engineCostPerRun', label: 'Engine cost per run (sketch, judge, evolve)', target: 'at most $8' },
+  { id: 'consumerOnlyShare', label: 'Consumer-only share', target: 'at most 20%' },
   { id: 'topSectorShare', label: 'Top sector share', target: 'at most 15%' },
   { id: 'upperTierShare', label: 'Enterprise and mid-market share', target: 'at least 40%' },
   { id: 'buyerFloorPass', label: 'Buyer floor pass', target: '100% of gate-passed ideas' },

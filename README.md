@@ -374,13 +374,13 @@ follow its progress.
 - **Progress** page: the idea-quality scorecard, with the canonical baseline (baseline-0, made once with
   `gen bench baseline` over your finished real runs) beside the 5 newest benchmark passes.
 - **Scorecard metrics** (target in brackets): repetition (below 0.55), near-duplicates (below 10%), buyer variety (8 or
-  more per run), consumer share (20% or less), business-model variety (4 or more per run), real-need evidence (50% or
+  more per run), consumer share (30% or more, consumer or both), consumer-only share (20% or less, `broad` market only; `both` not counted), business-model variety (4 or more per run), real-need evidence (50% or
   more), demand evidence (80% or more of ideas cite a trend, rule change or market entry), customer return (100%, median 3× or more), our margin (100%), wasted gate
   entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), owner
   keeps (50% or more of the cases you decided on the Board), cost per case (tracked). The engine rows: unique sketch
   share (60% or more), diversity cells filled (8 or more per run), judge accuracy (70% or more at the latest
   calibration), trivial kill rate (reported), comps coverage (80% or more of cases with 2 or more dossier comps) and
-  engine cost per run ($8 or less); runs from before the engine show "no data" for these. The diversity rows: top sector share (15% or less; each idea counts toward its run's focus sectors), enterprise and mid-market share (40% or more), and buyer floor pass (100% of gate-passed ideas passed the `buyers` check); these rows and consumer share show "no data" for passes run on a market other than `broad`. Example runs and cases are always left out.
+  engine cost per run ($8 or less); runs from before the engine show "no data" for these. The diversity rows: top sector share (15% or less; each idea counts toward its run's focus sectors), enterprise and mid-market share (40% or more), and buyer floor pass (100% of gate-passed ideas passed the `buyers` check); these rows and consumer-only share show "no data" for passes run on a market other than `broad`. Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
   benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
   one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**

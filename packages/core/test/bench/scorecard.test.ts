@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase', 'uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun', 'topSectorShare', 'upperTierShare', 'buyerFloorPass'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase', 'uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun', 'topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -390,26 +390,41 @@ const richCase = async (db: Db, runId: string, buyer: Record<string, unknown>, i
   insertCase(db, (await insertIdea(db, runId, ideaOver)).id, { sections: { numbers: { results: { buyer, unit: { grossMarginPct: 70 } } } } as unknown as CaseSections });
 
 describe('computeScorecard: consumer, model and barrier metrics', () => {
-  it('consumerShare counts consumer-only ideas over ideas with an audience; meets at most 20%', async () => {
+  it('consumerShare is unchanged: consumer or both over ideas with an audience, all markets; meets at 30%', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r, { audience: 'consumer' });
+    await insertIdea(db, r, { audience: 'both' });
+    await insertIdea(db, r, { audience: 'business' });
+    await insertIdea(db, r, { audience: 'business' });
+    await insertIdea(db, r); // old idea: no audience, not counted
+    await insertIdea(db, r, { audience: 'consumer', origin: 'owner' }); // owner idea: not generated
+    const m = metric(await computeScorecard(db, [r]), 'consumerShare');
+    expect(m).toMatchObject({ status: 'measured', value: 0.5, display: '50% (2 of 4)', meets: true });
+    const r2 = await newRun(db);
+    for (const a of ['consumer', 'business', 'business', 'business'] as const) await insertIdea(db, r2, { audience: a });
+    expect(metric(await computeScorecard(db, [r2]), 'consumerShare')).toMatchObject({ value: 0.25, meets: false });
+    const old = (await insertRun(db, defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }))).id;
+    await insertIdea(db, old, { audience: 'consumer' });
+    expect(metric(await computeScorecard(db, [old]), 'consumerShare')).toMatchObject({ status: 'measured', value: 1 });
+  });
+
+  it('consumerOnlyShare counts audience consumer only (not both); meets at most 20%; broad market only', async () => {
     const db = await testDb();
     const r = await newRun(db);
     await insertIdea(db, r, { audience: 'consumer' });
     await insertIdea(db, r, { audience: 'both' });
     for (let i = 0; i < 3; i++) await insertIdea(db, r, { audience: 'business' });
-    await insertIdea(db, r); // old idea: no audience, not counted
-    await insertIdea(db, r, { audience: 'consumer', origin: 'owner' }); // owner idea: not generated
-    const m = metric(await computeScorecard(db, [r]), 'consumerShare');
+    await insertIdea(db, r, { audience: 'consumer', origin: 'owner' });
+    const m = metric(await computeScorecard(db, [r]), 'consumerOnlyShare');
     expect(m).toMatchObject({ status: 'measured', value: 0.2, display: '20% (1 of 5)', meets: true });
+    expect(m.note).toMatch(/both/);
     const r2 = await newRun(db);
     for (const a of ['consumer', 'business', 'business'] as const) await insertIdea(db, r2, { audience: a });
-    expect(metric(await computeScorecard(db, [r2]), 'consumerShare')).toMatchObject({ meets: false });
-  });
-
-  it('consumerShare is no_data for a pass run on an earlier market', async () => {
-    const db = await testDb();
+    expect(metric(await computeScorecard(db, [r2]), 'consumerOnlyShare')).toMatchObject({ meets: false });
     const old = (await insertRun(db, defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }))).id;
     await insertIdea(db, old, { audience: 'consumer' });
-    expect(metric(await computeScorecard(db, [old]), 'consumerShare')).toMatchObject({ status: 'no_data', value: null });
+    expect(metric(await computeScorecard(db, [old]), 'consumerOnlyShare')).toMatchObject({ status: 'no_data', value: null, meets: null });
   });
 
   it('old data with no audience, model or barriers is no_data for all three', async () => {
@@ -733,7 +748,7 @@ describe('computeScorecard: engine v2 rows', () => {
 });
 
 describe('computeScorecard: diversity rows', () => {
-  const ROWS: MetricId[] = ['topSectorShare', 'upperTierShare', 'buyerFloorPass'];
+  const ROWS: MetricId[] = ['topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare'];
   const harvest = (db: Db, runId: string, sectors: string[]) =>
     db.insert(runStages).values({ runId, stage: 'harvest', status: 'done', output: { signalIds: [], sectors } });
   const verdict = (ideaId: string, check: 'buyers' | 'scale', pass: boolean) =>
@@ -748,6 +763,22 @@ describe('computeScorecard: diversity rows', () => {
     const sc = await computeScorecard(db, [r]);
     expect(metric(sc, 'topSectorShare')).toMatchObject({ status: 'measured', value: 0.25, meets: false });
     expect(metric(sc, 'upperTierShare')).toMatchObject({ status: 'measured', value: 0.5, meets: true });
+  });
+
+  it('topSectorShare meets at exactly 15% (thirds summed nine times must not miss on float error)', async () => {
+    const db = await testDb();
+    const runIds: string[] = [];
+    for (let k = 0; k < 9; k++) { // one idea each, spread over x and two private sectors: x weighs 9 x 1/3 = 3
+      const r = await newRun(db);
+      await harvest(db, r, ['x', `p${k}a`, `p${k}b`]);
+      await insertIdea(db, r);
+      runIds.push(r);
+    }
+    const rest = await newRun(db);
+    await harvest(db, rest, Array.from({ length: 11 }, (_, k) => `q${k}`));
+    for (let k = 0; k < 11; k++) await insertIdea(db, rest); // 11 ideas: 20 in all, top sector 3 of 20 = 15%
+    runIds.push(rest);
+    expect(metric(await computeScorecard(db, runIds), 'topSectorShare')).toMatchObject({ status: 'measured', meets: true });
   });
 
   it('a sector seed uses the run config sectors; runs with no known sector are left out', async () => {
