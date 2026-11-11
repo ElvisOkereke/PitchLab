@@ -63,6 +63,25 @@ describe('archive', () => {
     expect(out.sketchIds).toEqual([t.ids[1]]);
   });
 
+  it('ignores ideas of its own run (a resume from archive) but not those of another run', async () => {
+    const t = await setup([0]);
+    await insertIdea(t.db, t.run.id, { embedding: at(0) });
+    await archive(t.deps, t.run, { sketchIds: t.ids });
+    expect((await statusOf(t.db, t.ids[0]!)).status).toBe('kept');
+    await insertIdea(t.db, t.other.id, { embedding: at(0) });
+    await archive(t.deps, t.run, { sketchIds: t.ids });
+    expect((await statusOf(t.db, t.ids[0]!)).status).toBe('duplicate');
+  });
+
+  it('ignores own-run gate-killed ideas and killed cases', async () => {
+    const t = await setup([0]);
+    await insertIdea(t.db, t.run.id, { embedding: at(0), status: 'gated_out' });
+    const idea = await insertIdea(t.db, t.run.id, { embedding: at(0) });
+    await insertCase(t.db, idea.id, { stage: 'killed' });
+    await archive(t.deps, t.run, { sketchIds: t.ids });
+    expect((await statusOf(t.db, t.ids[0]!)).status).toBe('kept');
+  });
+
   it('marks duplicate against an earlier run sketch', async () => {
     const t = await setup([deg(0.9)]);
     await t.db.insert(sketches).values(row(t.other.id, 9, { embedding: at(0) }));

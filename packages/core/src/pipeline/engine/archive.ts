@@ -33,22 +33,22 @@ async function maxSim(db: Db, source: 'ideas' | 'sketches' | 'killed_cases', vec
   } else if (source === 'ideas') {
     const s = sim(ideas.embedding);
     rows = await db.select({ sim: s }).from(ideas)
-      .where(and(isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
+      .where(and(ne(ideas.runId, runId), isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
   } else {
     const s = sim(ideas.embedding);
     rows = await db.select({ sim: s }).from(ideas).innerJoin(cases, eq(cases.ideaId, ideas.id))
-      .where(and(eq(cases.stage, 'killed'), isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
+      .where(and(eq(cases.stage, 'killed'), ne(ideas.runId, runId), isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
   }
   const v = rows[0] ? Number(rows[0].sim) : NaN;
   return Number.isFinite(v) ? v : -1;
 }
 
-async function maxKilledSim(db: Db, vec: number[]): Promise<number> {
+async function maxKilledSim(db: Db, vec: number[], runId: string): Promise<number> {
   const s = sql<number>`1 - (${cosineDistance(ideas.embedding, vec)})`;
   const [gate] = await db.select({ sim: s }).from(ideas)
-    .where(and(eq(ideas.status, 'gated_out'), isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
+    .where(and(eq(ideas.status, 'gated_out'), ne(ideas.runId, runId), isNotNull(ideas.embedding), sql`${s} <> 'NaN'::float8`)).orderBy(desc(s)).limit(1);
   const g = gate ? Number(gate.sim) : NaN;
-  return Math.max(Number.isFinite(g) ? g : -1, await maxSim(db, 'killed_cases', vec, ''));
+  return Math.max(Number.isFinite(g) ? g : -1, await maxSim(db, 'killed_cases', vec, runId));
 }
 
 export type ArchiveOutput = { sketchIds: string[]; signalIds: string[]; uniqueShare: number; cells: number };
@@ -96,7 +96,7 @@ export async function archive(
     let status: 'kept' | 'duplicate' | 'near_killed' = 'kept';
     const earlier = Math.max(await maxSim(db, 'sketches', vec, run.id), await maxSim(db, 'ideas', vec, run.id));
     if (earlier >= SKETCH_DUPLICATE_SIM) status = 'duplicate';
-    else if (await maxKilledSim(db, vec) >= SKETCH_KILLED_SIM) status = 'near_killed';
+    else if (await maxKilledSim(db, vec, run.id) >= SKETCH_KILLED_SIM) status = 'near_killed';
     else if (kept.some((k) => cosine(vec, k.vec) >= SKETCH_DUPLICATE_SIM)) status = 'duplicate';
 
     await db.update(sketches).set({ embedding: vec, cell, status }).where(eq(sketches.id, s.id));
