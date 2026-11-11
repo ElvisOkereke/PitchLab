@@ -96,6 +96,31 @@ describe('buildDossier', () => {
     expect(r.facts?.whoPays).toContain('Small plumbing firms');
   });
 
+  it('drops names the model did not report: no stored quote, field or summary holds a cued or name-like person, and company names survive', async () => {
+    const line = 'Acme Billing is loved by plumbers, said Jane Smith, a customer in Toronto. Plans start at 49 dollars per seat.';
+    const s = setup({
+      pages: { [LAUNCH]: `${line} ${FUNDING} Backed by Founders Fund.` },
+      extract: {
+        useCases: { value: ['Invoicing for plumbers'], quote: 'Acme Billing is loved by plumbers, said Jane Smith, a customer in Toronto.' },
+        moat: { value: 'Praised by Jane Smith for speed', quote: 'Plans start at 49 dollars per seat.x' },
+        whoPays: { value: 'Small plumbing firms', quote: 'Acme Billing is loved by plumbers, said Jane Smith, a customer in Toronto.' },
+        funding: { stage: 'seed', amount: '4 million dollars', quote: FUNDING },
+        comps: { value: ['Founders Fund portfolio rival', 'Acme Billing'], quote: 'Acme Billing is loved by plumbers, said Jane Smith, a customer in Toronto.' },
+        people: [],
+      },
+    });
+    const r = await buildDossier(item({ summary: 'Acme Billing, praised by Jane Smith, sends invoices.' }), s.deps);
+    const stored = JSON.stringify([r.facts, r.summary, r.quotes, r.sources]);
+    expect(stored).not.toContain('Jane Smith');
+    expect(r.facts?.whoPays).toBe('Small plumbing firms');
+    expect(r.facts?.useCases).toEqual(['Invoicing for plumbers']);
+    expect(r.facts).not.toHaveProperty('moat');
+    expect(r.quotes).toContain(FUNDING);
+    expect(r.facts?.funding).toMatchObject({ stage: 'seed' });
+    expect(r.summary).toContain('Acme Billing');
+    expect(r.facts?.comps).toEqual(['Founders Fund portfolio rival', 'Acme Billing']);
+  });
+
   it('never requests a never-fetch or banned host', async () => {
     const s = setup({
       pages: { [LAUNCH]: HOME },

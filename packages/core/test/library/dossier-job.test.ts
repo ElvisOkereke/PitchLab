@@ -57,7 +57,7 @@ describe('dossierQueue', () => {
   });
 });
 
-function setup(db: Db, o: { cost?: number; text?: string } = {}) {
+function setup(db: Db, o: { cost?: number; text?: string; fail?: (url: string) => boolean } = {}) {
   const requested: string[] = [];
   const calls: CallCtx[] = [];
   const router = {
@@ -73,6 +73,7 @@ function setup(db: Db, o: { cost?: number; text?: string } = {}) {
   } as unknown as ModelRouter;
   const collectPage = async (url: string) => {
     requested.push(url);
+    if (o.fail?.(url)) return { failed: 'http_404' as const };
     return { text: o.text ?? `Company page. ${LINE} Company is great.`, title: 't', finalUrl: url, via: 'direct' as const };
   };
   return { router, collectPage, requested, calls };
@@ -129,5 +130,41 @@ describe('runDossierJob', () => {
     await startup(db, { name: 'Eps' });
     const r = await run(db, setup(db), { shouldYield: () => true });
     expect(r.done + r.unmatched + r.failed).toBe(0);
+  });
+});
+
+describe('failure back-off', () => {
+  it('30 permanently failing items do not block a healthy one across two runs; the back-off window is respected', async () => {
+    const db = await testDb();
+    const hosts = new Set<string>();
+    const bad: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      bad.push(await startup(db, { name: `Broken${i}` }));
+      hosts.add(`src${n}.example.com`);
+    }
+    const good = await startup(db, { name: 'Healthy' });
+    const s = setup(db, { text: `Healthy is here. ${LINE}`, fail: (u) => hosts.has(new URL(u).host) });
+    const at = (days: number) => () => new Date(NOW.getTime() + days * 86_400_000);
+    const go = (days: number, limit = 25) => runDossierJob({ db, router: s.router, collectPage: s.collectPage, log: () => {}, now: at(days), limit });
+    const r1 = await go(0);
+    expect(r1.failed).toBe(25);
+    const r2 = await go(0.1);
+    expect(r2.done).toBe(1);
+    expect(r2.failed).toBe(5);
+    const [g] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, good));
+    expect(g!.facts).toMatchObject({ dossierStatus: 'done' });
+    // inside the 7-day window nothing failing is queued again; after it, one failure makes the wait 14 days
+    expect(await dossierQueue(db, 50, at(6)())).toEqual([]);
+    expect((await dossierQueue(db, 50, at(8)())).length).toBe(30);
+    await go(8, 50);
+    expect((await dossierQueue(db, 50, at(8 + 13)())).length).toBe(0);
+    expect((await dossierQueue(db, 50, at(8 + 15)())).length).toBe(30);
+    // the third failure sets dossierAt (normal 180-day refresh from then on)
+    await go(24, 50);
+    const [b] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, bad[0]!));
+    expect(b!.facts).toMatchObject({ dossierStatus: 'failed', dossierFailures: 3 });
+    expect((b!.facts as { dossierAt?: string }).dossierAt).toBeTruthy();
+    expect(await dossierQueue(db, 50, at(24 + 100)())).toEqual([]);
+    expect((await dossierQueue(db, 50, at(24 + 200)())).length).toBe(31);
   });
 });

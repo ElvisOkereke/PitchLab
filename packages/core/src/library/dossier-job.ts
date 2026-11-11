@@ -23,6 +23,10 @@ export const DEFAULT_DOSSIER_LIMIT = 25;
 /** The worker builds dossiers at most this often. */
 const EVERY_MS = 3_600_000;
 const CANDIDATES_MAX = 5000;
+/** After a failure the entry waits 7 days times its failures in a row (at most 180 days); the third failure ends the retries until the 180-day refresh. */
+export const FAILURE_BACKOFF_DAYS = 7;
+export const MAX_FAILURES = 3;
+const backoffMs = (failures: number): number => Math.min(FAILURE_BACKOFF_DAYS * Math.max(1, failures), DOSSIER_REFRESH_DAYS) * 86_400_000;
 const PRIORITY_MAX = 1000;
 
 export type DossierJobDeps = {
@@ -60,12 +64,16 @@ export async function dossiersSpentToday(db: Db, now: Date): Promise<number> {
  */
 export async function dossierQueue(db: Db, limit: number, now: Date = new Date()): Promise<string[]> {
   const cutoff = new Date(now.getTime() - DOSSIER_REFRESH_DAYS * 86_400_000).toISOString();
-  const rows = await db.select({ id: knowledgeItems.id, model: sql<string | null>`${knowledgeItems.facts}->>'businessModel'` }).from(knowledgeItems)
+  const all = await db.select({ id: knowledgeItems.id, model: sql<string | null>`${knowledgeItems.facts}->>'businessModel'`, failedAt: sql<string | null>`${knowledgeItems.facts}->>'dossierFailedAt'`, failures: sql<string | null>`${knowledgeItems.facts}->>'dossierFailures'` }).from(knowledgeItems)
     .where(and(
       eq(knowledgeItems.kind, 'startup'), eq(knowledgeItems.status, 'active'),
       sql`(${knowledgeItems.facts}->>'dossierAt' is null or ${knowledgeItems.facts}->>'dossierAt' < ${cutoff})`,
     ))
     .orderBy(asc(knowledgeItems.createdAt), asc(knowledgeItems.id)).limit(CANDIDATES_MAX);
+  const rows = all.filter((r) => {
+    const t = r.failedAt ? Date.parse(r.failedAt) : NaN;
+    return !Number.isFinite(t) || now.getTime() >= t + backoffMs(Number(r.failures) || 1);
+  });
   const citing = await db.select({ ids: ideas.libraryItemIds }).from(ideas)
     .where(and(
       isNotNull(ideas.libraryItemIds),
@@ -130,6 +138,18 @@ export async function runDossierJob(deps: DossierJobDeps): Promise<DossierJobRes
   return result;
 }
 
+function withoutFailures(f: Record<string, unknown>): Record<string, unknown> {
+  const { dossierFailedAt: _a, dossierFailures: _b, ...rest } = f;
+  return rest;
+}
+
+/** Records a failure with its time and count (the queue backs off); the third in a row also sets dossierAt, so only the 180-day refresh retries it. */
+async function recordFailure(db: Db, id: string, old: Record<string, unknown>, now: Date): Promise<void> {
+  const failures = (typeof old.dossierFailures === 'number' ? old.dossierFailures : 0) + 1;
+  const facts = { ...old, dossierStatus: 'failed', dossierFailedAt: now.toISOString(), dossierFailures: failures, ...(failures >= MAX_FAILURES ? { dossierAt: now.toISOString() } : {}) };
+  await db.update(knowledgeItems).set({ facts, updatedAt: now }).where(eq(knowledgeItems.id, id));
+}
+
 async function processItem(db: Db, id: string, deps: Parameters<typeof buildDossier>[1], now: Date): Promise<'done' | 'unmatched' | 'failed' | null> {
   const [row] = await db.select().from(knowledgeItems).where(and(eq(knowledgeItems.id, id), eq(knowledgeItems.kind, 'startup'), eq(knowledgeItems.status, 'active')));
   if (!row) return null;
@@ -138,19 +158,18 @@ async function processItem(db: Db, id: string, deps: Parameters<typeof buildDoss
   const r = await buildDossier({ id, title: row.title, summary: row.summary, facts: row.facts, sourceUrls: sources.map((s) => s.url) }, deps);
   if (r.status === 'unmatched') {
     // The old facts stay; only the status and time are recorded, so the same company is not tried again for 180 days.
-    await db.update(knowledgeItems).set({ facts: { ...old, dossierStatus: 'unmatched', dossierAt: now.toISOString() }, updatedAt: now }).where(eq(knowledgeItems.id, id));
+    await db.update(knowledgeItems).set({ facts: { ...withoutFailures(old), dossierStatus: 'unmatched', dossierAt: now.toISOString() }, updatedAt: now }).where(eq(knowledgeItems.id, id));
     return 'unmatched';
   }
   if (r.status === 'failed') {
-    // No time is recorded, so a failure is retried on the next run.
-    await db.update(knowledgeItems).set({ facts: { ...old, dossierStatus: 'failed' }, updatedAt: now }).where(eq(knowledgeItems.id, id));
+    await recordFailure(db, id, old, now);
     return 'failed';
   }
   let merged: unknown;
   try {
-    merged = parseFacts('startup', { ...old, ...r.facts, dossierStatus: 'done', dossierAt: now.toISOString() });
+    merged = parseFacts('startup', { ...withoutFailures(old), ...r.facts, dossierStatus: 'done', dossierAt: now.toISOString() });
   } catch {
-    await db.update(knowledgeItems).set({ facts: { ...old, dossierStatus: 'failed' }, updatedAt: now }).where(eq(knowledgeItems.id, id));
+    await recordFailure(db, id, old, now);
     return 'failed';
   }
   await db.transaction(async (tx) => {

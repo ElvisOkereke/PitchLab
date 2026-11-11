@@ -66,7 +66,7 @@ export const DossierSchema = z.object({
 type Draft = z.infer<typeof DossierSchema>;
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const ROLE_NAME = /\b([Cc]o-?[Ff]ounders?|[Ff]ounders?|CEO|CTO|COO|CFO|[Pp]resident|[Ff]ounded by)(\s+)(?:[A-Z][\p{L}'’-]+\.?\s+){0,2}[A-Z][\p{L}'’-]+/gu;
+const ROLE_NAME = /\b([Cc]o-?[Ff]ounders?|[Ff]ounders?|CEO|CTO|COO|CFO|[Pp]resident|[Ff]ounded by)(\s+)(?!(?:Fund|Funds|Club|Capital|Collective|Ventures|Labs?|Inc|Corp|Group|Institute|Space|Factory|First)\b)(?:[A-Z][\p{L}'’-]+\.?\s+){0,2}[A-Z][\p{L}'’-]+/gu;
 
 /** Removes the named people, a role followed by a capitalised name, and handles and emails (scrubPersonal). Company names stay. */
 export function stripPeople(s: string, people: readonly string[]): string {
@@ -83,6 +83,32 @@ export function stripPeople(s: string, people: readonly string[]): string {
   }
   out = out.replace(ROLE_NAME, (_m, role: string, sp: string) => `${role}${sp}[person]`);
   return scrubPersonal(out);
+}
+
+/** Words that end a capitalised run without it being a person: organisations, months, days and common openers. */
+const NOT_NAME = new Set(('ventures capital partners fund funds founders labs lab inc corp corporation ltd llc group technologies technology systems software bank holdings university institute association company foundation studio studios media news times post journal magazine network networks solutions services health cloud ' +
+  'january february march april may june july august september october november december monday tuesday wednesday thursday friday saturday sunday ' +
+  'the our we this that it its they their there these those new united san los las north south east west plans plan pricing customers users small large trusted today').split(' '));
+const CAP = String.raw`[A-Z][\p{L}'’-]+`;
+const CUE_NAME = new RegExp(String.raw`\b(?:said|says|according to|by|told)\s+(${CAP}(?:\s+${CAP}){1,2})`, 'gu');
+const CAP_RUN = new RegExp(String.raw`\b${CAP}(?:\s+${CAP}){1,2}`, 'gu');
+
+/** The words of the company name and title, which are never treated as a person's name. */
+export const companyWords = (...names: string[]): Set<string> => new Set(names.flatMap((n) => n.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter(Boolean));
+
+const isOrgLike = (run: string, own: ReadonlySet<string>): boolean =>
+  run.split(/\s+/).some((w) => { const l = w.toLowerCase(); return NOT_NAME.has(l) || own.has(l); });
+
+/**
+ * The deterministic second layer for person names (the model's `people` list can miss one): replaces a cue word
+ * (said, says, according to, by, told) followed by a capitalised two or three word run, and, unless `cueOnly`, any
+ * capitalised two or three word run, with [person]. Runs holding a company word or an organisation word (Ventures, Fund,
+ * Capital...) are left alone.
+ */
+export function redactNames(s: string, own: ReadonlySet<string>, cueOnly = false): string {
+  let out = s.replace(CUE_NAME, (m, run: string) => (isOrgLike(run, own) ? m : m.slice(0, m.length - run.length) + '[person]'));
+  if (!cueOnly) out = out.replace(CAP_RUN, (m) => (isOrgLike(m, own) ? m : '[person]'));
+  return out;
 }
 
 const slugOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -151,6 +177,7 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
 
   // Pricing: a pricing link on the homepage, else /pricing.
   if (home) {
+    // collectPage returns text without hrefs, so a pricing link is rarely found here and /pricing is the real path.
     const origin = new URL(home.url).origin;
     const link = [...home.text.matchAll(/https?:\/\/[^\s"'<>)\]]+/g)].map((m) => m[0]).find((u) => /pricing/i.test(u) && hostOf(u) === hostOf(home!.url));
     await fetchOne(link ?? `${origin}/pricing`, 'pricing');
@@ -198,7 +225,12 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
   }
 
   const people = draft.people ?? [];
-  const clean = (s: string, max = 300) => capField(stripPeople(s, people), max);
+  const ownWords = companyWords(name, item.title);
+  /** A model-worded value without person names; empty (so the field is dropped) when a name-like run is left in it. */
+  const clean = (s: string, max = 300, cueOnly = false): string => {
+    const v = stripPeople(s, people);
+    return redactNames(v, ownWords, cueOnly) !== v ? '' : capField(v, max);
+  };
   const pageFor = (quote: string) => pages.find((p) => quoteOnSource(quote, p.text));
   const quotes: { url: string; quote: string }[] = [];
   /** True when the quote is verbatim in a fetched page; the quote is recorded when it holds no person's name. */
@@ -206,7 +238,7 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
     if (!quote) return false;
     const page = pageFor(quote);
     if (!page) return false;
-    const safe = stripPeople(quote, people);
+    const safe = redactNames(stripPeople(quote, people), ownWords);
     if (safe === quote && !quotes.some((q) => q.quote === quote)) quotes.push({ url: page.url, quote });
     return true;
   };
@@ -219,7 +251,7 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
   };
   const arr = (key: 'revenueDrivers' | 'acquisition' | 'useCases' | 'comps', f: Draft['revenueDrivers']) => {
     if (!f || !verify(f.quote)) return;
-    const v = [...new Set(f.value.map((x) => clean(x, 120)).filter(Boolean))].slice(0, MAX_LIST);
+    const v = [...new Set(f.value.map((x) => clean(x, 120, key === 'comps')).filter(Boolean))].slice(0, MAX_LIST);
     if (v.length) facts[key] = v;
   };
   str('whoPays', draft.whoPays);
@@ -250,6 +282,6 @@ export async function buildDossier(item: DossierItem, deps: DossierDeps): Promis
     facts,
     quotes: quotes.map((q) => q.quote),
     sources: quotes,
-    summary: stripPeople(item.summary, people),
+    summary: redactNames(stripPeople(item.summary, people), ownWords),
   };
 }

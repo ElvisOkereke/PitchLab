@@ -37,7 +37,7 @@ function factValue(v: unknown, key = ''): string {
 
 /** The company dossier fields of a startup entry (shown apart from the older facts), in reading order. */
 const DOSSIER_FIELDS = ['whoPays', 'pricingUnit', 'priceRange', 'revenueDrivers', 'acquisition', 'moat', 'useCases', 'whyItWorked', 'whyItDied', 'comps', 'funding', 'traction'] as const;
-const DOSSIER_META = new Set<string>([...DOSSIER_FIELDS, 'dossierAt', 'dossierStatus']);
+const DOSSIER_META = new Set<string>([...DOSSIER_FIELDS, 'dossierAt', 'dossierStatus', 'dossierFailedAt', 'dossierFailures']);
 
 /** One entry in full: quote, sources, facts as a definition list, and Reject or Restore. All text is escaped. */
 export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: LibraryQuery }) {

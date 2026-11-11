@@ -54,6 +54,9 @@ export const FactsSchemas = {
     }).optional(),
     dossierAt: z.string().optional(),
     dossierStatus: z.enum(['done', 'unmatched', 'failed']).optional(),
+    // Failure back-off (dossier job): when it last failed, and how many times in a row.
+    dossierFailedAt: z.string().optional(),
+    dossierFailures: z.number().optional(),
   }),
   pricing: z.object({
     product: z.string(),
