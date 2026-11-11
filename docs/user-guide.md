@@ -541,6 +541,7 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   its consistency and the cost. Below 10 pairs it says "too few pairs" and the numbers mean nothing yet.
 - **Why:** The goal is 70% accuracy and 80% consistency. The tournament runs either way; the report tells you how far to
   trust its order. Keep sorting the Board: every decision is another pair.
+- **Try a variant:** `audit judge` takes `--prompt v2` (`judge.v2` adds your taste rules; default is the live version), `--model <id>`, `--fewshot <0-12>`, `--context case` (adds each idea's case summary), `--since <date>` (only pairs from Board decisions made on or after it: a fresh holdout that no tuning has seen) and `--label <text>`. A variant never changes the scorecard figure; its summary goes to the last 20 in setting `audit.judge.variants` and its report to `judge-<date>-<label>.md`. To make the tournament use a prompt or model, set `judge.promptVersion` (`v1` default, `v2`) or `judge.model` in settings; no code change.
 - **Progress:** the benchmark gains engine rows: unique sketch share, cells filled, judge accuracy (latest calibration),
   trivial kill rate, comps coverage and engine cost per run. A pass from before the engine shows "no data" for them.
 - **Other commands:** `npm run gen -- dossiers run` builds company dossiers now, `npm run gen -- library assess` rates the

@@ -282,6 +282,16 @@ describe('gen audit scale and backtest', () => {
     await expect(parse(['audit', 'judge', '--limit', '0'])).rejects.toThrow();
   });
 
+  it('wires the judge variant options', async () => {
+    const got = (await parse(['audit', 'judge', '--prompt', 'v2', '--model', 'gpt-x', '--fewshot', '0', '--context', 'case', '--since', '2026-11-01', '--label', 'try 1'])).auditJudge;
+    expect(got).toHaveBeenCalledWith({ prompt: 'v2', model: 'gpt-x', fewshot: 0, context: 'case', since: '2026-11-01', label: 'try 1' });
+    await expect(parse(['audit', 'judge', '--fewshot', '13'])).rejects.toThrow();
+    await expect(parse(['audit', 'judge', '--fewshot', '-1'])).rejects.toThrow();
+    await expect(parse(['audit', 'judge', '--context', 'x'])).rejects.toThrow();
+    await expect(parse(['audit', 'judge', '--prompt', 'latest'])).rejects.toThrow();
+    await expect(parse(['audit', 'judge', '--since', 'yesterday'])).rejects.toThrow();
+  });
+
   it('wires backtest', async () => {
     expect((await parse(['audit', 'backtest'])).auditBacktest).toHaveBeenCalled();
   });

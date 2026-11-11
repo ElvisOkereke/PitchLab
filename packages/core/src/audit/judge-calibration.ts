@@ -1,13 +1,13 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { and, asc, count, desc, eq, inArray, isNull, like, notInArray, sum } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, like, notInArray, sum } from 'drizzle-orm';
 import type { Db } from '../db/client';
-import { ideaReviews, ideas, judgePairs, llmCalls } from '../db/schema';
+import { cases, ideaReviews, ideas, judgePairs, llmCalls } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import type { ModelRouter } from '../llm/types';
 import { combine } from '../pipeline/engine/elo';
-import { judgePair } from '../pipeline/engine/judge';
-import { setSetting } from '../validation/settings';
+import { judgePair, judgePromptVersion, parseJudgePromptVersion } from '../pipeline/engine/judge';
+import { getSetting, setSetting } from '../validation/settings';
 import { FEWSHOT_PAIRS_MAX } from '../pipeline/engine/kinds';
 import { fewShotPairsWithIds, ideaView, syncJudgePairs } from './judge-pairs';
 
@@ -32,11 +32,51 @@ export type JudgeReport = {
   examples: number;
   /** Test pairs left out because they share an idea with an example (the judge could recognise it). */
   excludedPairs: number;
+  /** The variant this run measured. */
+  settings: JudgeVariantSettings;
+  /** True when the settings equal the live configuration, so the run updates `audit.judge.latest`. */
+  live: boolean;
 };
 
-export type CalibrateDeps = { db: Db; router: ModelRouter; log?: (m: string) => void; limit?: number };
+export type JudgeVariantSettings = {
+  /** Prompt name and version, e.g. `judge.v2`. */
+  prompt: string;
+  model: string;
+  fewshot: number;
+  context: 'idea' | 'case';
+  /** ISO time; only pairs created at or after it were judged. */
+  since: string | null;
+  label: string | null;
+};
+
+export type CalibrateDeps = {
+  db: Db; router: ModelRouter; log?: (m: string) => void; limit?: number;
+  /** Prompt version to judge with ('v1', 'v2'); default the live one (setting `judge.promptVersion`). */
+  prompt?: string;
+  /** The judge model the router was built with for this run (`--model`); the router does the overriding. Counts as a variant. */
+  model?: string;
+  /** Few-shot examples shown, 0..12; default FEWSHOT_PAIRS_MAX. */
+  fewshot?: number;
+  /** `case` adds the idea's case summary text (capped, wrapped as untrusted). */
+  context?: 'idea' | 'case';
+  /** Only test pairs created at or after this time (a fresh holdout of new Board decisions). */
+  since?: Date;
+  label?: string;
+};
 
 const SETTING_KEY = 'audit.judge.latest';
+const VARIANTS_KEY = 'audit.judge.variants';
+/** Most variant summaries kept in `audit.judge.variants`. */
+export const JUDGE_VARIANTS_MAX = 20;
+export const JUDGE_FEWSHOT_LIMIT = 12;
+
+/** The case text `--context case` shows: one-liner, why it wins and why now, from the case summary section. */
+function caseTextOf(sections: unknown): string {
+  const s = (sections as { summary?: Record<string, unknown> } | null)?.summary ?? {};
+  return [['', s.oneLiner], ['Why it wins: ', s.whyItWins], ['Why now: ', s.whyNow]]
+    .filter(([, v]) => typeof v === 'string' && v.trim())
+    .map(([k, v]) => `${k}${v as string}`).join(' ');
+}
 
 async function judgeSpendUsd(db: Db): Promise<number> {
   const [row] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
@@ -58,7 +98,9 @@ async function reviewTotals(db: Db, ideaIds: string[]): Promise<Map<string, numb
  * Judges the held-out (test) Board pairs, each twice with the order swapped, with the owner's training pairs as
  * few-shot examples picked exactly as the tournament picks them; test pairs that share an idea with an example are left
  * out (counted in `excludedPairs`). Accuracy is the share where the kept idea wins the combined result (a split, draw or error is a
- * miss); consistency is the share where both orders agree on a winner. Stores a summary in `audit.judge.latest`.
+ * miss); consistency is the share where both orders agree on a winner. A run with the live configuration stores a summary
+ * in `audit.judge.latest`; a variant (other prompt, model, few-shot count, context or `since`) appends to `audit.judge.variants`
+ * (last 20) and leaves the live summary alone.
  */
 export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> {
   const { db, router } = deps;
@@ -66,11 +108,22 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
   const spentBefore = await judgeSpendUsd(db);
   await syncJudgePairs(db);
   const limit = Math.max(1, Math.min(deps.limit ?? JUDGE_PAIRS_MAX, JUDGE_PAIRS_MAX));
-  const isTest = eq(judgePairs.split, 'test');
+  const promptNo = deps.prompt === undefined ? await judgePromptVersion(db) : parseJudgePromptVersion(deps.prompt);
+  if (promptNo === null) throw new Error(`Not a judge prompt version: ${deps.prompt}`);
+  const livePromptNo = await judgePromptVersion(db);
+  const fewshotN = Math.max(0, Math.min(deps.fewshot ?? FEWSHOT_PAIRS_MAX, JUDGE_FEWSHOT_LIMIT));
+  const context = deps.context ?? 'idea';
+  const prompt = loadPrompt('judge', promptNo);
+  const settings: JudgeVariantSettings = {
+    prompt: prompt.version, model: deps.model ?? router.modelFor('judge'), fewshot: fewshotN, context,
+    since: deps.since ? deps.since.toISOString() : null, label: deps.label?.trim() || null,
+  };
+  const live = promptNo === livePromptNo && deps.model === undefined && fewshotN === FEWSHOT_PAIRS_MAX && context === 'idea' && !deps.since;
+  const isTest = deps.since ? and(eq(judgePairs.split, 'test'), gte(judgePairs.createdAt, deps.since)) : eq(judgePairs.split, 'test');
   const [{ n: testTotal } = { n: 0 }] = await db.select({ n: count() }).from(judgePairs).where(isTest);
   // The examples first, exactly as the tournament picks them (train split only), so calibration measures the same judge.
   const { shots: fewShot, ideaIds: shown } = testTotal > 0
-    ? await fewShotPairsWithIds(db, FEWSHOT_PAIRS_MAX, router)
+    ? await fewShotPairsWithIds(db, fewshotN, router)
     : { shots: [], ideaIds: new Set<string>() };
   // Then only test pairs sharing no idea with an example (idea-level leakage would inflate accuracy).
   const clear = shown.size
@@ -82,8 +135,15 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
   const pairs = await db.select().from(judgePairs).where(clear).orderBy(asc(judgePairs.pairHash)).limit(limit);
   const ideaIds = [...new Set(pairs.flatMap((p) => [p.keptIdeaId, p.killedIdeaId]))];
   const rows = ideaIds.length ? await db.select().from(ideas).where(inArray(ideas.id, ideaIds)) : [];
-  const views = new Map(rows.map((r) => [r.id, ideaView(r)]));
-  const ctx = { runId: null, promptVersion: loadPrompt('judge').version };
+  const caseTexts = new Map<string, string>();
+  if (context === 'case' && ideaIds.length) {
+    for (const c of await db.select({ id: cases.ideaId, sections: cases.sections }).from(cases).where(inArray(cases.ideaId, ideaIds))) {
+      const t = caseTextOf(c.sections);
+      if (t) caseTexts.set(c.id, t);
+    }
+  }
+  const views = new Map(rows.map((r) => [r.id, { ...ideaView(r), ...(caseTexts.has(r.id) ? { caseText: caseTexts.get(r.id) } : {}) }]));
+  const ctx = { runId: null, promptVersion: prompt.version };
 
   const byConf: Record<1 | 2 | 3, { n: number; right: number }> = { 1: { n: 0, right: 0 }, 2: { n: 0, right: 0 }, 3: { n: 0, right: 0 } };
   let right = 0;
@@ -93,7 +153,7 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     const kept = views.get(p.keptIdeaId);
     const killed = views.get(p.killedIdeaId);
     if (!kept || !killed) continue;
-    const jd = { router, ctx, fewShot };
+    const jd = { router, ctx, fewShot, promptVersion: promptNo };
     // `ab` shows the kept idea first ('a' is the kept idea); `ba` shows the killed idea first.
     const [ab, ba] = await Promise.all([judgePair(kept, killed, jd), judgePair(killed, kept, jd)]);
     const result = combine(ab.verdict, ba.verdict);
@@ -130,19 +190,35 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     tooFew: judged < JUDGE_MIN_PAIRS,
     examples: fewShot.length,
     excludedPairs,
+    settings,
+    live,
   };
-  await setSetting(db, SETTING_KEY, {
-    at: new Date().toISOString(), accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs, tooFew: report.tooFew,
-  });
+  const at = new Date().toISOString();
+  if (live) {
+    await setSetting(db, SETTING_KEY, { at, accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs, tooFew: report.tooFew });
+  } else {
+    // A variant never touches the live summary the scorecard reads.
+    const prev = await getSetting(db, VARIANTS_KEY);
+    const list = Array.isArray(prev) ? prev : [];
+    await setSetting(db, VARIANTS_KEY, [...list, { at, label: settings.label, settings, accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs }].slice(-JUDGE_VARIANTS_MAX));
+  }
   return report;
 }
 
 const f2 = (n: number) => n.toFixed(2);
 const goal = (v: number, g: number) => `${f2(v)} against the goal of ${f2(g)}: ${v >= g ? 'PASS' : 'FAIL'}`;
 
+function settingsLines(r: JudgeReport): string[] {
+  const s = r.settings;
+  return [
+    `Configuration (${r.live ? 'live' : 'variant, not written to the scorecard summary'}): prompt ${s.prompt}, model ${s.model}, few-shot ${s.fewshot}, context ${s.context}, since ${s.since ?? 'all'}${s.label ? `, label "${s.label}"` : ''}.`,
+  ];
+}
+
 /** Markdown for output/audit/judge-<date>.md. */
 export function renderJudgeReport(r: JudgeReport, date: string): string {
-  const lines = [`# Judge calibration, ${date}`, ''];
+  const lines = [`# Judge calibration, ${date}${r.settings.label ? `: ${r.settings.label}` : ''}`, ''];
+  lines.push(...settingsLines(r), '');
   lines.push(`Judged ${r.pairs} held-out Board pair(s), each twice with the order swapped. Cost $${r.spentUsd.toFixed(4)}.`, '');
   lines.push(`The judge saw ${r.examples} few-shot example(s), picked as the tournament picks them. ${r.excludedPairs} held-out pair(s) share an idea with an example and were left out.`, '');
   if (r.tooFew) lines.push(`**Too few pairs:** ${r.pairs} is under ${JUDGE_MIN_PAIRS}, so these numbers are noise. Keep or kill more cases, then run it again.`, '');
@@ -162,7 +238,9 @@ export function renderJudgeReport(r: JudgeReport, date: string): string {
 /** Writes the report to `<dir>/judge-<date>.md` and returns the path. */
 export function writeJudgeReport(r: JudgeReport, dir: string, date: string): string {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, `judge-${date}.md`);
+  // A variant gets its own file (label slug) so same-day variants do not overwrite the live report or each other.
+  const slug = r.live ? '' : `-${(r.settings.label ?? 'variant').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'variant'}`;
+  const path = join(dir, `judge-${date}${slug}.md`);
   writeFileSync(path, renderJudgeReport(r, date), 'utf8');
   return path;
 }

@@ -276,3 +276,18 @@ describe('tournament few-shot reasons', () => {
     expect(judge.prompts[0]).toContain('because it earns more');
   });
 });
+
+describe('tournament judge prompt setting', () => {
+  it('uses judge.v1 by default and judge.v2 when setting judge.promptVersion says so', async () => {
+    const { setSetting } = await import('../../../src/validation/settings');
+    const t1 = await setup(2);
+    const r1 = fakeRouter({ structured: { judge: [{ winner: 'A', confidence: 3, reasons }, { winner: 'B', confidence: 3, reasons }] } });
+    await runTournament(t1.deps(r1), t1.run, { phase: 'main', sketchIds: t1.ids, rounds: 1, maxCalls: 10 });
+    expect(r1.calls[0]!.prompt).not.toContain('smaller revenue ceiling');
+    const t2 = await setup(2);
+    await setSetting(t2.db, 'judge.promptVersion', 'v2');
+    const r2 = fakeRouter({ structured: { judge: [{ winner: 'A', confidence: 3, reasons }, { winner: 'B', confidence: 3, reasons }] } });
+    await runTournament(t2.deps(r2), t2.run, { phase: 'main', sketchIds: t2.ids, rounds: 1, maxCalls: 10 });
+    expect(r2.calls[0]!.prompt).toContain('smaller revenue ceiling');
+  });
+});

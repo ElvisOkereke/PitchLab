@@ -9,6 +9,7 @@ import { costOf, type Usage } from '../config/prices';
 import { createAnthropicAdapter } from './anthropic';
 import { createOpenAIAdapter } from './openai';
 import { withRetry } from './retry';
+import { getSetting } from '../validation/settings';
 import {
   StructuredOutputError,
   type AdapterRequest,
@@ -31,6 +32,8 @@ export function createRouter(opts: {
   db: Db;
   models: Record<ModelStage, string>;
   maxConcurrency: number;
+  /** The judge stage takes its model from setting `judge.model` when set (live tournament and calibration without `--model`). */
+  judgeFromSettings?: boolean;
 }): ModelRouter {
   const { adapters, db, models } = opts;
   const limit = pLimit(opts.maxConcurrency);
@@ -62,12 +65,25 @@ export function createRouter(opts: {
   }
 
   /** Run one adapter call under the concurrency limit with retries, logging every attempt. */
-  function invoke<T>(
+  /** The model for a call: `models[stage]`, except the judge stage with a valid setting `judge.model` (a bad one is ignored). */
+  async function modelOf(stage: ModelStage): Promise<string> {
+    if (stage !== 'judge' || !opts.judgeFromSettings) return models[stage];
+    try {
+      const v = await getSetting(db, 'judge.model');
+      if (typeof v !== 'string' || v.trim() === '') return models[stage];
+      validateModelConfig({ ...models, judge: v.trim() });
+      return v.trim();
+    } catch {
+      return models[stage];
+    }
+  }
+
+  async function invoke<T>(
     stage: ModelStage,
     ctx: CallCtx,
     call: (adapter: ProviderAdapter, model: string) => Promise<{ result: T; usage: Usage }>,
   ): Promise<T> {
-    const model = models[stage];
+    const model = await modelOf(stage);
     const provider = adapterFor(model);
     const adapter = adapters[provider];
     const attempt = async (): Promise<T> => {
@@ -158,10 +174,11 @@ export function createRouter(opts: {
   };
 }
 
-export function buildRouter(env: Env, db: Db): ModelRouter {
+/** `extra` overrides stages on top of MODEL_OVERRIDES (calibration `--model`); an explicit judge model pins it over setting `judge.model`. */
+export function buildRouter(env: Env, db: Db, extra: Partial<Record<ModelStage, string>> = {}): ModelRouter {
   const unknown = Object.keys(env.MODEL_OVERRIDES).filter((k) => !isModelStage(k));
   if (unknown.length) throw new Error(`MODEL_OVERRIDES has unknown stage(s): ${unknown.join(', ')}`);
-  const models = resolveModelConfig(env.MODEL_OVERRIDES);
+  const models = resolveModelConfig({ ...env.MODEL_OVERRIDES, ...extra });
   validateModelConfig(models);
   return createRouter({
     adapters: {
@@ -171,5 +188,6 @@ export function buildRouter(env: Env, db: Db): ModelRouter {
     db,
     models,
     maxConcurrency: env.LLM_MAX_CONCURRENCY,
+    judgeFromSettings: extra.judge === undefined,
   });
 }

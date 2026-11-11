@@ -92,7 +92,7 @@ export type CliHandlers = {
 };
 
 export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
-export type AuditJudgeOpts = { limit?: number };
+export type AuditJudgeOpts = { limit?: number; prompt?: string; model?: string; fewshot?: number; context?: 'idea' | 'case'; since?: string; label?: string };
 export type AuditScaleOpts = { last?: boolean; decided?: boolean; dryRun?: boolean };
 
 const PASS_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -417,6 +417,22 @@ export function buildProgram(h: CliHandlers): Command {
       if (!Number.isInteger(n) || n < 1) throw new CliError('--limit must be a whole number of 1 or more.', 2);
       return n;
     })
+    .option('--prompt <version>', 'judge prompt version to calibrate (v1, v2, ...); default the live one (setting judge.promptVersion)', (v: string) => {
+      if (!/^v?\d+$/.test(v)) throw new CliError('--prompt must look like v1 or v2.', 2);
+      return v;
+    })
+    .option('--model <id>', 'judge model for this calibration only (the live judge model is not changed)')
+    .option('--fewshot <n>', 'few-shot examples shown, 0 to 12 (default 6, as the tournament)', (v: string) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0 || n > 12) throw new CliError('--fewshot must be a whole number from 0 to 12.', 2);
+      return n;
+    })
+    .addOption(new Option('--context <kind>', 'what each idea shows: idea (the sketch fields, default) or case (also its case summary text)').choices(['idea', 'case']))
+    .option('--since <date>', 'only judge held-out pairs created on or after this ISO date (a fresh holdout of new Board decisions)', (v: string) => {
+      if (Number.isNaN(Date.parse(v))) throw new CliError('--since must be an ISO date such as 2026-11-01.', 2);
+      return v;
+    })
+    .option('--label <text>', 'a label for this variant in the report')
     .action(async (opts: AuditJudgeOpts) => {
       process.exitCode = await h.auditJudge(opts);
     });

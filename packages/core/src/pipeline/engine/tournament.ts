@@ -10,7 +10,7 @@ import { errorMessage } from '../../tools/scrub';
 import { seededRandom } from '../seed-context';
 import type { RunConfig, StageDeps } from '../types';
 import { byeKey, combine, pairKey, swissPairs, topByCell, topByElo, update, type MatchResult, type Verdict } from './elo';
-import { judgePair, type JudgeResult, type JudgeSketch } from './judge';
+import { judgePair, judgePromptVersion, type JudgeResult, type JudgeSketch } from './judge';
 import { ELO_START, JUDGE_CALLS_MAX, MAX_PER_BUSINESS_MODEL, MAX_PER_CELL, SWISS_ROUNDS, TOP_SKETCHES } from './kinds';
 import type { FewShot } from './schema';
 
@@ -115,11 +115,12 @@ export async function runTournament(
     }
     return { views, fewShot };
   })());
-  const ctx: CallCtx = { runId: run.id, promptVersion: loadPrompt('judge').version };
+  const promptVersion = await judgePromptVersion(db);
+  const ctx: CallCtx = { runId: run.id, promptVersion: loadPrompt('judge', promptVersion).version };
 
   const judgeMatch = async (round: number, a: string, b: string): Promise<MatchResult> => {
     const { views, fewShot } = await loadJudgeInputs();
-    const deps = { router, ctx, fewShot };
+    const deps = { router, ctx, fewShot, promptVersion };
     const ab = await judgePair(views.get(a)!, views.get(b)!, deps);
     const ba = await judgePair(views.get(b)!, views.get(a)!, deps);
     const result = combine(ab.verdict as Verdict, ba.verdict as Verdict);

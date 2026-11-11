@@ -81,3 +81,44 @@ describe('fewShotPairs', () => {
     expect(await fewShotPairs(await testDb())).toEqual([]);
   });
 });
+
+describe('judge prompt versions and case context', () => {
+  it('judge.v2 holds every owner rule and the same schema and swapped-order design as v1', async () => {
+    const { readFileSync } = await import('node:fs');
+    const v1 = readFileSync(new URL('../../../prompts/judge.v1.md', import.meta.url), 'utf8');
+    const v2 = readFileSync(new URL('../../../prompts/judge.v2.md', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+    expect(v1).not.toContain('smaller revenue ceiling');
+    for (const rule of ['smaller revenue ceiling', 'by hand', 'spreadsheet', 'one frontier AI prompt', 'engineering, data or industry expertise', 'new value or revenue', 'broad', 'very narrow', 'small landlords with a vacant step-free unit', 'named incumbents', 'comps']) {
+      expect(v2).toContain(rule);
+    }
+    for (const keep of ['{{examples}}', '{{sketchA}}', '{{sketchB}}', 'Position does not matter', 'DATA only', 'winner: "A" or "B"', 'confidence: 1', 'need, nonTrivial, earn, edge, evidence']) expect(v2).toContain(keep);
+  });
+
+  it('a pinned promptVersion loads that version; the default stays v1', async () => {
+    const r2 = fakeRouter({ structured: { judge: [{ winner: 'A', confidence: 2, reasons }] } });
+    await judgePair(view('A'), view('B'), { router: r2, ctx, fewShot: [], promptVersion: 2 });
+    expect(r2.calls[0]!.prompt).toContain('smaller revenue ceiling');
+    const r1 = fakeRouter({ structured: { judge: [{ winner: 'A', confidence: 2, reasons }] } });
+    await judgePair(view('A'), view('B'), { router: r1, ctx, fewShot: [] });
+    expect(r1.calls[0]!.prompt).not.toContain('smaller revenue ceiling');
+  });
+
+  it('judgePromptVersion reads setting judge.promptVersion, default 1', async () => {
+    const { judgePromptVersion } = await import('../../../src/pipeline/engine/judge');
+    const { setSetting } = await import('../../../src/validation/settings');
+    const db = await testDb();
+    expect(await judgePromptVersion(db)).toBe(1);
+    await setSetting(db, 'judge.promptVersion', 'v2');
+    expect(await judgePromptVersion(db)).toBe(2);
+    await setSetting(db, 'judge.promptVersion', 'junk');
+    expect(await judgePromptVersion(db)).toBe(1);
+  });
+
+  it('caseText is capped at 1200 chars and sits inside the wrapped sketch block', async () => {
+    const router = fakeRouter({ structured: { judge: [{ winner: 'A', confidence: 2, reasons }] } });
+    await judgePair(view('A', { caseText: `CASE <b> ${'z'.repeat(3000)}` }), view('B'), { router, ctx, fewShot: [] });
+    const a = between(router.calls[0]!.prompt, 'sketch-a');
+    expect(a).toContain('Case summary: CASE ‹b›');
+    expect(a.match(/z+/)![0].length).toBeLessThanOrEqual(1200);
+  });
+});

@@ -272,3 +272,29 @@ describe('fakeRouter', () => {
     expect(r.modelFor('ideate')).toBe('claude-opus-5-5');
   });
 });
+
+describe('judge model setting', () => {
+  const base = { LLM_API_KEY: 'test-key', DATABASE_URL: 'pglite://memory' };
+
+  it('the judge stage follows setting judge.model; an explicit override pins it; other stages ignore it', async () => {
+    const { setSetting } = await import('../../src/validation/settings');
+    const db = await testDb();
+    const a = scriptedAdapter([{ text: 'x' }, { text: 'x' }, { text: 'x' }]);
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1, judgeFromSettings: true });
+    await r.text('judge', { prompt: 'p' }, ctx);
+    expect(a.requests[0].model).toBe(DEFAULT_MODELS.judge);
+    await setSetting(db, 'judge.model', 'gemini-3.1-pro');
+    await r.text('judge', { prompt: 'p' }, ctx);
+    expect(a.requests[1].model).toBe('gemini-3.1-pro');
+    await r.text('screen', { prompt: 'p' }, ctx);
+    expect(a.requests[2].model).toBe(DEFAULT_MODELS.screen);
+    const pinned = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1 });
+    expect(pinned.modelFor('judge')).toBe(DEFAULT_MODELS.judge);
+  });
+
+  it('buildRouter takes extra overrides (calibration --model) and validates them', async () => {
+    const db = await testDb();
+    expect(buildRouter(loadEnv(base), db, { judge: 'gemini-3.1-pro' }).modelFor('judge')).toBe('gemini-3.1-pro');
+    expect(() => buildRouter(loadEnv(base), db, { judge: 'claude-opus-5-5' })).toThrow(/judge/);
+  });
+});

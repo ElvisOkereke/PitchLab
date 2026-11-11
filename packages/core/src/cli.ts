@@ -915,7 +915,12 @@ async function auditJudgeCommand(opts: AuditJudgeOpts): Promise<number> {
   const env = loadEnv();
   const db = await openDb(env.DATABASE_URL);
   try {
-    await runJudgeAudit({ db, router: buildRouter(env, db), log: out, limit: opts.limit, dir: AUDIT_DIR, date: new Date().toISOString().slice(0, 10), out });
+    // --model builds a router with that judge model (validated like MODEL_OVERRIDES); other runs follow the live judge model.
+    const router = buildRouter(env, db, opts.model ? { judge: opts.model } : {});
+    await runJudgeAudit({
+      db, router, log: out, limit: opts.limit, prompt: opts.prompt, model: opts.model, fewshot: opts.fewshot, context: opts.context,
+      since: opts.since ? new Date(opts.since) : undefined, label: opts.label, dir: AUDIT_DIR, date: new Date().toISOString().slice(0, 10), out,
+    });
     return 0;
   } finally {
     await closeDb(db);

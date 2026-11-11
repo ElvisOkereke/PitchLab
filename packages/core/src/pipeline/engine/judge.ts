@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { Db } from '../../db/client';
+import { getSetting } from '../../validation/settings';
 import { loadPrompt, type LoadedPrompt } from '../../llm/prompts';
 import type { CallCtx, ModelRouter } from '../../llm/types';
 import { capField, wrapUntrusted } from '../../llm/untrusted';
@@ -10,7 +12,7 @@ export const JUDGE_CRITERIA = ['need', 'nonTrivial', 'earn', 'edge', 'evidence']
 export type Criterion = (typeof JUDGE_CRITERIA)[number];
 
 /** A sketch as the judge sees it, plus its cited evidence lines (voice, strength label, short quote or title). */
-export type JudgeSketch = SketchView & { evidence?: string[] };
+export type JudgeSketch = SketchView & { evidence?: string[]; /** The idea's case summary text (calibration `--context case`); capped and wrapped with the sketch. */ caseText?: string };
 
 export type JudgeResult = {
   verdict: 'a' | 'b' | 'error';
@@ -25,6 +27,10 @@ const JUDGE_MAX_TOKENS = 800;
 const REASON_MAX = 300;
 const FIELD_MAX = 300;
 const TITLE_MAX = 200;
+/** Most characters of case text one sketch shows. */
+export const CASE_TEXT_MAX = 1200;
+/** The judge prompt version the tournament uses when setting `judge.promptVersion` is unset or invalid. */
+export const JUDGE_DEFAULT_PROMPT = 1;
 
 const JudgeAnswerSchema = z.object({
   winner: z.enum(['A', 'B']),
@@ -32,8 +38,25 @@ const JudgeAnswerSchema = z.object({
   reasons: z.object(Object.fromEntries(JUDGE_CRITERIA.map((c) => [c, z.string()])) as Record<Criterion, z.ZodString>),
 });
 
-let prompt: LoadedPrompt | null = null;
-const judgePrompt = () => (prompt ??= loadPrompt('judge'));
+const prompts = new Map<number, LoadedPrompt>();
+const judgePrompt = (version: number) => {
+  let p = prompts.get(version);
+  if (!p) prompts.set(version, p = loadPrompt('judge', version));
+  return p;
+};
+
+/** 'v2' or '2' (or the number 2) as 2; anything else null. */
+export function parseJudgePromptVersion(v: unknown): number | null {
+  const m = /^v?(\d+)$/.exec(String(v ?? '').trim());
+  return m && Number(m[1]) >= 1 ? Number(m[1]) : null;
+}
+
+/** The live judge prompt version: setting `judge.promptVersion` ('v1', 'v2', ...), default v1; an unknown or missing version falls back to v1. */
+export async function judgePromptVersion(db: Db): Promise<number> {
+  const n = parseJudgePromptVersion(await getSetting(db, 'judge.promptVersion'));
+  if (n === null) return JUDGE_DEFAULT_PROMPT;
+  try { judgePrompt(n); return n; } catch { return JUDGE_DEFAULT_PROMPT; }
+}
 
 const noReasons = (): Record<Criterion, string> => Object.fromEntries(JUDGE_CRITERIA.map((c) => [c, ''])) as Record<Criterion, string>;
 
@@ -46,6 +69,7 @@ function block(s: JudgeSketch, withEvidence: boolean): string {
     `Edge: ${capField(s.edge, FIELD_MAX)}`,
   ];
   if (s.whyNotTrivial) lines.push(`Why not trivial: ${capField(s.whyNotTrivial, FIELD_MAX)}`);
+  if (withEvidence && s.caseText) lines.push(`Case summary: ${capField(s.caseText, CASE_TEXT_MAX)}`);
   if (withEvidence) {
     lines.push('Cited evidence:');
     lines.push(...(s.evidence?.length ? s.evidence.map((e) => `- ${capField(e, FIELD_MAX)}`) : ['(none cited)']));
@@ -65,17 +89,17 @@ function examples(fewShot: FewShot[]): string {
 }
 
 /**
- * One judge call (model stage `judge`, prompt `judge.v1`): which of two sketches the owner should rather build, on the
+ * One judge call (model stage `judge`, prompt `judge.v<promptVersion>`, default v1): which of two sketches the owner should rather build, on the
  * spec §4 criteria in order, with the owner's few-shot examples. `a` is shown first. All sketch and example text is
  * wrapped as untrusted. A call that throws or answers outside the schema gives verdict `error` (never throws).
  */
 export async function judgePair(
   a: JudgeSketch,
   b: JudgeSketch,
-  deps: { router: ModelRouter; ctx: CallCtx; fewShot: FewShot[] },
+  deps: { router: ModelRouter; ctx: CallCtx; fewShot: FewShot[]; /** Pinned prompt version (default 1). */ promptVersion?: number },
 ): Promise<JudgeResult> {
   try {
-    const p = judgePrompt();
+    const p = judgePrompt(deps.promptVersion ?? JUDGE_DEFAULT_PROMPT);
     const out = await deps.router.structured('judge', {
       prompt: p.render({
         examples: wrapUntrusted('examples', examples(deps.fewShot)),

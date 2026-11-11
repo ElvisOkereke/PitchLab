@@ -237,7 +237,15 @@ flowchart TD
   report and the CLI say how many test pairs that left out. The report (`output/audit/judge-<date>.md`) gives pairwise accuracy on test,
   position consistency, accuracy by confidence, a comparison with the reviewer and the cost, and says "too few pairs" below 10.
   Goals (reported, never enforced): accuracy 0.70, consistency 0.80. A summary goes to setting `audit.judge.latest`
-  (`{ at, accuracy, consistency, pairs, tooFew }`), which the scorecard reads. The reasons shown to the judge are written once
+  (`{ at, accuracy, consistency, pairs, tooFew }`), which the scorecard reads. Variant options (`--prompt`, `--model`, `--fewshot`,
+  `--context idea|case`, `--since`, `--label`) put the settings at the top of the report; a run whose settings differ from the live
+  configuration (prompt = `judge.promptVersion`, no `--model`, few-shot 6, idea context, no `--since`) never writes
+  `audit.judge.latest` but appends `{ at, label, settings, accuracy, consistency, pairs }` to `audit.judge.variants` (last 20) and
+  writes `judge-<date>-<label>.md`. `--since` filters test pairs by `judge_pairs.createdAt`. `--context case` adds the case summary
+  (one-liner, why it wins, why now; 1,200 characters, inside the wrapped sketch block). The tournament reads setting
+  `judge.promptVersion` (default `v1`; pinned through `loadPrompt('judge', n)`, so adding `judge.v2` changes nothing until set);
+  the router reads setting `judge.model` on each judge call (validated as a model config; a bad value is ignored; calibration
+  `--model` pins its own). `judge.v2` = v1 plus the owner's taste rules. The reasons shown to the judge are written once
   per pair (`judge-reason.v1`) and stored.
 - **Source assessment** (`library/strength.ts`, web-safe; migration 0016 adds `knowledge_items.assessment`): `{ directness, bias,
   strength (1-5, code), why, corroboration }`. Strength starts at 3: voice operator or customer +1, vendor −1; quote verified +1; corroboration
