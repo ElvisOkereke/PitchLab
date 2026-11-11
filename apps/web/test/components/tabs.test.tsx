@@ -42,6 +42,18 @@ describe('SummaryTab', () => {
     expect(forYou.textContent).not.toContain('Claim C');
   });
 
+  it('shows a comps verdict that lists comps with who pays and outcome, as text', () => {
+    const view = caseViewFixture({});
+    const text = 'comps (nearest library startups, dossier entries first):\n- <b>Acme</b> (live, dossier): who pays: clinics\n- Beta (dead): who pays: unknown';
+    view.gate = [gateRow('comps', true, text)];
+    const { container } = render(<SummaryTab view={view} />);
+    const li = container.querySelector('[data-testid="gate-verdicts"] li') as HTMLElement;
+    expect(li.textContent).toContain('✅ Comps:');
+    expect(li.textContent).toContain('<b>Acme</b> (live, dossier): who pays: clinics');
+    expect(li.textContent).toContain('Beta (dead): who pays: unknown');
+    expect(li.querySelector('b')).toBeNull();
+  });
+
   it('says so when the case has no claim rows', () => {
     const { container } = render(<SummaryTab view={caseViewFixture({ claims: [] })} />);
     expect(container.querySelector('[data-testid="for-you"]')!.textContent)

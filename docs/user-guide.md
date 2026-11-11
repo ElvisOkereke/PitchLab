@@ -133,6 +133,12 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 - **Page fetching:** The **Page fetching, last 30 days** card shows how many pages came through, overall and by route,
   the sites that fail most and why ("blocked (403)", "too little text (needs JavaScript)"). It stays empty until your
   next mission. The Coverage card also shows the **social share**: how much of the library comes from community sites.
+- **Strength badges and dossiers:** each entry can carry a badge such as "strength 4/5, first-hand" (hover it for the
+  one-sentence why). Strength is worked out in code: higher for operators and customers, verified quotes, other
+  independent sites saying the same and official sources; lower for vendors and old pages. A startup entry can also show a
+  **Company dossier**: who pays, the pricing unit and range, funding, why it worked or died, and similar companies, each
+  from a page that was fetched. Badges appear after Claude runs the assessment backfill (`npm run gen -- library assess`);
+  dossiers fill in gradually (the worker spends up to $2 a day, or run `npm run gen -- dossiers run`).
 - **Good:** The Coverage card shows two health targets: at least 60% of problem entries in operator or neutral voice
   (people who run the business, or neutral sources, rather than vendors), and entries from 10 or more countries.
 - **Fix mistakes:** Open an entry and press **Reject** to take it out of search and out of runs. It stays rejected if it
@@ -190,6 +196,19 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
   belongs to one. The Cases column lists each case by title, and each idea shows what became of it: **case** (a link),
   **gate killed**, **not shortlisted** or **duplicate**. On the board and on a case page, **From:** shows the date, seed
   and pass of the run behind it. Press it to jump to that run in History.
+
+### Read the tournament
+
+- **What:** On **Runs**, a run made by the new idea engine has a **tournament** line under its stages. Open it to see the
+  top 12 sketches by **Elo** (their rating from head-to-head matches), each one's **diversity cell**, the sketch it was
+  improved from (**Parent**) and its improved versions (**Variants**; press a title to jump to that row), how many sketches
+  were dropped as repeats, the **unique share** (how many survived the repeat filter) and how many cells the run filled.
+  If it says "fell back to v14", the run had no sketches and used the old way of writing ideas.
+- **Why:** It shows what the engine considered before the 12 full ideas were written, and why those ones came first.
+- **Good:** A unique share of 60% or more and 8 or more cells. Older runs have no tournament line.
+- **On a case:** the Summary tab's gate verdicts now include **Not trivial** (a failure kills the idea) and **Comps**, a
+  flag that lists the nearest startups with who pays and how they ended, or says "no comps found" or "only dead comps". A
+  comps flag never kills an idea; it tells you what to check.
 
 ### Check "Needs you"
 
@@ -513,6 +532,19 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline
   --dry-run` shows what a baseline would hold without saving it.
+
+## Calibrate the idea judge
+
+- **What:** The run's tournament judge picks which sketch you would rather build. `npm run gen -- audit judge` checks it
+  against you: it takes pairs of cases where you kept one and killed the other, sets 40% aside as a test the judge never
+  sees, asks it to pick each pair twice with the order swapped, and writes `output/audit/judge-<date>.md` with its accuracy,
+  its consistency and the cost. Below 10 pairs it says "too few pairs" and the numbers mean nothing yet.
+- **Why:** The goal is 70% accuracy and 80% consistency. The tournament runs either way; the report tells you how far to
+  trust its order. Keep sorting the Board: every decision is another pair.
+- **Progress:** the benchmark gains engine rows: unique sketch share, cells filled, judge accuracy (latest calibration),
+  trivial kill rate, comps coverage and engine cost per run. A pass from before the engine shows "no data" for them.
+- **Other commands:** `npm run gen -- dossiers run` builds company dossiers now, `npm run gen -- library assess` rates the
+  strength of existing library entries (both cost model calls and stop at their caps).
 
 ## Check the scale rule against your decisions
 

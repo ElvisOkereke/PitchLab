@@ -20,7 +20,7 @@ const idea = (o: Partial<RunListRow['ideas'][number]> = {}): RunListRow['ideas']
 function run(ideas: RunListRow['ideas']): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded',
-    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 1, passLabel: null, cases: [],
+    currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 1, tournament: null, passLabel: null, cases: [],
     stages: [], ideas,
   };
 }

@@ -173,6 +173,27 @@ Up to 6 recent finds shown to the idea generator as proof that people want somet
 ### Feeds
 Sources the worker reads on its own every 6 hours: Reddit, Bluesky, Hacker News, arXiv, Hugging Face, GitHub trending, newsletters and launch feeds, and YouTube Shorts. What they find goes into the library, for at most $2 a day. Settings shows each source's last run and errors.
 
+### Sketch
+A short, cheap draft of a business idea: title, buyer, problem, how it earns, its edge and why it is not trivial. A run writes about 90 of them first, then filters and ranks them, and only the best get written up as full ideas.
+
+### Tournament
+How a run ranks its sketches. A different AI family judges them head to head, twice per pair with the order swapped, on which business you would rather build. It learns from examples of cases you kept over cases you killed, but your own verdict on the Board is what counts.
+
+### Elo
+A rating that rises when a sketch wins a head-to-head match and falls when it loses, starting at 1200. The run page lists the top 12 sketches by Elo. It is a ranking inside one run, not a score out of 5.
+
+### Diversity cell
+A slot defined by buyer kind (business, prosumer or consumer), edge kind (such as data, workflow or regulation) and business model. The run keeps at most 2 ideas per cell, so the top ideas differ from each other instead of being 12 versions of one.
+
+### Dossier
+A fact sheet on one startup in the library: who pays, the pricing unit, funding, outcome and why it worked or died. Every fact comes from a page the worker fetched, with a verified quote. Dossiers are what make the comps on a case useful.
+
+### Source strength
+A 1 to 5 rating of how far to trust a library entry, worked out in code. It rises for operator or customer voices, a verified quote, other independent sites saying the same thing and official sources, and falls for vendors and old pages. The Library page shows it as a badge.
+
+### Trivial
+A gate check that kills an idea when a person with a spreadsheet, or one prompt to a frontier AI given the data, would deliver most of its value. It exists because you killed most ideas for exactly that reason. The verdict names the hard part, or says there is none.
+
 ### Pairing code
 A one-time code that ties your Telegram bot to your chat: send /start and the code to the bot. Anyone else who writes to the bot is ignored, and a chat that sends 10 wrong codes is ignored from then on. Reset pairing makes a new one.
 

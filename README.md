@@ -20,7 +20,7 @@ flowchart LR
     B[Background research] --> L
     F[Finds you share: Telegram or paste] --> L
     A[Automatic feeds: Reddit, Bluesky, HN, newsletters...] --> L
-    L --> R[Run: harvest, ideate, dedupe, screen, gate]
+    L --> R[Run: harvest, sketch, tournament, ideate, dedupe, screen, gate]
     W[Live web search] --> R
     R --> C[Case: write, verify, score]
     C --> Y[You read and score it]
@@ -182,6 +182,18 @@ missions** card.
 - **What runs use:** only active entries with a verified quote feed a run's evidence (`problem` and `pricing`, best 3
   per domain, with a small bonus for operator or neutral voice and a penalty for age over 2 years). Startup and pricing
   entries feed ideate and the gate as context.
+- **Source strength:** every entry has an assessment: how direct the source is (first hand, customer review, vendor,
+  press, aggregate, official), its bias, a **strength** from 1 to 5 computed in code (start 3; operator or customer
+  voice +1, vendor −1, verified quote +1, other independent sites saying the same +1 at 2 or more and +2 at 5 or more,
+  older than 2 years −1, official source such as the Federal Register, World Bank or YC +1) and a one-sentence why.
+  The Library page shows it as a badge, and ideation and the judge see it next to each entry. `gen library assess`
+  fills it in for existing entries (cheap model, stops at `--max-usd`, default 25).
+- **Company dossiers:** a worker job reads each startup's homepage, pricing page and one funding-or-shutdown search
+  (dead companies also get a post-mortem search) and records who pays, the pricing unit and range, revenue drivers,
+  acquisition, moat, use cases, why it worked or died, comps, funding and traction, each backed by a verified quote
+  from a fetched page. Founder names are not stored. It spends at most `dossiers.dailyUsd` a day (default $2), yields
+  to queued runs, and goes cited startups first, then those nearest this run's top sketches, then unknown business
+  models. A page that never names the company is discarded (`dossierStatus: unmatched`). `gen dossiers run` runs it now.
 
 #### Finds
 
@@ -218,7 +230,8 @@ follow its progress.
 - **Seeds:** `open` (6 random sectors of the market plus 5 consumer segments picked for the run), `sector` (up to 8
   sectors you tick), `lens` (up to 8 idea patterns you tick), `idea` (your own idea, at least 50 characters; it always
   gets a case and the gate only advises). A gate-killed idea can be re-run with **Re-run as owner idea** on the Board.
-- **Stages, in order:** harvest → ideate → dedupe → screen → gate → case → verify → score. Each stage's output is
+- **Stages, in order:** harvest → sketch → archive → tournament → evolve → ideate → dedupe → screen → gate → case →
+  verify → score (the four middle-left ones are the idea engine; see below). Each stage's output is
   saved, so `gen resume <runId>` restarts a failed run at the failed stage. A stage with nothing left to pass on skips
   the rest.
   - **harvest:** library signals first (up to 15 matching entries, or 7 once the library holds 50 or more eligible
@@ -229,7 +242,35 @@ follow its progress.
     setting `harvest.techForums` is on) are used when a software-adjacent sector or a lens seed is used. The model
     extracts pain or opportunity quotes and tags each one's voice; a quote is kept only if it appears in the fetched
     text.
-  - **ideate** (prompt v12): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** and at
+  - **How ideas are made now (engine v2).** Instead of writing 12 full ideas straight from the signals, a run
+    sketches wide, filters repeats, ranks the sketches head to head, improves the best, and only then writes full ideas:
+    - **sketch** (prompt `sketch.v1`, model stage `sketch`, default `claude-sonnet-5-5`): one call per lens writes a
+      long list of 20 titles, marks the near-duplicate or timid ones, and keeps 12 to 15 sketches, each pushed to be
+      different and bolder. Each sketch is at most 600 characters, cites at least 1 harvest signal, and states why it is
+      **not trivial** (the engineering, data or industry work a person or one prompt cannot do). The model sees an
+      "avoid" list of up to 60 nearest earlier titles plus every title already sketched this run. About 90 sketches a run.
+    - **archive** (code only): embeds the sketches and drops those at cosine 0.85 or more to an earlier sketch or idea,
+      0.75 or more to a gate-killed idea or a case you killed, or 0.85 or more to another sketch this run. Survivors are
+      filed into **diversity cells** (buyer kind × edge kind × business model). The unique share and the cells filled
+      are stored on the run.
+    - **tournament** (prompt `judge.v1`, model stage `judge`, default `gpt-6-sol`: a different family from the
+      generator): 5 Swiss rounds (the first paired across cells), each pair judged twice with the order swapped, a split
+      counts as a draw, Elo starts at 1200 with K = 24, at most 300 judge calls. The judge asks which business you would
+      rather build, in this order: real need and willingness to pay, not trivial, earns rather than saves, a concrete
+      edge against named incumbents, evidence strength. Up to 6 example pairs of cases you kept over cases you killed
+      (from the training split only) are shown as "the owner kept X over Y because …". Pairing is seeded by the run id,
+      so a resumed run replays the same pairs and does not pay for matches twice. If the judge errors, the match is a
+      draw and is logged; if every call fails, the top 12 are picked by diversity cell and the run carries on.
+    - **evolve** (prompt `evolve.v1`): for each of the top 6 sketches, takes its nearest 5 comps (startups with
+      dossiers) and writes one variant that sharpens the wedge against them, combines it with another top sketch, or
+      simplifies it to its hardest core. A variant keeps its parent's signals and lineage. The 12 parents and 6 variants
+      then play 3 more rounds (at most 120 calls); the top 12 by Elo, with at most 2 per diversity cell and 2 per
+      business model, go to ideate.
+    - **cost:** sketch, tournament and evolve together aim at $8 a run or less (logged; the benchmark reports it).
+    - **Engine flag:** the run config's `engine` is `v2` unless set to `v1`; an idea seed always uses v1 (one idea,
+      nothing to sketch). If a v2 run ends up with no sketches, ideate falls back to v14 and says so on the run page.
+  - **ideate** (prompt v15 on engine v2, which expands the chosen sketches into full ideas under the rules below and stores
+    the sketch id and Elo; v14 on engine v1; the rules are unchanged): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** and at
     least **2 ambition** lenses (`review-gap` and `platform-shockwave` are drawn at half weight); lens seeds use exactly
     the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
@@ -262,8 +303,9 @@ follow its progress.
     as 2 on each (upside 3). The top ideas advance, skipping any that has
     too little evidence for the gate (the gate's own evidence rule, applied early), a third idea with the same business
     model (cap of 2 per model), a near-twin of an advancing idea, a copy of an idea that has a case, or one close to a
-    past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant.
-  - **gate** (prompt v6): competitor research, then a different model judges five checks, harshly: **generic**
+    past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant. On
+    engine v2 the tournament Elo is added to the total as a band (top quarter +2, second quarter +1).
+  - **gate** (prompt v7): competitor research, then a different model judges six checks, harshly: **generic**
     (established competitors or library startups already provide the function and the idea has no concrete, checkable
     edge against named incumbents; a claimed gap that is only positioning does not count), **regulation** (needs a licence), **control** (depends on unofficial APIs, a partner or one
     platform), **autonomy** and **reachability** (buyers, or individuals through communities, search, app stores,
@@ -273,7 +315,11 @@ follow its progress.
     distinct domains (up to 2 threads per community site; vendor and untagged sources never count), or 1 operator or
     neutral complaint plus 1 demand source. A code check, **scale**, fails a generated idea whose revenue ceiling is
     under $1M a year (setting `gate.minRevenueCeiling`); it passes with a note when there is no estimate or the price is
-    unknown or 0 (a free product), and only advises for your own ideas. Any failure kills a generated idea.
+    unknown or 0 (a free product), and only advises for your own ideas. Any failure kills a generated idea. The new
+    **trivial** check (model) kills a generated idea that a person with a spreadsheet, or one prompt to a frontier model
+    given the data, would mostly deliver; it names the hard part or its absence, and only advises for your own ideas.
+    **Comps** is a code verdict that never kills: it lists the idea's nearest library startups (dossier entries first)
+    with who pays and the outcome, and flags "no comps found" or "only dead comps"; the case and the Board show it.
   - **case** (case-write v4): research, then write summary, evidence, numbers inputs, competitors and pitch. The model
     gives only inputs, each with a source or a stated assumption; code does all arithmetic with a formula per business
     model (for example subscription, take rate × GMV, impressions × CPM, referrals × commission, conversion × paid
@@ -330,7 +376,10 @@ follow its progress.
   more per run), consumer share (30% or more), business-model variety (4 or more per run), real-need evidence (50% or
   more), demand evidence (80% or more of ideas cite a trend, rule change or market entry), customer return (100%, median 3× or more), our margin (100%), wasted gate
   entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), owner
-  keeps (50% or more of the cases you decided on the Board), cost per case (tracked). Example runs and cases are always left out.
+  keeps (50% or more of the cases you decided on the Board), cost per case (tracked). The engine rows: unique sketch
+  share (60% or more), diversity cells filled (8 or more per run), judge accuracy (70% or more at the latest
+  calibration), trivial kill rate (reported), comps coverage (80% or more of cases with 2 or more dossier comps) and
+  engine cost per run ($8 or less); runs from before the engine show "no data" for these. Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
   benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
   one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**
@@ -461,6 +510,9 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen feeds run` | One automatic-feeds run now, within the daily cap; exits 1 when every source failed and nothing was added. |
 | `gen telegram reset` | Forgets the Telegram bot's owner and prints a new pairing code (Settings → Connections has a **Reset pairing** button too). |
 | `gen research "<topic>"` | Queues a research mission that adds to the library (the worker runs it). `--budget` (0.5–25, default 2), `--kinds`, `--countries`, `--audience`. `gen research status` lists recent missions. |
+| `gen audit judge` | Calibrates the tournament judge on held-out pairs of cases you kept versus killed; writes `output/audit/judge-<date>.md` (costs model calls). |
+| `gen dossiers run` | Builds the next company dossiers now, within the daily cap; `--max-usd`, `--limit`. |
+| `gen library assess` | Rates the source strength of every library entry; `--max-usd` (default 25). |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then validation packs, then research missions; when all are empty it captures finds, queues background research if that is on, and runs the feeds when due. `--once --feeds` also runs the feeds in a single pass. |
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |
@@ -482,6 +534,9 @@ LLM spend is **notional**: PitchLab works it out from token counts and a price t
 | One validation pack | $0.60–1.50, of which prospect search is about $0.45–0.60. "Skip new prospect search" (`--skip-prospects`) avoids that part. |
 | One research mission | Up to its budget (default $2, $0.50–25). Background missions are $1 each, up to the daily cap (default $5). |
 | One benchmark pass (bench-v2) | about $15–35 (5 runs) |
+| The idea engine (sketch, tournament, evolve) | at most about $8 a run, inside the run's cost |
+| Company dossiers | at most `dossiers.dailyUsd` a day (default $2); about $0.05 each |
+| Source-strength and dossier backfills | at most $25 each, once (`--max-usd`) |
 | Automatic feeds | at most `feeds.dailyUsd` a day (default $2), extraction only; the sources themselves are free |
 | One find | one small extraction call (cents); the capture tools are free and run on your computer |
 | Scraping service | free within `fetch.scraperMonthlyPages` (default 900 pages a month, inside the free tiers) |

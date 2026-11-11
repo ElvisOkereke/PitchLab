@@ -72,7 +72,7 @@ describe('RunsHistory case and idea links', () => {
   });
   const row = (o: Partial<RunListRow> = {}): RunListRow => ({
     id: RUN_ID, config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded', currentStage: 'case', error: null,
-    costUsd: '1', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 0, stages: [], ideas: [],
+    costUsd: '1', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 0, tournament: null, stages: [], ideas: [],
     passLabel: null, cases: [], ...o,
   });
 

@@ -4,6 +4,7 @@ import { requeueRunAction } from '@/actions/runs';
 import { HelpTip } from './help-tip';
 import { IdeaRating } from './idea-rating';
 import { KeepOpenDetails } from './keep-open-details';
+import { TournamentView } from './tournament-view';
 import { runCost, seedSummary } from '@/lib/run-format';
 import { runsHref } from '@/lib/runs-query';
 import { runStageLabel } from '@/lib/stages';
@@ -89,6 +90,12 @@ export function RunsHistory({ rows, total, page, pageSize }: { rows: RunListRow[
                         ))}
                       </ul>
                     </details>
+                    {r.tournament ? (
+                      <details>
+                        <summary>tournament</summary>
+                        <TournamentView runId={r.id} t={r.tournament} />
+                      </details>
+                    ) : null}
                   </td>
                   <td data-label="Ideas">
                     {/* Stays open across rating submits (each one refreshes the page). */}

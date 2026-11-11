@@ -1,9 +1,9 @@
 // Idea-quality scorecard over a set of runs, computed from stored rows only (no model calls). Web-safe: drizzle,
 // db/schema and a type-only Db. Example runs and cases are always left out; every query is bounded.
-import { and, count, countDistinct, desc, eq, inArray, isNotNull, lt, min, ne, sql, type SQL } from 'drizzle-orm';
+import { and, count, countDistinct, desc, eq, inArray, isNotNull, like, lt, min, ne, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client';
-import { cases, dataCalls, gateVerdicts, ideaReviews, ideas, knowledgeItems, llmCalls, runs, scores, signals } from '../db/schema';
+import { cases, dataCalls, gateVerdicts, ideaReviews, ideas, knowledgeItems, llmCalls, runStages, runs, scores, settings, signals } from '../db/schema';
 import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from './definitions';
 
 /**
@@ -64,6 +64,17 @@ const DISLIKED_EDGE_MAX = 2;
 const DISLIKED_SCALE_MAX = 2;
 const AGREEMENT_TARGET = 0.7;
 const AGREEMENT_MIN_RATED = 10;
+
+const UNIQUE_SHARE_TARGET = 0.6;
+const CELLS_TARGET = 8;
+const JUDGE_ACCURACY_TARGET = 0.7;
+const COMPS_COVERAGE_TARGET = 0.8;
+/** A comps verdict line for a comp with a dossier ends its parenthesis with ", dossier)" (gate compsVerdict). */
+const DOSSIER_COMP_RE = /^- .*\([^)]*, dossier\)/gm;
+const COMPS_WITH_DOSSIER_MIN = 2;
+const ENGINE_COST_TARGET = 8;
+const ENGINE_PROMPT_PREFIXES = ['sketch.', 'judge.', 'evolve.'] as const;
+const JUDGE_SETTING_KEY = 'audit.judge.latest';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -170,11 +181,17 @@ type Data = {
   review: { n: number; medianEdge: number | null; medianScale: number | null; niche: number; rated: number; agree: number };
   entrants: { total: number; wasted: number };
   cost: number;
+  /** Engine v2: per-run archive figures, the latest judge calibration, trivial kills, comps coverage and per-run engine spend. */
+  engine: {
+    uniqueShares: number[]; cells: number[]; judge: { accuracy: number; pairs: number } | null;
+    trivial: { total: number; killed: number }; comps: { withVerdict: number; covered: number }; runCosts: number[];
+  };
 };
 
 const emptyData = (): Data => ({
   ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
   review: { n: 0, medianEdge: null, medianScale: null, niche: 0, rated: 0, agree: 0 }, entrants: { total: 0, wasted: 0 }, cost: 0,
+  engine: { uniqueShares: [], cells: [], judge: null, trivial: { total: 0, killed: 0 }, comps: { withVerdict: 0, covered: 0 }, runCosts: [] },
 });
 
 function extraOf(d: Data, runCount: number): Scorecard['extra'] {
@@ -218,7 +235,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const disliked = sql`(${ideas.ownerRating} = -1 or (not coalesce(${rated}, false) and ${killedCase}))`;
   const judged = sql`(${liked} or ${disliked})`;
 
-  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow]] = await Promise.all([
+  const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow], archiveRows, [judgeRow], [trivialRow], engineCostRows] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
     db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
@@ -244,6 +261,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       vmNote: sql<boolean>`coalesce(jsonb_typeof(${cases.sections} #> '{numbers,results,buyer,valueMultipleNote}') = 'string', false)`,
       barriers: ideas.barriers,
       stage: cases.stage,
+      ideaId: ideas.id,
     })
       .from(cases)
       .innerJoin(ideas, eq(ideas.id, cases.ideaId))
@@ -275,6 +293,19 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
       agree: sql<number>`(count(*) filter (where (${liked} and ${ideaReviews.edge} >= ${LIKED_EDGE_MIN} and ${ideaReviews.scale} >= ${LIKED_SCALE_MIN})
         or (${disliked} and (${ideaReviews.edge} <= ${DISLIKED_EDGE_MAX} or ${ideaReviews.scale} <= ${DISLIKED_SCALE_MAX}))))::int`,
     }).from(ideaReviews).innerJoin(ideas, eq(ideas.id, ideaReviews.ideaId)).where(and(generated, eq(ideaReviews.promptVersion, IDEA_REVIEW_VERSION))),
+    // Engine v2 (rows stay "no data" for v1 runs): the archive stage's figures, the latest judge calibration, trivial kills and engine spend.
+    db.select({
+      share: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'uniqueShare') = 'number' then (${runStages.output} ->> 'uniqueShare')::float8 end`,
+      cells: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'cells') = 'number' then (${runStages.output} ->> 'cells')::float8 end`,
+    }).from(runStages).where(and(inArray(runStages.runId, set), eq(runStages.stage, 'archive'))),
+    db.select({ value: settings.value }).from(settings).where(eq(settings.key, JUDGE_SETTING_KEY)),
+    db.select({
+      total: countDistinct(ideas.id),
+      killed: sql<number>`(count(distinct ${ideas.id}) filter (where ${eq(gateVerdicts.pass, false)}))::int`,
+    }).from(ideas).innerJoin(gateVerdicts, and(eq(gateVerdicts.ideaId, ideas.id), eq(gateVerdicts.check, 'trivial'))).where(generated),
+    db.select({ runId: llmCalls.runId, sum: sql<string>`coalesce(sum(${llmCalls.costUsd}), 0)` }).from(llmCalls)
+      .where(and(inArray(llmCalls.runId, set), or(...ENGINE_PROMPT_PREFIXES.map((p) => like(llmCalls.promptVersion, `${p}%`)))))
+      .groupBy(llmCalls.runId),
   ]);
 
   const caseIds = caseRows.map((c) => c.id);
@@ -283,6 +314,14 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     .from(scores)
     .where(and(inArray(scores.caseId, caseIds), eq(scores.by, 'owner'), eq(scores.criterion, 'gut')))
     .orderBy(scores.caseId, desc(scores.createdAt), desc(scores.id));
+
+  // Comps coverage: each case's idea's newest comps verdict (a re-gate replaces it).
+  const ideaIds = caseRows.map((c) => c.ideaId);
+  const compRows = ideaIds.length === 0 ? [] : await db
+    .selectDistinctOn([gateVerdicts.ideaId], { reasoning: gateVerdicts.reasoning })
+    .from(gateVerdicts)
+    .where(and(inArray(gateVerdicts.ideaId, ideaIds), eq(gateVerdicts.check, 'comps')))
+    .orderBy(gateVerdicts.ideaId, desc(gateVerdicts.createdAt), desc(gateVerdicts.id));
 
   const perRun = new Map<string, Set<string>>();
   for (const r of buyerRows) {
@@ -330,7 +369,26 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     },
     entrants: { total: Number(entrantRow?.total ?? 0), wasted: Number(entrantRow?.wasted ?? 0) },
     cost: Number(llm?.sum ?? 0) + Number(dat?.sum ?? 0),
+    engine: {
+      uniqueShares: archiveRows.flatMap((a) => (num(a.share) === null ? [] : [num(a.share)!])),
+      cells: archiveRows.flatMap((a) => (num(a.cells) === null ? [] : [num(a.cells)!])),
+      judge: parseJudge(judgeRow?.value),
+      trivial: { total: Number(trivialRow?.total ?? 0), killed: Number(trivialRow?.killed ?? 0) },
+      comps: {
+        withVerdict: compRows.length,
+        covered: compRows.filter((c) => (c.reasoning.match(DOSSIER_COMP_RE)?.length ?? 0) >= COMPS_WITH_DOSSIER_MIN).length,
+      },
+      runCosts: engineCostRows.map((e) => Number(e.sum)).filter(Number.isFinite),
+    },
   };
+}
+
+/** The stored judge calibration summary (R4), or null when missing, malformed or based on too few pairs. */
+function parseJudge(v: unknown): { accuracy: number; pairs: number } | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (o.tooFew !== false || typeof o.accuracy !== 'number' || !Number.isFinite(o.accuracy) || typeof o.pairs !== 'number') return null;
+  return { accuracy: o.accuracy, pairs: o.pairs };
 }
 
 function buildMetrics(d: Data): MetricResult[] {
@@ -349,7 +407,24 @@ function buildMetrics(d: Data): MetricResult[] {
   const withBarriers = d.caseRows.filter((c) => c.easyHard !== null);
   const medianRoi = median(rois);
 
+  const eng = d.engine;
+  const NO_ENGINE = 'No run in this set used the v2 engine.';
+  const meanRow = (xs: number[], text: (v: number) => string, meets: (v: number) => boolean, note: string): Row => {
+    if (xs.length === 0) return noData(note);
+    const v = mean(xs);
+    return measured(v, text(v), meets(v));
+  };
+
   const rows: Partial<Record<MetricId, Row>> = {
+    uniqueSketchShare: meanRow(eng.uniqueShares, (v) => `${Math.round(v * 100)}%`, (v) => v >= UNIQUE_SHARE_TARGET, NO_ENGINE),
+    cellsFilled: meanRow(eng.cells, (v) => `${v.toFixed(1)} per run`, (v) => v >= CELLS_TARGET, NO_ENGINE),
+    judgeAccuracy: eng.judge === null ? noData('No judge calibration with 10 or more held-out pairs yet (gen audit judge).')
+      : measured(eng.judge.accuracy, `${Math.round(eng.judge.accuracy * 100)}% (${eng.judge.pairs} pairs)`, eng.judge.accuracy >= JUDGE_ACCURACY_TARGET),
+    trivialKillRate: eng.trivial.total === 0 ? noData('No generated idea in this set has a trivial verdict (gate v7).')
+      : measured(eng.trivial.killed / eng.trivial.total, `${pctText(eng.trivial.killed, eng.trivial.total, () => true)} (${eng.trivial.killed} of ${eng.trivial.total})`, null),
+    compsCoverage: eng.comps.withVerdict === 0 ? noData('No case in this set has a comps verdict (gate v7).')
+      : share(eng.comps.covered, nCases, (v) => v >= COMPS_COVERAGE_TARGET),
+    engineCostPerRun: meanRow(eng.runCosts, (v) => `$${v.toFixed(2)}`, (v) => v <= ENGINE_COST_TARGET, NO_ENGINE),
     repetition: d.within.length === 0 ? noData(NEED_EMBEDDINGS) : (() => {
       const v = mean(d.within);
       return measured(v, v.toFixed(2), v < REPETITION_TARGET);

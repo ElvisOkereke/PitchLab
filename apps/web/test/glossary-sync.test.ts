@@ -48,4 +48,12 @@ describe('docs/glossary.md', () => {
     const lower = headings.map((h) => h.toLowerCase());
     for (const t of terms) expect(lower).toContain(`### ${t}`);
   });
+
+  it('defines the idea engine terms in the app and in the doc', () => {
+    const labels = Object.values(GLOSSARY).map((g) => g.label);
+    for (const t of ['Sketch', 'Tournament', 'Elo', 'Diversity cell', 'Dossier', 'Source strength', 'Trivial']) {
+      expect(labels).toContain(t);
+      expect(headings).toContain(`### ${t}`);
+    }
+  });
 });

@@ -61,7 +61,8 @@ export const IDEA_REVIEW_VERSION = 'idea-review.v2';
 export type MetricId =
   | 'repetition' | 'nearDuplicates' | 'buyerVariety' | 'consumerShare' | 'modelVariety' | 'realNeed'
   | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes' | 'ownerKeeps'
-  | 'medianEdge' | 'medianScale' | 'nicheShare' | 'reviewerAgreement' | 'costPerCase';
+  | 'medianEdge' | 'medianScale' | 'nicheShare' | 'reviewerAgreement' | 'costPerCase'
+  | 'uniqueSketchShare' | 'cellsFilled' | 'judgeAccuracy' | 'trivialKillRate' | 'compsCoverage' | 'engineCostPerRun';
 
 export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string; phase?: 2 | 3 }[] = [
   { id: 'repetition', label: 'Repetition', target: 'below 0.55' },
@@ -83,4 +84,10 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'nicheShare', label: 'Niche share (reviewer)', target: 'at most 30%' },
   { id: 'reviewerAgreement', label: 'Reviewer agreement', target: 'at least 70%, once 10 judged ideas are reviewed' },
   { id: 'costPerCase', label: 'Cost per case', target: 'tracked, no target' },
+  { id: 'uniqueSketchShare', label: 'Unique sketch share', target: 'at least 60%' },
+  { id: 'cellsFilled', label: 'Diversity cells filled', target: 'at least 8 per run' },
+  { id: 'judgeAccuracy', label: 'Judge accuracy (latest calibration)', target: 'at least 70%' },
+  { id: 'trivialKillRate', label: 'Trivial kill rate', target: 'reported, no target' },
+  { id: 'compsCoverage', label: 'Comps coverage', target: 'at least 80% of cases with 2 or more dossier comps' },
+  { id: 'engineCostPerRun', label: 'Engine cost per run (sketch, judge, evolve)', target: 'at most $8' },
 ];

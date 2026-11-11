@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '../../src/db/client';
-import { cases, ideas, runStages, runs } from '../../src/db/schema';
+import { cases, ideas, runStages, runs, sketches } from '../../src/db/schema';
 import {
   MAX_QUEUED, QUEUE_MARKET_ID, QueueRunInputSchema, RunConfigSchema, countRunsByStatus, hasQueuedRun, listRuns, queueGateKillRerun, queueRun, requeueRun,
 } from '../../src/dashboard/runs';
@@ -268,5 +268,45 @@ describe('finds seed (sources expansion §C)', () => {
     expect(await resolveFindsSeed(db, Array.from({ length: 21 }, () => a.findId))).toEqual({ ok: true, findIds: [a.findId] });
     const many = Array.from({ length: 21 }, () => randomUUID());
     expect(await resolveFindsSeed(db, many)).toMatchObject({ ok: false, reason: 'too_many_finds' });
+  });
+});
+
+describe('listRuns: tournament view (engine v2)', () => {
+  const sk = (runId: string, title: string, o: Partial<typeof sketches.$inferInsert> = {}) => ({
+    runId, title, buyer: 'b', problem: 'p', howItEarns: 'h', businessModel: 'subscription', edge: 'e', edgeKind: 'data' as const,
+    whyNotTrivial: 'w', earnOrSave: 'earn', signalIds: [], libraryItemIds: [], status: 'kept' as const, cell: 'business|subscription|data', ...o,
+  });
+
+  it('a v1 run has no tournament', async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    expect((await listRuns(db, { page: 1, pageSize: 5 })).rows.find((r) => r.id === run.id)!.tournament).toBeNull();
+  });
+
+  it('lists the top 12 by Elo with cell, parent and variants, the dropped count, and the archive figures', async () => {
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const rows = await db.insert(sketches).values(
+      Array.from({ length: 14 }, (_, i) => sk(run.id, `Sketch ${i}`, { elo: 1300 - i * 10, cell: i < 3 ? 'c1' : 'c2' })),
+    ).returning({ id: sketches.id, title: sketches.title });
+    const top = rows.find((r) => r.title === 'Sketch 0')!;
+    await db.insert(sketches).values([
+      sk(run.id, 'Variant of 0', { elo: 1295, parentSketchId: top.id, operator: 'sharpen' }),
+      sk(run.id, 'Dup', { status: 'duplicate' }), sk(run.id, 'Dup 2', { status: 'duplicate' }), sk(run.id, 'Near', { status: 'near_killed' }),
+    ]);
+    await db.insert(runStages).values([
+      { runId: run.id, stage: 'archive', status: 'done', output: { sketchIds: [], signalIds: [], uniqueShare: 0.8, cells: 6 } },
+      { runId: run.id, stage: 'ideate', status: 'done', output: { fallback: 'v14', sketchIds: [] } },
+    ]);
+    const t = (await listRuns(db, { page: 1, pageSize: 5 })).rows.find((r) => r.id === run.id)!.tournament!;
+    expect(t.top).toHaveLength(12);
+    expect(t.top[0]).toMatchObject({ id: top.id, title: 'Sketch 0', elo: 1300, cell: 'c1', parent: null });
+    expect(t.top.map((x) => x.elo)).toEqual([...t.top.map((x) => x.elo)].sort((a, b) => b! - a!));
+    expect(t.top[0]!.variants.map((v) => v.title)).toEqual(['Variant of 0']);
+    const variant = t.top.find((x) => x.title === 'Variant of 0')!;
+    expect(variant.parent).toMatchObject({ id: top.id, title: 'Sketch 0' });
+    expect(variant.operator).toBe('sharpen');
+    expect(t.dropped).toBe(3);
+    expect(t.uniqueShare).toBe(0.8);
+    expect(t.cells).toBe(6);
+    expect(t.fallback).toBe('v14');
   });
 });

@@ -1,7 +1,8 @@
 import { and, count, desc, eq, gt, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
-import { benchmarkPasses, cases, ideas, lenses, markets, runStages, runStatus, runs } from '../db/schema';
+import { benchmarkPasses, cases, ideas, lenses, markets, runStages, runStatus, runs, sketches } from '../db/schema';
+import { TOP_SKETCHES } from '../pipeline/engine/kinds';
 import { STAGES, defaultRunConfig, type RunConfig } from '../pipeline/types';
 import { scrubError } from '../tools/scrub';
 import { FINDS_SEED_MAX, resolveFindsSeed } from '../finds/store';
@@ -202,7 +203,22 @@ export type RunIdeaRow = {
 };
 /** A case a run produced, as the Runs page links it. */
 export type RunCaseLink = { id: string; slug: string; title: string };
+/** One of the run's top sketches by Elo, as the Runs page lists it. `parent` is set for an evolved variant. */
+export type TournamentSketch = {
+  id: string; title: string; elo: number | null; cell: string | null; operator: string | null;
+  parent: { id: string; title: string } | null;
+  /** Evolved variants of this sketch (kept ones). */
+  variants: { id: string; title: string; operator: string | null; elo: number | null }[];
+};
+/** A v2 run's tournament: the top sketches by Elo, how many were dropped as repeats, and the archive's figures. Null for runs without sketches. */
+export type RunTournament = {
+  top: TournamentSketch[]; dropped: number; total: number;
+  uniqueShare: number | null; cells: number | null; fallback: string | null;
+};
+
 export type RunListRow = RunRow & {
+  /** The v2 engine's tournament, or null for a v1 run (no sketches). */
+  tournament: RunTournament | null;
   /** All cases of the run (the count is not capped). */
   caseCount: number;
   /** Benchmark pass label when the run belongs to one. */
@@ -211,6 +227,28 @@ export type RunListRow = RunRow & {
   cases: RunCaseLink[];
   stages: RunStageSummary[]; ideas: RunIdeaRow[];
 };
+
+/** Most sketch rows read for one page of runs (50 runs of about 60 sketches, with room for variants). */
+const SKETCHES_PER_PAGE_MAX = 5_000;
+
+/** Builds one run's tournament view from its sketch rows and the archive/ideate stage figures. */
+function tournamentOf(
+  rows: { id: string; title: string; elo: number | null; cell: string | null; operator: string | null; parentSketchId: string | null; status: string }[],
+  figures: { uniqueShare: number | null; cells: number | null; fallback: string | null },
+): RunTournament | null {
+  if (rows.length === 0) return null;
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const ranked = rows.filter((r) => r.status === 'kept' && r.elo !== null).sort((a, b) => b.elo! - a.elo! || (a.id < b.id ? -1 : 1)).slice(0, TOP_SKETCHES);
+  const top = ranked.map((r) => {
+    const parent = r.parentSketchId ? byId.get(r.parentSketchId) : undefined;
+    return {
+      id: r.id, title: r.title, elo: r.elo, cell: r.cell, operator: r.operator,
+      parent: parent ? { id: parent.id, title: parent.title } : null,
+      variants: rows.filter((v) => v.parentSketchId === r.id && v.status === 'kept').map((v) => ({ id: v.id, title: v.title, operator: v.operator, elo: v.elo })),
+    };
+  });
+  return { top, dropped: rows.filter((r) => r.status === 'duplicate' || r.status === 'near_killed').length, total: rows.length, ...figures };
+}
 
 /** Most cases listed per run on the Runs page. */
 export const RUN_CASES_MAX = 50;
@@ -281,7 +319,7 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
   ]);
   const rows = runRows.map((r) => ({ ...r.run, passLabel: r.passLabel ?? null }));
   const ids = rows.map((r) => r.id);
-  const [caseCounts, caseRows, stageRows, ideaRows] = ids.length === 0 ? [[], [], [], []] : await Promise.all([
+  const [caseCounts, caseRows, stageRows, ideaRows, sketchRows, figureRows] = ids.length === 0 ? [[], [], [], [], [], []] : await Promise.all([
     db.select({ runId: ideas.runId, n: count(cases.id) }).from(cases)
       .innerJoin(ideas, eq(cases.ideaId, ideas.id))
       .where(inArray(ideas.runId, ids))
@@ -297,6 +335,18 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
       id: ideas.id, runId: ideas.runId, origin: ideas.origin, title: ideas.title, oneLiner: ideas.oneLiner, status: ideas.status,
       ownerRating: ideas.ownerRating, ownerTags: ideas.ownerTags, caseSlug: cases.slug,
     }).from(ideas).leftJoin(cases, eq(cases.ideaId, ideas.id)).where(inArray(ideas.runId, ids)).orderBy(ideas.createdAt, ideas.id).limit(IDEAS_PER_PAGE_MAX),
+    // Light columns only (never the embedding).
+    db.select({
+      runId: sketches.runId, id: sketches.id, title: sketches.title, elo: sketches.elo, cell: sketches.cell, operator: sketches.operator,
+      parentSketchId: sketches.parentSketchId, status: sketches.status,
+    }).from(sketches).where(inArray(sketches.runId, ids)).orderBy(sketches.createdAt, sketches.id).limit(SKETCHES_PER_PAGE_MAX),
+    // Only three figures of the stage outputs, read in the database (outputs spread forward and can be large).
+    db.select({
+      runId: runStages.runId, stage: runStages.stage,
+      uniqueShare: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'uniqueShare') = 'number' then (${runStages.output} ->> 'uniqueShare')::float8 end`,
+      cells: sql<number | null>`case when jsonb_typeof(${runStages.output} -> 'cells') = 'number' then (${runStages.output} ->> 'cells')::float8 end`,
+      fallback: sql<string | null>`case when jsonb_typeof(${runStages.output} -> 'fallback') = 'string' then left(${runStages.output} ->> 'fallback', 20) end`,
+    }).from(runStages).where(and(inArray(runStages.runId, ids), inArray(runStages.stage, ['archive', 'ideate']))),
   ]);
   return {
     total: totalRow?.n ?? 0,
@@ -305,6 +355,11 @@ export async function listRuns(db: Db, o: { page?: number; pageSize?: number }):
       // D2-R1: legacy rows may hold unscrubbed errors.
       error: r.error === null ? null : scrubError(r.error),
       config: r.config.ideaText !== undefined ? { ...r.config, ideaText: r.config.ideaText.slice(0, IDEA_TEXT_SHOWN) } : r.config,
+      tournament: tournamentOf(sketchRows.filter((k) => k.runId === r.id), {
+        uniqueShare: figureRows.find((f) => f.runId === r.id && f.stage === 'archive')?.uniqueShare ?? null,
+        cells: figureRows.find((f) => f.runId === r.id && f.stage === 'archive')?.cells ?? null,
+        fallback: figureRows.find((f) => f.runId === r.id && f.stage === 'ideate')?.fallback ?? null,
+      }),
       caseCount: caseCounts.find((c) => c.runId === r.id)?.n ?? 0,
       cases: caseRows.filter((c) => c.runId === r.id).slice(0, RUN_CASES_MAX).map(({ id, slug, title }) => ({ id, slug, title })),
       ideas: ideaRows.filter((i) => i.runId === r.id).map(({ runId: _runId, ...i }) => ({ ...i, caseSlug: i.caseSlug ?? null })),

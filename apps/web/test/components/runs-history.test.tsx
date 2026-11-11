@@ -15,7 +15,7 @@ function run(o: Partial<RunListRow> = {}): RunListRow {
   return {
     id: '55555555-5555-4555-8555-555555555555', config: defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }), status: 'succeeded',
     currentStage: 'case', error: null, costUsd: '2.5', startedAt: NOW, finishedAt: NOW, createdAt: NOW, isExample: false, benchmarkPassId: null, caseCount: 3, passLabel: null,
-    cases: [{ id: 'c1', slug: 'one', title: 'One' }], ideas: [],
+    cases: [{ id: 'c1', slug: 'one', title: 'One' }], ideas: [], tournament: null,
     stages: [{ stage: 'harvest', status: 'done', startedAt: NOW, finishedAt: NOW }, { stage: 'ideate', status: 'done', startedAt: NOW, finishedAt: null }],
     ...o,
   };
@@ -51,5 +51,37 @@ describe('RunsHistory', () => {
     expect(RUNS_NOTICES.requeue_busy).toMatch(/3 runs are already queued/);
     expect(parseRunsQuery({ notice: 'requeue_busy', page: '3' })).toEqual({ page: 3, notice: 'requeue_busy' });
     expect(parseRunsQuery({ notice: '<script>', page: '-1' })).toEqual({ page: 1 });
+  });
+
+  it('shows a tournament section for a v2 run as text, and none for a v1 run', () => {
+    const tournament: NonNullable<RunListRow['tournament']> = {
+      top: [
+        { id: 'a', title: '<img src=x onerror=alert(1)> Route doctor', elo: 1311.4, cell: 'business|subscription|data', operator: null, parent: null, variants: [{ id: 'b', title: 'Route doctor, sharper', operator: 'sharpen', elo: 1290 }] },
+        { id: 'b', title: 'Route doctor, sharper', elo: 1290, cell: 'business|subscription|data', operator: 'sharpen', parent: { id: 'a', title: '<img src=x onerror=alert(1)> Route doctor' }, variants: [] },
+        { id: 'c', title: 'Orphan variant', elo: 1250, cell: null, operator: 'combine', parent: { id: 'gone', title: 'Dropped parent' }, variants: [] },
+      ],
+      dropped: 7, total: 30, uniqueShare: 0.77, cells: 9, fallback: 'v14',
+    };
+    const v2 = run({ tournament });
+    const v1 = run({ id: '77777777-7777-4777-8777-777777777777' });
+    const { container } = render(<RunsHistory rows={[v2, v1]} total={2} page={1} pageSize={20} />);
+    const sections = container.querySelectorAll('[data-testid="tournament"]');
+    expect(sections).toHaveLength(1);
+    const t = sections[0] as HTMLElement;
+    expect(t.textContent).toContain('<img src=x onerror=alert(1)> Route doctor');
+    expect(t.querySelector('img')).toBeNull();
+    expect(t.textContent).toContain('1311');
+    expect(t.textContent).toContain('business|subscription|data');
+    expect(t.textContent).toContain('7 dropped as repeats');
+    expect(t.textContent).toContain('unique share 77%');
+    expect(t.textContent).toContain('9 cells');
+    expect(t.textContent).toContain('v14');
+    const rows = [...t.querySelectorAll('tr[id^="sketch-"]')];
+    expect(rows).toHaveLength(3);
+    // The variant links to its parent row and the parent lists the variant; an unlisted parent is plain text.
+    expect(rows[1]!.querySelector('a[href="#sketch-a"]')?.textContent).toContain('Route doctor');
+    expect(rows[0]!.querySelector('a[href="#sketch-b"]')?.textContent).toBe('Route doctor, sharper');
+    expect(rows[2]!.textContent).toContain('Dropped parent');
+    expect(rows[2]!.querySelector('a')).toBeNull();
   });
 });

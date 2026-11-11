@@ -68,13 +68,17 @@ process.
 
 ## Pipeline
 
-A **run** is one pass through eight stages, defined in `packages/core/src/pipeline/types.ts` (`STAGES`) and
+A **run** is one pass through twelve stages (the four idea-engine stages are new in engine v2), defined in `packages/core/src/pipeline/types.ts` (`STAGES`) and
 executed by `pipeline/run.ts`.
 
 ```mermaid
 flowchart LR
     S[Seed: open, sector, lens or idea] --> H[harvest]
-    H --> I[ideate]
+    H --> SK[sketch]
+    SK --> AR[archive]
+    AR --> T[tournament]
+    T --> E[evolve]
+    E --> I[ideate]
     I --> D[dedupe]
     D --> SC[screen]
     SC --> G[gate]
@@ -87,6 +91,10 @@ flowchart LR
 | Stage | Purpose | Inputs | Outputs | Model stage(s) |
 |---|---|---|---|---|
 | `harvest` | Find real pain signals: web research (one call per sector for open and sector seeds, one call for lens and idea seeds), plus the free tech-forum sources (Hacker News, Stack Exchange, GitHub, WordPress.org) for lens seeds and when a software-adjacent sector is chosen. Then extract quotes and tag each one's voice (operator, neutral, vendor). Up to 15 verified problem/pricing entries from the research library come first (7 once the library holds 50+ eligible entries); open seeds and consumer lens seeds also run a consumer-segment research call, and individuals describing their own situation count as operator evidence (harvest-research.v6, extract-signals.v4). | Run config (seed, sectors, lenses, market) | `signals` rows; `{ signalIds }` | `harvest` (research with web search), `extract` |
+| `sketch` | Engine v2. One call per lens (`sketch.v1`): a long list of 20 titles, a pass marking near-duplicates and timid ones, then 12 to 15 sketches (title, buyer, problem, howItEarns, businessModel, edge, edgeKind, whyNotTrivial, earnOrSave, signalIds, libraryItemIds; at most 600 characters, at least 1 signal). The prompt carries an avoid list (up to 60 nearest earlier titles plus this run's). Stored in `sketches`. | Harvest output | `{ ...input, sketchIds }` | `sketch` (default `claude-sonnet-5-5`, follows `ideate` for overrides) |
+| `archive` | Code only. Embeds sketches; marks `duplicate` (cosine 0.85 or more to an earlier sketch or idea, or to another sketch this run, first kept) and `near_killed` (0.75 or more to a gate-killed idea or owner-killed case); fills diversity cells (buyer kind × edge kind × business model). | Sketch ids | Sketch status and cell; `{ ...input, sketchIds, uniqueShare, cells }` | `embed` |
+| `tournament` | Swiss rounds (5, seeded by the run id) over the kept sketches, each pair judged twice with the order swapped (`judge.v1`); Elo from 1200, K 24; at most 300 calls; matches stored per round and pair in `tournament_matches` so a resume neither repeats nor double-counts. Top 12 by Elo, at most 2 per cell and 2 per business model. The final pass (after evolve) plays 3 rounds, at most 120 calls, continuing the main ratings. | Sketch ids | `sketches.elo`; `{ ...input, sketchIds }` | `judge` (default `gpt-6-sol`, follows `gate` for overrides) |
+| `evolve` | For the top 6 sketches, the nearest 5 comps (dossiers first) and one variant (`evolve.v1`: sharpen, combine or simplify), inserted as `kept` sketches with `parentSketchId` and `operator`; a variant keeps its parent's signals or is discarded. Each parent is asked once per run (setting `evolve.attempted.<runId>`). Queues the comps' startups in `dossiers.priority`. | Top sketches | Variant sketches; `{ ...input, sketchIds }` | `ideate` |
 | `ideate` | Write ideas from the signals through lenses. Each idea names its buyer, mechanism, known incumbents and the functional gap they leave. Past gate kills ("already sold") and ideas with cases ("already covered") are shown so they are not repeated. An owner idea is structured instead. ideate.v11 (v10 with the control fallback rule; v10 is v9 plus a what-is-changing block and a market-size block, see Research library) uses at most 6 lenses per open/sector run (at least 2 consumer), gives each lens library context (already-sold startups, dead-startup lessons, real price points), requires audience, business model, revenue mechanics, value to user, price hint and both barriers, turns unsupported sources into "Assumption:", and enforces a mix of at least 30% consumer ideas and 4 business models with one re-ask. Each model call asks for 3 ideas (`IDEAS_PER_CALL`) with a 16,000-token output limit; a cut-off answer is re-asked when it is unusable (a parseable partial answer is kept and its cut-off idea counted as a drop). There is one re-ask round per run, only when the mix or the count is short: it can top up the count and fill mix gaps, at most 6 ideas in calls of at most 3. Ideas the schema rejects are dropped with a reason that is a field path plus a zod issue code, never model content (an unknown `mechanism` becomes `other`; unknown `businessModel`, `audience` or `valueToUser.kind` still drops the idea). The stage output counts `requested`, `returned`, `dropReasons`, `truncatedCalls`, `failedCalls` and `toCopyLowered`. The barrier scales are anchored with examples, and a `toCopy` of 4 or 5 whose `toCopyWhy` matches none of the moat keywords is stored as 3 and counted in `toCopyLowered` (a sanity check, not a quality judgement). | Signals; past kills and cases | `ideas` rows (`candidate`); `{ ideaIds }` | `ideate` |
 | `dedupe` | Embed each idea and mark near-copies (cosine ≥ 0.88 by default) of an earlier idea or of one already kept this run. Owner ideas are always kept. | Idea ids | Embeddings; `duplicate` status; `{ ideaIds }` | `embed` |
 | `screen` | Score ideas on 7 criteria plus novelty, plus a money-case score (value multiple bands) and a barrier score computed in code. Ideas without enough independent operator/neutral evidence for the gate are skipped. Keep the top `advanceCount`, at most 2 per business model, at least one consumer entrant when one qualifies, skipping near-twins (> 0.8), copies of ideas with cases (≥ 0.82) and ideas close to past gate kills (≥ 0.75). | Idea ids | `advanced` or `screened_out`; `{ ideaIds }` | `screen` |
@@ -102,6 +110,14 @@ flowchart LR
 - Every stage is idempotent per item: a re-run replaces its own rows, and multi-row writes go in one transaction.
 - When a stage outputs nothing (no signals, no ideas, nothing passed the gate), the remaining stages are marked done
   and skipped. An owner idea continues even with no signals, because it always gets a case.
+- **Engine flag:** `runs.config.engine` is `'v1' | 'v2'` and absent reads as v2 (`usesEngineV2`); an `idea` seed always uses v1
+  and skips sketch, archive, tournament and evolve. Every v2 stage returns `{ ...input, sketchIds, ...extras }` so the
+  harvest fields reach ideate unchanged. With 0 sketches left the run ends like an empty ideate. **ideate v15** expands the
+  chosen sketches into full ideas and stores `ideas.sketch_id` and `ideas.elo`; if a v2 run has no sketches, ideate falls
+  back to v14 and records `fallback: 'v14'` in its output (the run page shows it). **Screen** adds an Elo band (top quarter
+  +2, second +1). **Gate v7** adds the model check `trivial` (kills generated ideas, advises for owner ideas) and the
+  advisory code verdict `comps` (`ADVISORY_GATE_CHECKS` in `pipeline/gate-checks.ts`, import-free; a failed advisory check is a flag
+  on the case and the Board, never a kill).
 - Stored errors are scrubbed of credentials (`tools/scrub.ts`) before they reach the database or the dashboard.
 - Run defaults (`defaultRunConfig`): market `ca-us`, 12 ideas, 3 advanced, 3 searches per sector, 3 minimum signals,
   dedupe threshold 0.88.
@@ -207,6 +223,28 @@ flowchart TD
 - **Limits:** the Library page and `searchLibrary` return at most 50 per page, retrieval for runs at most 30; at most 3 missions can be queued.
 - **Web:** `apps/web/app/(app)/library/page.tsx` reads through `dashboard/missions.ts` and `library/store.ts` (web-safe). The mission form is a small client component that imports only the action and core's web-safe `library/kinds` (the kind list and labels); core's mission schema, which pulls in drizzle, stays out of the browser.
 
+- **Judge calibration** (`audit/judge-calibration.ts`, `gen audit judge`): the pairs are every decided pair of Board cases
+  (one kept, one killed) plus up-versus-down idea ratings; `judge_pairs` stores each pair with a deterministic split by pair
+  hash (60% train, the few-shot pool, 40% test), and an existing pair never changes split. The judge never sees a test pair
+  (a test asserts the pools are disjoint). The report (`output/audit/judge-<date>.md`) gives pairwise accuracy on test,
+  position consistency, accuracy by confidence, a comparison with the reviewer and the cost, and says "too few pairs" below 10.
+  Goals (reported, never enforced): accuracy 0.70, consistency 0.80. A summary goes to setting `audit.judge.latest`
+  (`{ at, accuracy, consistency, pairs, tooFew }`), which the scorecard reads. The reasons shown to the judge are written once
+  per pair (`judge-reason.v1`) and stored.
+- **Source assessment** (`library/strength.ts`, web-safe; migration 0016 adds `knowledge_items.assessment`): `{ directness, bias,
+  strength (1-5, code), why, corroboration }`. Strength starts at 3: voice operator or customer +1, vendor −1; quote verified +1; corroboration
+  (other active entries at cosine 0.9 or more from other registrable domains) +1 at 2 or more, +2 at 5 or more; older than 730
+  days −1; source type in `OFFICIAL_SOURCE_TYPES` (`federalregister`, `worldbank`, `yc`) +1; clamped to 1-5 and recomputed in every
+  maintenance pass. `library-extract.v4` writes directness, bias and why for new entries; `gen library assess` (`library-assess.v1`,
+  batches of 20, stops at `--max-usd`, default 25) backfills the rest.
+- **Company dossiers** (`library/dossier-job.ts`, worker job `dossiers`, `gen dossiers run`): prompt `dossier.v1` on the
+  `library_extract` model stage. Pages (homepage, pricing page, one funding-or-shutdown search, a post-mortem search for dead
+  companies) go through `collectPage` with every existing guard. Every field needs a verified quote from a fetched page; founders'
+  names are not stored. A dossier whose pages never name the company is discarded and recorded as `dossierStatus: 'unmatched'` (the
+  entry keeps its old facts). Daily budget: setting `dossiers.dailyUsd` (default 2); the job yields to queued runs. Priority: cited
+  startups, then the list in setting `dossiers.priority` (written by evolve), then business model "unknown", then the rest.
+  `nearestComps` (used by evolve and the gate's `comps` verdict) returns dossier entries first, then by cosine.
+
 ## Finds and capture
 
 A **find** is a link the owner shared (a Reel, TikTok, Short, post or any web page) that becomes one `find` library entry.
@@ -237,6 +275,13 @@ queues passes and finalises them. A snapshot is stored once in `benchmark_passes
   and falls back to `roiMultiple` for older cases. Ideas and cases from before these fields exist are `no_data`, and
   frozen snapshots keep the "not measured yet" text they were saved with.
 - **Metric 7, demand evidence:** `demandEvidence` is the share of generated ideas whose `libraryItemIds` include at least one `trend`, `rule_change` or `market` entry, over ideas with `libraryItemIds` set (ideate.v8 and later). It meets at 0.8 and is `no_data` when no idea has the field set. An idea with the field set but no such entry counts as not citing, so an empty Slice B library scores 0 rather than `no_data`. Frozen snapshots keep the "not measured yet" text they were saved with.
+- **Engine v2 rows** (`bench/scorecard.ts`, from stored rows only): `uniqueSketchShare` (mean archive `uniqueShare` per run, target 60%) and
+  `cellsFilled` (mean archive `cells`, 8) read the archive stage's output row; `judgeAccuracy` reads setting `audit.judge.latest` (`tooFew` or
+  missing is "no data"; target 70%); `trivialKillRate` is the share of gate-evaluated generated ideas the `trivial` check killed (reported, no
+  target); `compsCoverage` is the share of the pass's cases whose newest `comps` verdict lists 2 or more dossier comps (target 80%);
+  `engineCostPerRun` sums `llm_calls` cost whose prompt version starts `sketch.`, `judge.` or `evolve.` per run (target $8). A v1 pass has no such
+  rows and shows "no data". The Runs page shows each v2 run's tournament (top 12 by Elo, cell, parent and variants, dropped repeats, unique share, cells,
+  any v14 fallback); a v1 run has none.
 - **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each run outcome and on every heartbeat (not after
   validation jobs); `gen resume` calls it too. When every run of a running pass has
   finished, the pass is frozen with metrics over all its runs: `complete`, or `incomplete` if any run failed. The hook
@@ -342,7 +387,7 @@ Drizzle schema in `packages/core/src/db/schema.ts`; migrations in `packages/core
 
 | Purpose | Tables |
 |---|---|
-| Configuration | `markets` (countries, sectors), `lenses` (idea patterns), `settings` (key/value JSON: sender identity, landing settings, worker heartbeat, tour state, example hidden flag) |
+| Configuration | `markets` (countries, sectors), `lenses` (idea patterns), `settings` (key/value JSON: `audit.judge.latest`, `dossiers.dailyUsd`, `dossiers.priority`, `evolve.attempted.<runId>`, sender identity, landing settings, worker heartbeat, tour state, example hidden flag) |
 | Runs | `runs` (config, status, current stage, notional cost), `run_stages` (output and status per stage) |
 | Ideas | `signals` (quote, URL, source, voice), `ideas` (text, mechanism, buyer type, incumbents, gap, embedding, screen scores, status), `gate_verdicts` (per check: pass, reasoning, sources, model) |
 | Cases | `cases` (slug, stage, sections JSON, kill reason, gate advisory, `is_example`), `claims` (text, source, quote, verification flag, review note), `scores` (per criterion, `ai` or `owner`) |
@@ -351,6 +396,7 @@ Drizzle schema in `packages/core/src/db/schema.ts`; migrations in `packages/core
 | Outreach | `prospects` (website, domain, email and where it was found, CASL basis, status), `outreach_drafts` (cold, followup1, followup2), `outreach_events` (sent, replied, positive, meeting, not interested, unsubscribe, note), `suppressions` (unsubscribed addresses, lowercased) |
 | Finds | `finds` (normalised URL, unique; platform, note, source `telegram` or `paste`, status `queued`, `capturing`, `done` or `failed`, caption, transcript, on-screen text, stats JSON, warnings, error, the library entry it became, times) |
 | Research library | `knowledge_items` (kind, including `find`, title, summary, quote and whether it was verified, audience, countries, industries, voice, facts JSON, embedding, content hash, status `active` or `rejected`), `knowledge_sources` (one row per source of an entry: URL, domain, source type, dates, quote), `research_missions` (topic, kinds, countries, budget, origin `owner` or `background`, status, entries added and merged, cost, warnings, error) |
+| Idea engine (v2) | `sketches` (run, lens, schema fields, embedding, diversity cell, status `kept`, `duplicate`, `near_killed` or reserved `evolved`, Elo, parent and operator), `tournament_matches` (one per phase, round and pair; both verdicts, result, confidence, reasons), `judge_pairs` (kept versus killed idea, pair hash, split, stored reason); `ideas.sketch_id` and `ideas.elo`; `knowledge_items.assessment` (migration 0016, additive) |
 | Benchmark | `benchmark_passes` (version, label, kind, status, run ids, frozen scorecard JSON, source pass); `runs.benchmark_pass_id` links a run to its pass |
 | Cost logging | `llm_calls` (every model attempt: stage, model, tokens, searches, notional cost, latency, prompt version, error), `data_calls` (calls to data sources such as the free forums and Google Places, with cost) |
 

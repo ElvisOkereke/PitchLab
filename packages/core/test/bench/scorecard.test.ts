@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../../src/db/client';
 import type { CaseSections } from '../../src/case/schema';
-import { cases, dataCalls, gateVerdicts, ideaReviews, knowledgeItems, llmCalls, runs, scores, signals } from '../../src/db/schema';
+import { cases, dataCalls, gateVerdicts, ideaReviews, knowledgeItems, llmCalls, runStages, runs, scores, settings, signals } from '../../src/db/schema';
 import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from '../../src/bench/definitions';
 import { computeScorecard, type MetricResult, type Scorecard } from '../../src/bench/scorecard';
 import { ensureExample } from '../../src/example/example';
@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase', 'uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -630,5 +630,95 @@ describe('computeScorecard: reviewer agreement from Board decisions', () => {
     expect(m.note).toMatch(/9 of 10/);
     await insertCase(db, (await reviewed(db, r, { scale: 4, edge: 4 })).id, { stage: 'live' });
     expect(metric(await computeScorecard(db, [r]), 'reviewerAgreement')).toMatchObject({ display: '100% (10 of 10)' });
+  });
+});
+
+describe('computeScorecard: engine v2 rows', () => {
+  const ENGINE: MetricId[] = ['uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun'];
+  const archive = (db: Db, runId: string, uniqueShare: number, cells: number) =>
+    db.insert(runStages).values({ runId, stage: 'archive', status: 'done', output: { sketchIds: [], uniqueShare, cells } });
+  const call = (runId: string, costUsd: string, promptVersion: string) =>
+    ({ runId, stage: 's', provider: 'p', model: 'm', inputTokens: 1, outputTokens: 1, searchRequests: 0, costUsd, latencyMs: 1, promptVersion, ok: true });
+  const verdict = (ideaId: string, check: 'trivial' | 'comps', pass: boolean, reasoning = 'r') =>
+    ({ ideaId, check, pass, reasoning, model: 'm', promptVersion: 'p' });
+
+  it('v1 passes (no engine data) show no data for the engine rows', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await caseWith(db, r, 1, 1);
+    const sc = await computeScorecard(db, [r]);
+    for (const id of ENGINE) expect(metric(sc, id), id).toMatchObject({ status: 'no_data', value: null, meets: null, display: 'no data' });
+  });
+
+  it('unique share and cells average over runs with an archive stage', async () => {
+    const db = await testDb();
+    const a = await newRun(db);
+    const b = await newRun(db);
+    const v1 = await newRun(db); // a v1 run in the set is left out
+    await archive(db, a, 0.7, 9);
+    await archive(db, b, 0.4, 5);
+    const sc = await computeScorecard(db, [a, b, v1]);
+    expect(metric(sc, 'uniqueSketchShare')).toMatchObject({ status: 'measured', display: '55%', meets: false });
+    expect(metric(sc, 'cellsFilled')).toMatchObject({ status: 'measured', display: '7.0 per run', meets: false });
+    await db.update(runStages).set({ output: { uniqueShare: 0.8, cells: 10 } }).where(eq(runStages.runId, b));
+    const sc2 = await computeScorecard(db, [a, b]);
+    expect(metric(sc2, 'uniqueSketchShare')).toMatchObject({ display: '75%', meets: true });
+    expect(metric(sc2, 'cellsFilled')).toMatchObject({ display: '9.5 per run', meets: true });
+  });
+
+  it('judge accuracy reads the latest calibration; too few pairs or none is no data', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    expect(metric(await computeScorecard(db, [r]), 'judgeAccuracy').status).toBe('no_data');
+    await db.insert(settings).values({ key: 'audit.judge.latest', value: { at: '2026-11-01T00:00:00Z', accuracy: 0.8, consistency: 0.9, pairs: 20, tooFew: false } });
+    expect(metric(await computeScorecard(db, [r]), 'judgeAccuracy')).toMatchObject({ status: 'measured', display: '80% (20 pairs)', meets: true, value: 0.8 });
+    await db.update(settings).set({ value: { at: 'x', accuracy: 0.6, consistency: 0.9, pairs: 12, tooFew: false } }).where(eq(settings.key, 'audit.judge.latest'));
+    expect(metric(await computeScorecard(db, [r]), 'judgeAccuracy')).toMatchObject({ display: '60% (12 pairs)', meets: false });
+    await db.update(settings).set({ value: { at: 'x', accuracy: 1, consistency: 1, pairs: 3, tooFew: true } }).where(eq(settings.key, 'audit.judge.latest'));
+    expect(metric(await computeScorecard(db, [r]), 'judgeAccuracy')).toMatchObject({ status: 'no_data', value: null });
+    await db.update(settings).set({ value: { nonsense: true } }).where(eq(settings.key, 'audit.judge.latest'));
+    expect(metric(await computeScorecard(db, [r]), 'judgeAccuracy').status).toBe('no_data');
+  });
+
+  it('trivial kill rate is the share of gate-evaluated generated ideas killed by the trivial check (reported, no target)', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const a = await insertIdea(db, r, { status: 'gated_out' });
+    const b = await insertIdea(db, r, { status: 'advanced' });
+    const c = await insertIdea(db, r, { status: 'advanced' });
+    const o = await insertIdea(db, r, { status: 'gated_out', origin: 'owner' });
+    await db.insert(gateVerdicts).values([
+      verdict(a.id, 'trivial', false), verdict(b.id, 'trivial', true), verdict(c.id, 'trivial', true), verdict(o.id, 'trivial', false),
+    ]);
+    expect(metric(await computeScorecard(db, [r]), 'trivialKillRate')).toMatchObject({ status: 'measured', value: 1 / 3, display: '33% (1 of 3)', meets: null });
+  });
+
+  it('comps coverage counts cases whose comps verdict lists two or more dossier comps', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const two = 'comps:\n- A (live, dossier): who pays: x\n- B (dead, dossier): who pays: y\n- C (live): who pays: z';
+    const one = 'comps:\n- A (live, dossier): who pays: x\n- C (live): who pays: z';
+    for (const text of [two, two, one, 'no comps found: no library startup is near this idea']) {
+      const idea = await insertIdea(db, r);
+      await insertCase(db, idea.id);
+      await db.insert(gateVerdicts).values(verdict(idea.id, 'comps', !text.startsWith('no comps'), text));
+    }
+    await insertCase(db, (await insertIdea(db, r)).id); // a case with no comps verdict counts as not covered
+    expect(metric(await computeScorecard(db, [r]), 'compsCoverage')).toMatchObject({ status: 'measured', value: 0.4, display: '40% (2 of 5)', meets: false });
+  });
+
+  it('engine cost per run sums sketch, judge and evolve calls of the set, averaged over runs that made them', async () => {
+    const db = await testDb();
+    const a = await newRun(db);
+    const b = await newRun(db);
+    const other = await newRun(db);
+    await newRun(db);
+    await db.insert(llmCalls).values([
+      call(a, '2', 'sketch.v1'), call(a, '3', 'judge.v1'), call(a, '1', 'evolve.v1'), call(a, '9', 'ideate.v15'), call(a, '9', 'judge-reason.v1'),
+      call(b, '4', 'sketch.v1'), call(other, '100', 'sketch.v1'),
+    ]);
+    expect(metric(await computeScorecard(db, [a, b]), 'engineCostPerRun')).toMatchObject({ status: 'measured', value: 5, display: '$5.00', meets: true });
+    await db.insert(llmCalls).values(call(b, '8', 'judge.v1'));
+    expect(metric(await computeScorecard(db, [a, b]), 'engineCostPerRun')).toMatchObject({ display: '$9.00', meets: false });
   });
 });
