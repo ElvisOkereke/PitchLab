@@ -1,6 +1,6 @@
 'use server';
 
-import { QueueRunInputSchema, clampPage, queueRun, requeueRun } from '@bcg/core/dashboard/runs';
+import { MissingMarketError, QueueRunInputSchema, clampPage, queueRun, requeueRun } from '@bcg/core/dashboard/runs';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
@@ -17,6 +17,8 @@ const REFUSAL = {
   no_finds: 'No captured finds yet. Share or paste some links on the Finds page first.',
   too_many_finds: 'Pick at most 20 finds.',
 } as const;
+
+const MISSING_MARKET = 'The market for new runs is missing. Run the database migrations, then try again.';
 
 /** Fields whose messages core writes for the owner (counts, list sizes, idea length, advance ≤ ideas). */
 const CORE_WORDED = new Set(['ideaCount', 'advanceCount', 'ideaText']);
@@ -50,7 +52,13 @@ export async function queueRunAction(_prev: FormState, fd: FormData): Promise<Fo
     advanceCount: count(raw.advanceCount),
   });
   if (!parsed.success) return { error: issueMessage(parsed.error.issues[0]!), values };
-  const r = await queueRun(getDb(), parsed.data);
+  let r;
+  try {
+    r = await queueRun(getDb(), parsed.data);
+  } catch (e) {
+    if (e instanceof MissingMarketError) return { error: MISSING_MARKET, values };
+    throw e;
+  }
   if (!r.ok) return { error: REFUSAL[r.reason], values };
   revalidatePath('/runs');
   revalidatePath('/command');

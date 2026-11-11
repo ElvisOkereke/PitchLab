@@ -1,6 +1,7 @@
 'use server';
 
 import { BENCH_REFUSAL, queueBenchmarkPass, recomputePass } from '@bcg/core/bench/passes';
+import { MissingMarketError } from '@bcg/core/dashboard/runs';
 import { revalidatePath } from 'next/cache';
 import { requireOwnerAction } from '@/lib/auth/require-owner';
 import { getDb } from '@/lib/db';
@@ -10,7 +11,13 @@ import { z } from 'zod';
 /** Queues the benchmark runs for `npm run worker`. Takes no input; refused while runs are waiting or a pass is running. */
 export async function runBenchmarkAction(_prev: FormState, _fd: FormData): Promise<FormState> {
   await requireOwnerAction();
-  const r = await queueBenchmarkPass(getDb());
+  let r;
+  try {
+    r = await queueBenchmarkPass(getDb());
+  } catch (e) {
+    if (e instanceof MissingMarketError) return { error: 'The market for new runs is missing. Run the database migrations, then try again.' };
+    throw e;
+  }
   if (!r.ok) return { error: BENCH_REFUSAL[r.reason] };
   for (const p of ['/progress', '/runs', '/command']) revalidatePath(p);
   return { ok: true };

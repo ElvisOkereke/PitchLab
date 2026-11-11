@@ -1123,7 +1123,7 @@ describe('selectLenses', () => {
   ];
   const ids = (ls: { id: string }[]) => ls.map((l) => l.id);
 
-  it('open and sector seeds pick at most 6 active lenses, with no consumer quota (a run may have 0 consumer lenses)', () => {
+  it('open and sector seeds pick at most 6 active lenses, with no consumer quota (a run may have 0 consumer lenses, and consumer lenses still win slots)', () => {
     expect(MAX_LENSES_PER_RUN).toBe(6);
     expect(MIN_CONSUMER_LENSES).toBe(0); // the diversity round removed the forced consumer lenses
     for (const seedType of ['open', 'sector'] as const) {
@@ -1132,9 +1132,13 @@ describe('selectLenses', () => {
         expect(got).toHaveLength(6);
         expect(new Set(ids(got)).size).toBe(6);
         expect(got.every((l) => l.active)).toBe(true);
-        expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0); // 9 non-consumer lenses fill the 6 slots
+        expect(got.every((l) => l.active)).toBe(true);
       }
     }
+    // No forced consumer lens, but consumer lenses still compete for slots: over many seeds some runs have 0, some have some.
+    const counts = Array.from({ length: 60 }, (_, i) => selectLenses(pool, { seedType: 'open' }, seededRandom(`c${i}`)).filter((l) => l.audience === 'consumer').length);
+    expect(Math.min(...counts)).toBe(0);
+    expect(Math.max(...counts)).toBeGreaterThan(0);
   });
 
   it('is deterministic per run id and varies across run ids', () => {
@@ -1143,11 +1147,11 @@ describe('selectLenses', () => {
     expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(pickFor)).size).toBeGreaterThan(1);
   });
 
-  it('adds a consumer lens only to fill the slots, and uses every active lens when fewer than 6', () => {
+  it('lets a consumer lens compete for a slot, and uses every active lens when fewer than 6', () => {
     const oneConsumer = [...pool.filter((l) => l.audience !== 'consumer'), L('c0', 'consumer')];
     const got = selectLenses(oneConsumer, { seedType: 'open' }, seededRandom('x'));
     expect(got).toHaveLength(6);
-    expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
+    expect(got.filter((l) => l.audience === 'consumer').length).toBeLessThanOrEqual(1);
     const small = [L('b0', 'business'), L('c0', 'consumer'), L('any0', 'any'), L('off', 'consumer', false)];
     expect(ids(selectLenses(small, { seedType: 'open' }, seededRandom('x'))).sort()).toEqual(['any0', 'b0', 'c0']);
   });
@@ -1172,20 +1176,22 @@ describe('selectLenses', () => {
       );
     });
 
-    it('open and sector runs get at least 2 ambition lenses and no forced consumer lens among 6', () => {
+    it('open and sector runs get at least 2 ambition lenses among 6, and consumer lenses still compete', () => {
       for (let i = 0; i < 60; i++) {
         const got = selectLenses(big, { seedType: i % 2 ? 'open' : 'sector' }, seededRandom(`m${i}`));
         expect(got).toHaveLength(6);
-        expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
-        expect(got.filter((l) => AMBITION_LENS_IDS.includes(l.id)).length).toBeGreaterThanOrEqual(2);
+        expect(got.filter((l) => AMBITION_LENS_IDS.includes(l.id)).length).toBeGreaterThanOrEqual(2); // ambition minimum unchanged
       }
+      const counts = Array.from({ length: 60 }, (_, i) => selectLenses(big, { seedType: 'open' }, seededRandom(`m${i}`)).filter((l) => l.audience === 'consumer').length);
+      expect(Math.min(...counts)).toBe(0);
+      expect(Math.max(...counts)).toBeGreaterThan(0);
     });
 
     it('fewer than 2 ambition lenses available are all used, and no consumer lens is forced', () => {
       const few = [...big.filter((l) => !AMBITION_LENS_IDS.includes(l.id)), A('ten-x-incumbent')];
       const got = selectLenses(few, { seedType: 'open' }, seededRandom('f'));
       expect(got.map((l) => l.id)).toContain('ten-x-incumbent');
-      expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
+      expect(got).toHaveLength(6);
     });
 
     it('weights change how often a lens is picked', () => {

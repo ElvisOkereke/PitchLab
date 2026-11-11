@@ -3,7 +3,7 @@
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { benchmarkPasses, cases, ideas, runStatus, runs, scores } from '../db/schema';
-import { QUEUE_LOCK_KEY, QUEUE_MARKET_ID, type RunStatus } from '../dashboard/runs';
+import { QUEUE_LOCK_KEY, QUEUE_MARKET_ID, requireQueueMarket, type RunStatus } from '../dashboard/runs';
 import { defaultRunConfig } from '../pipeline/types';
 import { BENCHMARKS, CURRENT_BENCHMARK } from './definitions';
 import { SCORECARD_RUNS_MAX, computeScorecard, type Scorecard } from './scorecard';
@@ -102,6 +102,7 @@ export async function queueBenchmarkPass(
   version: keyof typeof BENCHMARKS = CURRENT_BENCHMARK,
 ): Promise<{ ok: true; pass: PassRow } | { ok: false; reason: 'busy' | 'pass_running' }> {
   const def = BENCHMARKS[version];
+  await requireQueueMarket(db);
   return db.transaction(async (tx) => {
     await lock(tx);
     const [{ p } = { p: 0 }] = await tx.select({ p: count() }).from(benchmarkPasses).where(eq(benchmarkPasses.status, 'running'));

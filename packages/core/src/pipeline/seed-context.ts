@@ -59,7 +59,7 @@ export const byId = <L extends { id: string }>(a: L, b: L) => (a.id < b.id ? -1 
  * The lenses a run uses. Lens seeds (any config with `lensIds`): exactly those active lenses, in the order given.
  * Otherwise at most MAX_LENSES_PER_RUN active lenses: MIN_CONSUMER_LENSES consumer and MIN_AMBITION_LENSES ambition
  * lenses when available (an ambition lens is never also counted as consumer), the rest drawn by `weight ?? 1` from
- * business and `any` lenses (topped up with more consumer lenses if those run out). Sorted by id before the seeded
+ * business and `any` lenses and consumer lenses, which compete with them for the slots by weight (no forced consumer lens). Sorted by id before the seeded
  * draws, so the choice depends only on `rng`, not on database row order.
  */
 export function selectLenses<L extends { id: string; active: boolean; audience: string; weight?: number | null }>(
@@ -76,10 +76,9 @@ export function selectLenses<L extends { id: string; active: boolean; audience: 
   const pickedAmbition = weightedPick(ambition, MIN_AMBITION_LENSES, rng);
   const pickedConsumer = weightedPick(consumer, MIN_CONSUMER_LENSES, rng);
   const picked = [...pickedConsumer, ...pickedAmbition];
+  // Every remaining active lens (business, any and consumer) competes for the other slots by weight.
   const taken = new Set(picked);
-  picked.push(...weightedPick(rest.filter((l) => !taken.has(l)), MAX_LENSES_PER_RUN - picked.length, rng));
-  const taken2 = new Set(picked);
-  picked.push(...weightedPick(consumer.filter((l) => !taken2.has(l)), MAX_LENSES_PER_RUN - picked.length, rng));
+  picked.push(...weightedPick([...rest, ...consumer].filter((l) => !taken.has(l)), MAX_LENSES_PER_RUN - picked.length, rng));
   return shuffled(picked, rng);
 }
 

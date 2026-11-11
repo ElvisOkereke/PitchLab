@@ -164,6 +164,15 @@ describe('rerunGateKillAction', () => {
     expect(queued[0]!.config).toMatchObject({ seedType: 'idea', overturnOfIdeaId: idea.id });
   });
 
+  it('reports a missing market through the notice instead of crashing', async () => {
+    const { markets } = await import('@bcg/core/db/schema');
+    const { eq } = await import('drizzle-orm');
+    const idea = await seedGatedOutIdea(state.db);
+    await state.db.delete(markets).where(eq(markets.id, 'broad'));
+    const e = await rerunGateKillAction(form({ ideaId: idea.id })).catch((err: unknown) => err);
+    expect((e as RedirectError).url).toBe('/?stage=killed&notice=rerun_no_market');
+  });
+
   it('reports a refusal through the notice and writes nothing for a bad id', async () => {
     const c = await seedCase(state.db);
     const before = await snapshotDb(state.db);

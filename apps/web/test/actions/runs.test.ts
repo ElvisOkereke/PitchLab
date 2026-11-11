@@ -43,6 +43,16 @@ describe('queueRunAction: From my finds', () => {
   });
 });
 
+describe('queueRunAction with the market missing', () => {
+  it('returns an action error instead of throwing', async () => {
+    const { markets } = await import('@bcg/core/db/schema');
+    await state.db.delete(markets).where(eq(markets.id, 'broad'));
+    const r = await queueRunAction({}, form({ seedType: 'open', ideaCount: '', advanceCount: '' }));
+    expect(r).toMatchObject({ error: expect.stringMatching(/market for new runs is missing/) });
+    expect(await state.db.select().from(runs)).toHaveLength(0);
+  });
+});
+
 describe('queueRunAction', () => {
   it('queueRunAction inserts one queued run with the parsed config', async () => {
     const r = await queueRunAction({}, form({ seedType: 'sector', sectors: ['law firms', 'mining'], lensIds: ['aggregator'], ideaText: 'ignored', ideaCount: '5', advanceCount: '2' }));

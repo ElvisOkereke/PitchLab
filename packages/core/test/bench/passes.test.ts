@@ -89,6 +89,15 @@ describe('queueBenchmarkPass', () => {
     expect(rows.map((r) => r.config)).toEqual(expect.arrayContaining(expected));
   });
 
+  it('throws a clear error and inserts no pass when the broad market is missing', async () => {
+    const db = await testDb();
+    const { markets } = await import('../../src/db/schema');
+    await db.delete(markets).where(eq(markets.id, 'broad'));
+    await expect(queueBenchmarkPass(db)).rejects.toThrow(/Market "broad" is missing/);
+    expect(await db.select().from(benchmarkPasses)).toHaveLength(0);
+    expect(await db.select().from(runs)).toHaveLength(0);
+  });
+
   it('busy inserts nothing when a run is queued or running', async () => {
     const db = await testDb();
     await mk(db, 'queued');

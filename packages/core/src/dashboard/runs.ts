@@ -103,9 +103,11 @@ async function insertQueued(tx: Tx, config: RunConfig): Promise<QueueResult> {
 }
 
 /** Throws a clear error when the queue market is missing (migration 0018 not run), instead of queueing a run that cannot start. */
-async function requireQueueMarket(db: Db): Promise<void> {
+export class MissingMarketError extends Error {}
+
+export async function requireQueueMarket(db: Db): Promise<void> {
   const [m] = await db.select({ id: markets.id }).from(markets).where(eq(markets.id, MARKET_ID));
-  if (!m) throw new Error(`Market "${MARKET_ID}" is missing. Run the database migrations (migration 0018 adds it), then try again.`);
+  if (!m) throw new MissingMarketError(`Market "${MARKET_ID}" is missing. Run the database migrations (migration 0018 adds it), then try again.`);
 }
 
 /** Queues a run for `gen worker` with the same config shape as `gen run` (defaultRunConfig, market broad). */

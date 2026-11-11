@@ -1,7 +1,7 @@
 'use server';
 
 import { CASE_SLUG } from '@bcg/core/dashboard/case-view';
-import { queueGateKillRerun } from '@bcg/core/dashboard/runs';
+import { MissingMarketError, queueGateKillRerun } from '@bcg/core/dashboard/runs';
 import { MoveStageInputSchema, moveStage, type MoveStageResult } from '@bcg/core/dashboard/stage';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
@@ -81,7 +81,13 @@ export async function rerunGateKillAction(fd: FormData): Promise<void> {
   await requireOwnerAction();
   const parsed = IdeaRefSchema.safeParse(formToObject(fd));
   if (!parsed.success) throw new Error('Invalid request.');
-  const r = await queueGateKillRerun(getDb(), parsed.data.ideaId);
+  let r;
+  try {
+    r = await queueGateKillRerun(getDb(), parsed.data.ideaId);
+  } catch (e) {
+    if (!(e instanceof MissingMarketError)) throw e;
+    redirect('/?stage=killed&notice=rerun_no_market');
+  }
   const notice = r.ok ? 'rerun_queued' : r.reason === 'too_many_queued' ? 'rerun_busy' : 'rerun_refused';
   if (r.ok) {
     revalidatePath('/');

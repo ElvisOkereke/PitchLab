@@ -28,6 +28,14 @@ describe('runBenchmarkAction', () => {
     expect(request.revalidated).toEqual(expect.arrayContaining(['/progress', '/runs', '/command']));
   });
 
+  it('returns an action error when the broad market is missing', async () => {
+    const { markets } = await import('@bcg/core/db/schema');
+    const { eq } = await import('drizzle-orm');
+    await state.db.delete(markets).where(eq(markets.id, 'broad'));
+    expect(await runBenchmarkAction({}, new FormData())).toMatchObject({ error: expect.stringMatching(/market for new runs is missing/) });
+    expect(await state.db.select().from(benchmarkPasses)).toHaveLength(0);
+  });
+
   it('refuses a second press while a pass is running, and queues nothing more', async () => {
     await runBenchmarkAction({}, new FormData());
     expect(await runBenchmarkAction({}, new FormData())).toEqual({ error: BENCH_REFUSAL.pass_running });
