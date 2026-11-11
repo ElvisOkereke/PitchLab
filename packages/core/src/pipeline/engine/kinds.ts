@@ -15,3 +15,8 @@ export const SKETCHES_PER_LENS = { min: 12, max: 15, longList: 20 } as const;
 export const AVOID_TITLES_MAX = 60;
 /** A sketch's text fields together are at most this many characters. */
 export const SKETCH_TEXT_MAX = 600;
+
+/** A sketch this close to an earlier sketch or idea (any run), or to another sketch in its run, is a duplicate. */
+export const SKETCH_DUPLICATE_SIM = 0.85;
+/** A sketch this close to a gate-killed idea or an owner-killed case is near_killed. */
+export const SKETCH_KILLED_SIM = 0.75;

@@ -8,6 +8,7 @@ import { gate } from './gate';
 import { harvest } from './harvest';
 import { ideate } from './ideate';
 import { passthrough } from './engine/passthrough';
+import { archive } from './engine/archive';
 import { sketch } from './engine/sketch';
 import { score } from './score';
 import { screen } from './screen';
@@ -19,7 +20,7 @@ export const DEFAULT_STAGE_IMPLS: Record<Stage, StageFn> = {
   harvest: (deps, run) => harvest(deps, run), // third parameter is opts, not an input
   // Engine v2 stages run only for v2 runs; v1 runs and owner ideas pass the harvest output through.
   sketch: (deps, run, input) => (usesEngineV2(run.config) ? sketch(deps, run, input) : passthrough(deps, run, input)),
-  archive: passthrough,
+  archive: (deps, run, input) => (usesEngineV2(run.config) ? archive(deps, run, input) : passthrough(deps, run, input)),
   tournament: passthrough,
   evolve: passthrough,
   ideate,
