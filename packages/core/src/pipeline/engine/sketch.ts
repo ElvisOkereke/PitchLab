@@ -8,6 +8,7 @@ import { capField, wrapUntrusted } from '../../llm/untrusted';
 import { errorMessage } from '../../tools/scrub';
 import { loadAlreadySold } from '../already-sold';
 import { BUSINESS_MODELS } from '../business-models';
+import { asRecord, bareId, enumValue, topReasons } from '../normalize';
 import { buildSeedContext, renderSignals } from '../seed-context';
 import type { RunConfig, StageDeps } from '../types';
 import { AVOID_TITLES_MAX, EARN_OR_SAVE, EDGE_KINDS, SKETCH_TEXT_MAX, SKETCHES_PER_LENS } from './kinds';
@@ -20,19 +21,9 @@ const OWN_TITLES_MAX = 500;
 const TITLE_MAX = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-/** A cited id as written: trimmed, surrounding square brackets removed, lower case. */
-const bareId = (s: string) => s.trim().replace(/^\[\s*(.*?)\s*\]$/, '$1').toLowerCase();
-const asRecord = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : null;
-/** An enum value trimmed and lower-cased, with spaces and hyphens read as underscores; unknown values unchanged (still fail). */
-function enumValue(v: unknown, allowed: readonly string[]): unknown {
-  if (typeof v !== 'string') return v;
-  const s = v.trim().toLowerCase();
-  return [s, s.replace(/[\s-]+/g, '_')].find((c) => allowed.includes(c)) ?? v;
-}
-
 /**
- * Before validation, conservative repairs: enum spellings (`"One-off"`, `"AI capability"`, `"Both"`), cited ids
+ * Before validation, conservative repairs (shared with ideate): enum spellings (`"One-off"`, `"one-time"`,
+ * `"AI capability"`, `"Both"`), cited ids
  * unwrapped and lower-cased, malformed library ids dropped on their own and capped at 10. Text is never cut: a
  * sketch over SKETCH_TEXT_MAX drops with a reason.
  */
@@ -126,15 +117,6 @@ export type SketchOutput = {
   /** Model responses cut off at the output limit (the router's re-asks included). */
   truncatedCalls: number;
 };
-
-/** `a ×2, b ×1`: the most frequent drop reasons first (ties by name), at most `max`. */
-function topReasons(reasons: Record<string, number>, max = 3): string {
-  return Object.entries(reasons)
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
-    .slice(0, max)
-    .map(([k, n]) => `${k} ×${n}`)
-    .join(', ');
-}
 
 /**
  * The sketch stage (engine v2, spec §2): per lens, one call that writes a long list of titles, marks the near-duplicate

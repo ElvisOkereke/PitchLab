@@ -12,6 +12,7 @@ import {
   ValueToUserSchema, type Barriers, type BusinessModel, type IdeaAudience, type ScaleEstimate,
 } from './business-models';
 import { meetsEvidenceRule } from './evidence';
+import { asRecord, bareId, enumValue, topReasons } from './normalize';
 import { buildSeedContext, byId, renderSignals, seededRandom, type Known } from './seed-context';
 import type { RunConfig, StageDeps } from './types';
 
@@ -85,11 +86,6 @@ const lensIdeaSchema = z.object({
   scaleEstimate: ScaleEstimateSchema,
 });
 type LensIdea = z.infer<typeof lensIdeaSchema>;
-/** Plain object copy, or null. */
-const asRecord = (v: unknown): Record<string, unknown> | null =>
-  v && typeof v === 'object' && !Array.isArray(v) ? { ...(v as Record<string, unknown>) } : null;
-/** A library id as cited: trimmed, surrounding square brackets removed, lower case. */
-const bareId = (s: string) => s.trim().replace(/^\[\s*(.*?)\s*\]$/, '$1').toLowerCase();
 
 const clip = (v: unknown, max: number) => (typeof v === 'string' && v.length > max ? v.slice(0, max) : v);
 
@@ -166,25 +162,6 @@ const ESTIMATE_STEPS: [string, string, (v: unknown) => unknown][] = [
 function score(v: unknown): unknown {
   const n = leadingNumber(v, SCORE_REST);
   return typeof n === 'number' && Number.isFinite(n) ? Math.min(5, Math.max(1, Math.round(n))) : n;
-}
-
-/** Spellings the model uses for an allowed enum value (spec §2); only applied when the target is allowed for the field. */
-const ENUM_SYNONYMS: Record<string, string> = {
-  one_time: 'one_off', 'one-time': 'one_off', 'one time': 'one_off',
-  'service plus software': 'service_plus_software', 'service+software': 'service_plus_software', 'service + software': 'service_plus_software',
-  consumers: 'consumer', individual: 'consumer',
-  businesses: 'business', b2b: 'business',
-};
-
-/**
- * An enum value trimmed and lower-cased, matched as is, through the synonym list, or with spaces and hyphens read as
- * underscores (`"One-off"`, `"Transaction fee"`). An unknown value is returned unchanged, so a strict field still fails.
- */
-function enumValue(v: unknown, allowed: readonly string[]): unknown {
-  if (typeof v !== 'string') return v;
-  const s = v.trim().toLowerCase();
-  const hit = [s, ENUM_SYNONYMS[s], s.replace(/[\s-]+/g, '_')].find((c) => c !== undefined && allowed.includes(c));
-  return hit ?? v;
 }
 
 /**
@@ -501,15 +478,6 @@ export type IdeateOutput = {
   /** The run's mix after the optional re-ask; null for owner ideas. */
   mix: (Mix & { reask: boolean }) | null;
 };
-
-/** `a ×2, b ×1`: the most frequent drop reasons first (ties by name), at most `max`. */
-function topReasons(reasons: Record<string, number>, max = 3): string {
-  return Object.entries(reasons)
-    .sort(([a, x], [b, y]) => y - x || (a < b ? -1 : a > b ? 1 : 0))
-    .slice(0, max)
-    .map(([k, n]) => `${k} ×${n}`)
-    .join(', ');
-}
 
 export async function ideate(
   { db, router, log }: StageDeps,

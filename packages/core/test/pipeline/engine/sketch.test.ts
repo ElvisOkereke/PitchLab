@@ -158,6 +158,17 @@ describe('sketch', () => {
     expect(t.logs.some((l) => /sketch: dropped 3/.test(l))).toBe(true);
   });
 
+  it('repairs business model spellings the way ideate does instead of dropping the sketch', async () => {
+    const spellings = ['one-time', 'One time', 'service + software', 'Transaction fee'];
+    const t = await setup(cfg({ lensIds: ['tl1'] }), (ids) => ({
+      structured: { sketch: [resp(spellings.map((m, i) => mk(i, [ids[0]!], { businessModel: m })))] },
+    }));
+    const out = await sketch(t.deps, t.run, { signalIds: t.ids });
+    expect(out.dropped).toBe(0);
+    const stored = await t.db.select().from(sketches).where(eq(sketches.runId, t.run.id));
+    expect(stored.map((s) => s.businessModel).sort()).toEqual(['one_off', 'one_off', 'service_plus_software', 'transaction_fee']);
+  });
+
   it('keeps at most SKETCHES_PER_LENS.max sketches from one call', async () => {
     const t = await setup(cfg({ lensIds: ['tl1'] }), (ids) => ({
       structured: { sketch: [resp(Array.from({ length: SKETCHES_PER_LENS.max + 3 }, (_, i) => mk(i, [ids[0]!])))] },
