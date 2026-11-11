@@ -40,3 +40,12 @@ export const MAX_PER_BUSINESS_MODEL = 2;
 export const FEWSHOT_PAIRS_MAX = 6;
 /** The share of Board pairs that go to the training split (few-shot examples); the rest are held out to measure the judge. */
 export const TRAIN_SHARE = 0.6;
+
+/** Evolve (spec §6): how a variant was made from its parent sketch. */
+export const SKETCH_OPERATORS = ['sharpen', 'combine', 'simplify'] as const;
+export type SketchOperator = (typeof SKETCH_OPERATORS)[number];
+/** Sketch, tournament and evolve together spend at most this much per run (USD, llm_calls of sketch.*, judge.* and evolve.*). */
+export const ENGINE_USD_MAX = 8;
+/** Evolve: the top this many sketches get one variant each, written against their COMPS_PER_SKETCH nearest comps. */
+export const EVOLVE_TOP = 6;
+export const COMPS_PER_SKETCH = 5;

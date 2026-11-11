@@ -9,6 +9,7 @@ import { harvest } from './harvest';
 import { ideate } from './ideate';
 import { passthrough } from './engine/passthrough';
 import { archive } from './engine/archive';
+import { evolve } from './engine/evolve';
 import { sketch } from './engine/sketch';
 import { tournament } from './engine/tournament';
 import { score } from './score';
@@ -23,7 +24,7 @@ export const DEFAULT_STAGE_IMPLS: Record<Stage, StageFn> = {
   sketch: (deps, run, input) => (usesEngineV2(run.config) ? sketch(deps, run, input) : passthrough(deps, run, input)),
   archive: (deps, run, input) => (usesEngineV2(run.config) ? archive(deps, run, input) : passthrough(deps, run, input)),
   tournament: (deps, run, input) => (usesEngineV2(run.config) ? tournament(deps, run, input) : passthrough(deps, run, input)),
-  evolve: passthrough,
+  evolve: (deps, run, input) => (usesEngineV2(run.config) ? evolve(deps, run, input) : passthrough(deps, run, input)),
   ideate,
   dedupe,
   screen,
