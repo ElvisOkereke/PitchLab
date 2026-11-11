@@ -5,6 +5,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '../db/client';
 import { cases, dataCalls, gateVerdicts, ideaReviews, ideas, knowledgeItems, llmCalls, runStages, runs, scores, settings, signals } from '../db/schema';
 import { IDEA_REVIEW_VERSION, METRIC_DEFS, type MetricId } from './definitions';
+import { MARKET_TIERS } from '../pipeline/market-tiers';
 
 /**
  * One scorecard row. Share metrics (near-duplicates, real need, customer return, margin, wasted entrants) hold a
@@ -47,7 +48,11 @@ const OWNER_KEEPS_TARGET = 0.5;
 /** Case stages that mean the owner kept the case on the Board (any stage but `new` is decided; `killed` is the other verdict). */
 export const KEPT_STAGES = ['validating', 'pilot', 'live'] as const;
 const TOP_TAGS = 3;
-const CONSUMER_SHARE_TARGET = 0.3;
+const CONSUMER_SHARE_TARGET = 0.2;
+const TOP_SECTOR_TARGET = 0.15;
+const UPPER_TIER_TARGET = 0.4;
+/** The market the diversity rows (and the consumer cap) apply to: passes on an earlier market have no data. */
+const DIVERSITY_MARKET = 'broad';
 const MODEL_VARIETY_TARGET = 4;
 const EASY_START_TARGET = 0.5;
 const EASY_START_MAX = 2;
@@ -174,6 +179,12 @@ type Data = {
   /** roi is valueMultiple (else roiMultiple); skip marks a user-pays-nothing case, left out of customer return. */
   caseRows: { roi: number | null; gm: number | null; skip: boolean; easyHard: boolean | null; stage: string }[];
   audience: { total: number; consumer: number };
+  /**
+   * Diversity rows (runs on the broad market only): each generated idea spreads one unit over its run's focus sectors
+   * (the harvest stage's sectors for open seeds, the config's for sector seeds; runs with none are left out), plus the
+   * newest `buyers` verdict of each gate-passed (not gated_out) generated idea.
+   */
+  diversity: { sectored: number; top: number; upper: number; floor: { total: number; pass: number } };
   modelCounts: number[];
   gut: number[];
   likes: { rated: number; liked: number; tags: { tag: string; n: number }[] };
@@ -189,7 +200,7 @@ type Data = {
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, diversity: { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
   review: { n: 0, medianEdge: null, medianScale: null, niche: 0, rated: 0, agree: 0 }, entrants: { total: 0, wasted: 0 }, cost: 0,
   engine: { uniqueShares: [], cells: [], judge: null, trivial: { total: 0, killed: 0 }, comps: { withVerdict: 0, covered: 0 }, runCosts: [] },
 });
@@ -215,6 +226,10 @@ function topTags(all: string[]): { tag: string; n: number }[] {
 /** One query per metric family over the (non-empty) run set. */
 async function gather(db: Db, set: string[], simMax: number, notes: string[]): Promise<Data> {
   const generated = and(inArray(ideas.runId, set), eq(ideas.origin, 'generated'));
+  const runRows = await db.select({ id: runs.id, config: runs.config }).from(runs).where(inArray(runs.id, set));
+  const broadRuns = runRows.filter((r) => r.config.marketId === DIVERSITY_MARKET);
+  const broadIds = broadRuns.map((r) => r.id);
+  const generatedBroad = and(inArray(ideas.runId, broadIds), eq(ideas.origin, 'generated'));
   const [{ first } = { first: null }] = await db.select({ first: min(runs.createdAt) }).from(runs).where(inArray(runs.id, set));
 
   // Similarity: within the set, and against generated ideas of real runs created before the set's earliest run.
@@ -238,7 +253,7 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   const [[ideaCountRow], buyerRows, audienceRows, modelRows, [citedRow], [demandRow], caseRows, [entrantRow], [llm], [dat], [likeRow], tagRows, [reviewRow], archiveRows, [judgeRow], [trivialRow], engineCostRows] = await Promise.all([
     db.select({ n: count() }).from(ideas).where(generated),
     db.select({ runId: ideas.runId, buyerType: ideas.buyerType }).from(ideas).where(and(generated, isNotNull(ideas.buyerType))),
-    db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generated, isNotNull(ideas.audience))).groupBy(ideas.audience),
+    broadIds.length === 0 ? Promise.resolve([]) : db.select({ audience: ideas.audience, n: count() }).from(ideas).where(and(generatedBroad, isNotNull(ideas.audience))).groupBy(ideas.audience),
     db.select({ runId: ideas.runId, n: countDistinct(ideas.businessModel) }).from(ideas).where(and(generated, isNotNull(ideas.businessModel))).groupBy(ideas.runId),
     (() => {
       const cited = db.selectDistinct({ sid: sql<string>`unnest(${ideas.signalIds})`.as('sid') }).from(ideas).where(generated).as('cited');
@@ -323,6 +338,8 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     .where(and(inArray(gateVerdicts.ideaId, ideaIds), eq(gateVerdicts.check, 'comps')))
     .orderBy(gateVerdicts.ideaId, desc(gateVerdicts.createdAt), desc(gateVerdicts.id));
 
+  const diversity = await gatherDiversity(db, broadRuns, generatedBroad);
+
   const perRun = new Map<string, Set<string>>();
   for (const r of buyerRows) {
     const norm = normaliseBuyerType(r.buyerType ?? '');
@@ -342,8 +359,9 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
     demand: { total: Number(demandRow?.total ?? 0), yes: Number(demandRow?.yes ?? 0) },
     audience: {
       total: audienceRows.reduce((t, r) => t + Number(r.n), 0),
-      consumer: audienceRows.filter((r) => r.audience === 'consumer' || r.audience === 'both').reduce((t, r) => t + Number(r.n), 0),
+      consumer: audienceRows.filter((r) => r.audience === 'consumer').reduce((t, r) => t + Number(r.n), 0),
     },
+    diversity,
     modelCounts: modelRows.map((r) => Number(r.n)),
     caseRows: caseRows.map((c) => {
       const vm = num(c.vm);
@@ -383,6 +401,38 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
   };
 }
 
+/** The diversity figures for the broad-market runs (see Data.diversity). */
+async function gatherDiversity(db: Db, broadRuns: { id: string; config: { sectors?: string[] } }[], generatedBroad: SQL | undefined): Promise<Data['diversity']> {
+  const out: Data['diversity'] = { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } };
+  if (broadRuns.length === 0) return out;
+  const ids = broadRuns.map((r) => r.id);
+  const [stageRows, ideaRows, floorRows] = await Promise.all([
+    db.select({ runId: runStages.runId, sectors: sql<unknown>`${runStages.output} -> 'sectors'` }).from(runStages).where(and(inArray(runStages.runId, ids), eq(runStages.stage, 'harvest'))),
+    db.select({ runId: ideas.runId, n: count() }).from(ideas).where(generatedBroad).groupBy(ideas.runId),
+    db.selectDistinctOn([gateVerdicts.ideaId], { pass: gateVerdicts.pass })
+      .from(gateVerdicts)
+      .innerJoin(ideas, eq(ideas.id, gateVerdicts.ideaId))
+      .where(and(generatedBroad, ne(ideas.status, 'gated_out'), eq(gateVerdicts.check, 'buyers')))
+      .orderBy(gateVerdicts.ideaId, desc(gateVerdicts.createdAt), desc(gateVerdicts.id)),
+  ]);
+  const stored = new Map(stageRows.map((s) => [s.runId, Array.isArray(s.sectors) ? s.sectors.filter((x): x is string => typeof x === 'string') : []]));
+  const tiers = MARKET_TIERS[DIVERSITY_MARKET] ?? {};
+  const weights = new Map<string, number>();
+  for (const run of broadRuns) {
+    const n = Number(ideaRows.find((i) => i.runId === run.id)?.n ?? 0);
+    const sectors = [...new Set([...(stored.get(run.id) ?? []), ...(run.config.sectors ?? [])])];
+    if (n === 0 || sectors.length === 0) continue;
+    out.sectored += n;
+    for (const s of sectors) {
+      weights.set(s, (weights.get(s) ?? 0) + n / sectors.length);
+      if (tiers[s] === 'enterprise' || tiers[s] === 'mid') out.upper += n / sectors.length;
+    }
+  }
+  out.top = Math.max(0, ...weights.values());
+  out.floor = { total: floorRows.length, pass: floorRows.filter((f) => f.pass).length };
+  return out;
+}
+
 /** The stored judge calibration summary (R4), or null when missing, malformed or based on too few pairs. */
 function parseJudge(v: unknown): { accuracy: number; pairs: number } | null {
   if (typeof v !== 'object' || v === null) return null;
@@ -407,6 +457,12 @@ function buildMetrics(d: Data): MetricResult[] {
   const withBarriers = d.caseRows.filter((c) => c.easyHard !== null);
   const medianRoi = median(rois);
 
+  const dv = d.diversity;
+  const NO_SECTORS = 'No generated idea from a run on the broad market with known focus sectors (earlier passes have no data).';
+  const fraction = (k: number, n: number, meets: (v: number) => boolean): Row => {
+    const ideasText = Number.isInteger(n) ? `${n}` : n.toFixed(1);
+    return measured(k / n, `${pctText(k, n, meets)} of ${ideasText} ideas`, meets(k / n));
+  };
   const eng = d.engine;
   const NO_ENGINE = 'No run in this set used the v2 engine.';
   const meanRow = (xs: number[], text: (v: number) => string, meets: (v: number) => boolean, note: string): Row => {
@@ -426,6 +482,10 @@ function buildMetrics(d: Data): MetricResult[] {
       // Over cases with a comps verdict (v2 cases): a v1 case in the set never had comps checked.
       : share(eng.comps.covered, eng.comps.withVerdict, (v) => v >= COMPS_COVERAGE_TARGET),
     engineCostPerRun: meanRow(eng.runCosts, (v) => `$${v.toFixed(2)}`, (v) => v <= ENGINE_COST_TARGET, NO_ENGINE),
+    topSectorShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.top, dv.sectored, (v) => v <= TOP_SECTOR_TARGET),
+    upperTierShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.upper, dv.sectored, (v) => v >= UPPER_TIER_TARGET),
+    buyerFloorPass: dv.floor.total === 0 ? noData('No gate-passed generated idea from a run on the broad market has a buyers verdict (earlier passes have no data).')
+      : share(dv.floor.pass, dv.floor.total, (v) => v === 1),
     repetition: d.within.length === 0 ? noData(NEED_EMBEDDINGS) : (() => {
       const v = mean(d.within);
       return measured(v, v.toFixed(2), v < REPETITION_TARGET);
@@ -440,8 +500,8 @@ function buildMetrics(d: Data): MetricResult[] {
       : share(d.cited.yes, d.cited.total, (v) => v >= REAL_NEED_TARGET),
     demandEvidence: d.demand.total === 0 ? noData('No generated idea in this set records which library entries it used.')
       : share(d.demand.yes, d.demand.total, (v) => v >= DEMAND_EVIDENCE_TARGET),
-    consumerShare: d.audience.total === 0 ? noData('No generated idea in this set has an audience.')
-      : share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
+    consumerShare: d.audience.total === 0 ? noData('No generated idea from a run on the broad market has an audience (earlier passes have no data).')
+      : share(d.audience.consumer, d.audience.total, (v) => v <= CONSUMER_SHARE_TARGET),
     modelVariety: d.modelCounts.length === 0 ? noData('No run in this set has ideas with a business model.') : (() => {
       const v = mean(d.modelCounts);
       return measured(v, `${v.toFixed(1)} per run`, v >= MODEL_VARIETY_TARGET);

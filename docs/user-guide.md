@@ -496,8 +496,14 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   labels the idea's own figure "Idea's estimate of value to the user".
 - **Consumer lenses:** six lenses aim at individuals: earn on the side, save money automatically (bills, subscriptions,
   fees, insurance), life stages, solo creators, leapfrogging a market, and an AI assistant or free-to-user attention
-  product. Tick them under **Lenses** when you start a run. Runs without a lens pick at most 6 lenses and include at
-  least 2 consumer ones when the seed allows.
+  product. Tick them under **Lenses** when you start a run. Runs without a lens pick at most 6 lenses; consumer lenses
+  compete with the others by weight, with no forced quota, and a consumer idea is only kept when the buyer pool is at
+  least 1 million individuals with a cited source.
+- **Market profile and buyer floor:** new runs use the `broad` market ("North America, all tiers"): 36 sectors in three
+  tiers, and open runs always include at least 3 enterprise or mid-market sectors. The older `ca-us` profile (small
+  businesses in Canada and the US) is still there for runs you stored. The gate also checks the **buyer floor**: at least
+  20,000 businesses or 1,000,000 individuals, with a source for the number. It kills generated ideas and only advises on
+  your own.
 - **Consumer pitch:** a case for individuals has no cold emails, since Canada's anti-spam law (CASL) allows no implied
   consent for them. Its Pitch tab lists channels (communities, search, app stores, content, partnerships, paid ads) and
   landing-page copy instead.
@@ -527,7 +533,7 @@ Write the reason in the kill note. Reasons like these help the next runs avoid t
   each case's stage today, so a case you move back from Killed counts as kept. You never score anything extra: sorting
   cases on the Board is your verdict. Press **Recompute** under a pass to see today's Board in a new column.
 - **What good looks like:** Repetition and near-duplicates fall, buyer variety rises, and your own verdict stays above
-  3.5. The newer rows should also rise: demand evidence (at least 80% of ideas rest on a trend, a rule change or a market entry from the library; ideas from before this existed are left out), consumer share (at least 30% of ideas for individuals), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
+  3.5. The newer rows should also rise: demand evidence (at least 80% of ideas rest on a trend, a rule change or a market entry from the library; ideas from before this existed are left out), consumer share (at most 20% of ideas for individuals), top sector share (at most 15% of ideas in any one sector), enterprise and mid-market share (at least 40%) and buyer floor pass (every gate-passed idea passed the buyer floor), business-model variety (at least 4 models per run) and easy-to-start, hard-to-copy ideas (at least half of cases). Passes from before these fields existed, or run on a market other than `broad`, show "no data" on those rows. With only 5 runs, small differences (under about 0.05 similarity, or one case) may be noise.
 - **From the terminal:** `npm run gen -- bench report` prints the scorecard and writes it to `output/bench/`.
   Add a pass id and `--recompute` to freeze a new snapshot of that pass with today's data (the same as the Recompute
   button). Each column shows a short pass id, and the report prints the full one. `npm run gen -- bench baseline

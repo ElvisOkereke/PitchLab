@@ -134,6 +134,12 @@ How big a group of customers is and whether it is growing, for example the peopl
 ### Demand evidence
 The share of generated ideas that rest on a trend, a rule change or a market entry from the library. Ideas cite one only when they depend on it, and the benchmark aims for 80 percent.
 
+### Buyer floor
+The gate check that kills a generated idea when its buyer pool is too small: at least 20,000 businesses or 1,000,000 individuals, with a source for the population. An idea with no source for its population fails, and for your own ideas the check only advises.
+
+### Market profile
+The market a run works in: its sectors, countries and tiers. New runs use "North America, all tiers" (enterprise, mid-market and small sectors); the older "ca-us" profile (small businesses in Canada and the US) stays for runs you already stored.
+
 ### Rating ideas
 Rate ideas so PitchLab can tell whether changes make them better. Your ratings are never shown to the idea generator.
 

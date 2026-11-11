@@ -25,6 +25,8 @@ export type GlossaryTerm =
   | 'ruleChange'
   | 'market'
   | 'demandEvidence'
+  | 'buyerFloor'
+  | 'marketProfile'
   | 'rateIdeas'
   | 'ownerLikes'
   | 'ideaReviewer'
@@ -154,6 +156,14 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   demandEvidence: {
     label: 'Demand evidence',
     text: 'The share of generated ideas that rest on a trend, a rule change or a market entry from the library. Ideas cite one only when they depend on it, and the benchmark aims for 80 percent.',
+  },
+  buyerFloor: {
+    label: 'Buyer floor',
+    text: 'The gate check that kills a generated idea when its buyer pool is too small: at least 20,000 businesses or 1,000,000 individuals, with a source for the population. An idea with no source for its population fails, and for your own ideas the check only advises.',
+  },
+  marketProfile: {
+    label: 'Market profile',
+    text: 'The market a run works in: its sectors, countries and tiers. New runs use "North America, all tiers" (enterprise, mid-market and small sectors); the older "ca-us" profile (small businesses in Canada and the US) stays for runs you already stored.',
   },
   rateIdeas: {
     label: 'Rating ideas',

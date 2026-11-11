@@ -21,7 +21,7 @@ A running list of what is waiting on you. Done items are removed as work lands; 
 ## Judge the ideas (your part of the quality loop)
 
 - [ ] **Now:** sort the 13 bench-v3 #2 cases on the **Board** (keep or kill). They are the sources-only baseline the new engine is measured against, and your decisions also train the tournament judge.
-- [ ] After bench-v3 #3 runs (the first pass on the new idea engine), sort its new cases on the **Board**: it is the comparison with bench-v3 #2 and the verdict on the engine. Nothing else is required to start; the engine is on by default.
+- [ ] After bench-v3 #3 runs (the first pass on the new idea engine and the broad market), sort its new cases on the **Board**: it is the comparison with bench-v3 #2 and the verdict on the engine and on the wider buyer base (the scorecard shows the sector, tier and buyer-floor rows). Nothing else is required to start; the engine is on by default.
 - [ ] After each benchmark pass, sort its new cases on the **Board**: keep (move to Validating or Pilot) or kill. Your Board decisions are what PitchLab measures itself against.
 - Claude runs the scale backtest (`gen audit scale --decided`, then `gen audit backtest`) against your Board decisions after each change to the scale rule; nothing for you to do except keep sorting the Board.
 - [ ] Optional: rate ideas on **Runs** (thumbs up or down, plus tags). It covers ideas that never became cases.

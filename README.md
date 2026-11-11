@@ -227,7 +227,7 @@ Queue one on the **Runs** page (**Queue run**; ideas 1 to 30, default 12; cases 
 once in the terminal with `gen run --seed …` (`--ideas`, `--advance`). The Runs page History and the Command center
 follow its progress.
 
-- **Seeds:** `open` (6 random sectors of the market plus 5 consumer segments picked for the run), `sector` (up to 8
+- **Seeds:** `open` (6 random sectors of the market, at least 3 of them enterprise or mid-market when the market has tiers, plus 5 consumer segments picked for the run), `sector` (up to 8
   sectors you tick), `lens` (up to 8 idea patterns you tick), `idea` (your own idea, at least 50 characters; it always
   gets a case and the gate only advises). A gate-killed idea can be re-run with **Re-run as owner idea** on the Board.
 - **Stages, in order:** harvest → sketch → archive → tournament → evolve → ideate → dedupe → screen → gate → case →
@@ -270,8 +270,7 @@ follow its progress.
     - **Engine flag:** the run config's `engine` is `v2` unless set to `v1`; an idea seed always uses v1 (one idea,
       nothing to sketch). If a v2 run ends up with no sketches, ideate falls back to v14 and says so on the run page.
   - **ideate** (prompt v15 on engine v2, which expands the chosen sketches into full ideas under the rules below and stores
-    the sketch id and Elo; v14 on engine v1; the rules are unchanged): open and sector seeds sample at most **6 lenses**, at least **2 of them consumer** and at
-    least **2 ambition** lenses (`review-gap` and `platform-shockwave` are drawn at half weight); lens seeds use exactly
+    the sketch id and Elo; v14 on engine v1; the rules are unchanged): open and sector seeds sample at most **6 lenses**, at least **2 ambition** lenses and no forced consumer quota (consumer lenses compete by weight; `money-leak`, `silent-failure`, `review-gap` and `platform-shockwave` are drawn at half weight, the ambition lenses and the new `industry-shift` at 1.5); lens seeds use exactly
     the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
     startups (up to 8) and **pricing** entries (up to 15), what is **changing** (up to 10 trends and rule changes, rule
@@ -286,8 +285,8 @@ follow its progress.
     is our revenue per user per year. An idea is stored only when its evidence passes one of two
     routes: 3 operator or neutral complaint signals from 3 domains, or 1 such complaint plus 1 **demand source** (a
     cited library trend, market, rule change or pricing entry it was shown, or an opportunity signal from another
-    domain than the complaint). The run must reach at least
-    **30% consumer** ideas and **4 business models**; if it falls short on the mix, or on the idea count, ideate asks once more
+    domain than the complaint). Consumer ideas are only allowed when the buyer pool is at least 1M individuals with a cited source. The run must reach at least
+    **4 business models**; if it falls short on the mix, or on the idea count, ideate asks once more
     (mix gaps plus a count top-up, up to 6 extra ideas), never in a loop. Calls ask for 3 ideas at a time, and drops are
     logged with a reason (field path and zod code, never model content). A value or price whose source is not a library entry or signal shown to the model loses the source
     and its basis is labelled **"Assumption:"**.
@@ -304,7 +303,9 @@ follow its progress.
     too little evidence for the gate (the gate's own evidence rule, applied early), a third idea with the same business
     model (cap of 2 per model), a near-twin of an advancing idea, a copy of an idea that has a case, or one close to a
     past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant. On
-    engine v2 the tournament Elo is added to the total as a band (top quarter +2, second quarter +1).
+    engine v2 the screen also runs the idea reviewer (`idea-review.v2`) on the run's ideas and adds a review band to
+    the total (top quartile +3, second +2, third +1); the tournament Elo is only a tiebreak. The 2026-11-11 judge
+    calibration scored four judge variants 0.41-0.49 against the reviewer's 0.72 on the same 79 Board pairs.
   - **gate** (prompt v7): competitor research, then a different model judges six checks, harshly: **generic**
     (established competitors or library startups already provide the function and the idea has no concrete, checkable
     edge against named incumbents; a claimed gap that is only positioning does not count), **regulation** (needs a licence), **control** (depends on unofficial APIs, a partner or one
@@ -315,7 +316,7 @@ follow its progress.
     distinct domains (up to 2 threads per community site; vendor and untagged sources never count), or 1 operator or
     neutral complaint plus 1 demand source. A code check, **scale**, fails a generated idea whose revenue ceiling is
     under $1M a year (setting `gate.minRevenueCeiling`); it passes with a note when there is no estimate or the price is
-    unknown or 0 (a free product), and only advises for your own ideas. Any failure kills a generated idea. The new
+    unknown or 0 (a free product), and only advises for your own ideas. A code check, **buyers**, fails a generated idea whose buyer pool is under the floor: at least 20,000 businesses or 1,000,000 individuals, with a sourced population (settings `gate.minBuyers.businesses` and `gate.minBuyers.individuals`); with no source it fails, and for your own ideas it only advises. Any failure kills a generated idea. The new
     **trivial** check (model) kills a generated idea that a person with a spreadsheet, or one prompt to a frontier model
     given the data, would mostly deliver; it names the hard part or its absence, and only advises for your own ideas.
     **Comps** is a code verdict that never kills: it lists the idea's nearest library startups (dossier entries first)
@@ -373,13 +374,13 @@ follow its progress.
 - **Progress** page: the idea-quality scorecard, with the canonical baseline (baseline-0, made once with
   `gen bench baseline` over your finished real runs) beside the 5 newest benchmark passes.
 - **Scorecard metrics** (target in brackets): repetition (below 0.55), near-duplicates (below 10%), buyer variety (8 or
-  more per run), consumer share (30% or more), business-model variety (4 or more per run), real-need evidence (50% or
+  more per run), consumer share (20% or less), business-model variety (4 or more per run), real-need evidence (50% or
   more), demand evidence (80% or more of ideas cite a trend, rule change or market entry), customer return (100%, median 3× or more), our margin (100%), wasted gate
   entrants (below 30%), easy to start and hard to copy (50% or more), owner verdict (3.5 or more, all scored), owner
   keeps (50% or more of the cases you decided on the Board), cost per case (tracked). The engine rows: unique sketch
   share (60% or more), diversity cells filled (8 or more per run), judge accuracy (70% or more at the latest
   calibration), trivial kill rate (reported), comps coverage (80% or more of cases with 2 or more dossier comps) and
-  engine cost per run ($8 or less); runs from before the engine show "no data" for these. Example runs and cases are always left out.
+  engine cost per run ($8 or less); runs from before the engine show "no data" for these. The diversity rows: top sector share (15% or less; each idea counts toward its run's focus sectors), enterprise and mid-market share (40% or more), and buyer floor pass (100% of gate-passed ideas passed the `buyers` check); these rows and consumer share show "no data" for passes run on a market other than `broad`. Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
   benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
   one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**

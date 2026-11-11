@@ -256,7 +256,7 @@ export async function harvest(
   { db, router, sources, log }: StageDeps,
   run: { id: string; config: RunConfig },
   opts: { random?: () => number } = {},
-): Promise<{ signalIds: string[]; painCalls: number; opportunityCalls: number; techForums: boolean }> {
+): Promise<{ signalIds: string[]; painCalls: number; opportunityCalls: number; techForums: boolean; sectors: string[] }> {
   const random = opts.random ?? Math.random;
   const cfg = run.config;
   const [market] = await db.select().from(markets).where(eq(markets.id, cfg.marketId));
@@ -439,7 +439,7 @@ ${wrapUntrusted('idea', idea)}`,
   }
   if (kept.length === 0) {
     log(libraryIds.length ? `harvest: ${libraryIds.length} signals (${libraryIds.length} from library)` : 'harvest: no signals extracted');
-    return { signalIds: libraryIds, painCalls, opportunityCalls, techForums: techForumsOn };
+    return { signalIds: libraryIds, painCalls, opportunityCalls, techForums: techForumsOn, sectors: openSectors };
   }
 
   // One row per url + quote hash (first extraction wins): ON CONFLICT DO UPDATE may not touch a row twice in one insert.
@@ -475,5 +475,5 @@ ${wrapUntrusted('idea', idea)}`,
     if (row) ids.add(row.id);
   }
   log(`harvest: ${ids.size} signals (${libraryIds.length} from library)`);
-  return { signalIds: [...ids], painCalls, opportunityCalls, techForums: techForumsOn };
+  return { signalIds: [...ids], painCalls, opportunityCalls, techForums: techForumsOn, sectors: openSectors };
 }

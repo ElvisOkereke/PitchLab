@@ -724,6 +724,16 @@ describe('opportunity harvest and opt-in tech forums (harvest-research.v7, extra
     expect(again).toMatchObject({ painCalls: 3, opportunityCalls: 1 });
   });
 
+  it('an open run records the 6 sectors it picked (the scorecard reads them); a sector run records none', async () => {
+    const db = await testDb();
+    const router = fakeRouter({ research: { harvest: Array.from({ length: 10 }, (_, i) => research(i)) }, structured: { extract: Array.from({ length: 10 }, () => empty) } });
+    const out = await harvest({ db, router, sources: [], fetchPage, log: () => {} }, await insertRun(db, defaultRunConfig({ seedType: 'open' })));
+    expect(out.sectors).toHaveLength(6);
+    expect(new Set(out.sectors).size).toBe(6);
+    const sec = await harvest({ db, router: fakeRouter({ research: { harvest: [research(0), research(1)] }, structured: { extract: [empty] } }), sources: [], fetchPage, log: () => {} }, await insertRun(db, defaultRunConfig({ seedType: 'sector', sectors: ['HVAC'] })));
+    expect(sec.sectors).toEqual([]);
+  });
+
   it('a 2-sector seed makes 2 pain calls and 1 opportunity call aimed at the first sector', async () => {
     const db = await testDb();
     const router = fakeRouter({ research: { harvest: [research(0), research(1), research(2)] }, structured: { extract: [empty, empty] } });
