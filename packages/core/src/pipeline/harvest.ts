@@ -13,7 +13,7 @@ import { BANNED_DOMAINS, isBannedSource } from '../tools/banned-sources';
 import { decodeEntities } from '../tools/entities';
 import { getSetting } from '../validation/settings';
 import { logDataCall } from '../tools/data-calls';
-import { pickConsumerSegments } from './ideate';
+import { pickConsumerSegments } from './seed-context';
 import { phrasesFor } from './pain-phrases';
 import type { RunConfig, StageDeps } from './types';
 
