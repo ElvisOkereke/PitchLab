@@ -35,3 +35,8 @@ export const TOP_SKETCHES = 12;
 export const MAX_PER_CELL = 2;
 /** At most this many per business model: generated ideas reaching the gate in one run (screen), and sketches leaving a tournament. */
 export const MAX_PER_BUSINESS_MODEL = 2;
+
+/** Judge calibration (spec §5): at most this many few-shot Board pairs go into a judge prompt. */
+export const FEWSHOT_PAIRS_MAX = 6;
+/** The share of Board pairs that go to the training split (few-shot examples); the rest are held out to measure the judge. */
+export const TRAIN_SHARE = 0.6;

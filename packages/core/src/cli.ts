@@ -4,9 +4,10 @@ import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizz
 import { caseToMarkdown } from './case/export-markdown';
 import {
   CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
-  type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  type AuditJudgeOpts, type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { estimateScale } from './audit/scale-estimate';
+import { calibrateJudge, writeJudgeReport } from './audit/judge-calibration';
 import { agreementPct, renderBacktestMarkdown, runBacktest } from './audit/backtest';
 import { ReviewRefusal, newestPassId, reviewPassIdeas } from './audit/review';
 import { loadEnv, type Env } from './config/env';
@@ -907,6 +908,24 @@ async function auditBacktestCommand(): Promise<number> {
   }
 }
 
+/** `gen audit judge`: calibrates the tournament judge on held-out Board pairs; writes output/audit/judge-<date>.md. */
+async function auditJudgeCommand(opts: AuditJudgeOpts): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const report = await calibrateJudge({ db, router: buildRouter(env, db), log: out, limit: opts.limit });
+    const date = new Date().toISOString().slice(0, 10);
+    const path = writeJudgeReport(report, AUDIT_DIR, date);
+    if (report.tooFew) out(`Too few pairs: ${report.pairs} held-out pair(s) is under 10, so the numbers are noise.`);
+    out(`Judged ${report.pairs} pair(s): accuracy ${report.accuracy.toFixed(2)} (goal 0.70), position consistency ${report.consistency.toFixed(2)} (goal 0.80), cost $${report.spentUsd.toFixed(4)}.`);
+    out(`Written to ${path}`);
+    return 0;
+  } finally {
+    await closeDb(db);
+  }
+}
+
 async function auditHoldoutAddCommand(text: string): Promise<number> {
   return withDb(async (db) => {
     const r = await holdoutAdd(db, text);
@@ -963,6 +982,7 @@ const program = buildProgram({
   auditReview: auditReviewCommand,
   auditScale: auditScaleCommand,
   auditBacktest: auditBacktestCommand,
+  auditJudge: auditJudgeCommand,
   auditHoldoutAdd: auditHoldoutAddCommand,
   auditHoldoutList: auditHoldoutListCommand,
   auditHoldoutClear: auditHoldoutClearCommand,

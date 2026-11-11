@@ -45,7 +45,7 @@ const OWNER_VERDICT_TARGET = 3.5;
 const OWNER_LIKES_TARGET = 0.5;
 const OWNER_KEEPS_TARGET = 0.5;
 /** Case stages that mean the owner kept the case on the Board (any stage but `new` is decided; `killed` is the other verdict). */
-const KEPT_STAGES = ['validating', 'pilot', 'live'] as const;
+export const KEPT_STAGES = ['validating', 'pilot', 'live'] as const;
 const TOP_TAGS = 3;
 const CONSUMER_SHARE_TARGET = 0.3;
 const MODEL_VARIETY_TARGET = 4;

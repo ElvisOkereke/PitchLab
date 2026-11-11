@@ -3,6 +3,7 @@ import { fewShotPairs } from '../../../src/audit/judge-pairs';
 import { JUDGE_CRITERIA, judgePair, type JudgeSketch } from '../../../src/pipeline/engine/judge';
 import type { FewShot } from '../../../src/pipeline/engine/schema';
 import { fakeRouter } from '../../helpers/fake-router';
+import { testDb } from '../../helpers/db';
 
 const view = (title: string, o: Partial<JudgeSketch> = {}): JudgeSketch => ({
   title, buyer: `${title} buyer`, problem: `${title} problem`, howItEarns: `${title} earns`, edge: `${title} edge`, whyNotTrivial: `${title} hard`, ...o,
@@ -75,8 +76,8 @@ describe('judgePair', () => {
   });
 });
 
-describe('fewShotPairs (until Task 7)', () => {
-  it('returns no pairs', async () => {
-    expect(await fewShotPairs({} as never)).toEqual([]);
+describe('fewShotPairs', () => {
+  it('returns no pairs on an empty Board', async () => {
+    expect(await fewShotPairs(await testDb())).toEqual([]);
   });
 });

@@ -83,12 +83,14 @@ export type CliHandlers = {
   auditReview(passId: string | undefined, opts: AuditReviewOpts): Promise<number>;
   auditScale(passId: string | undefined, opts: AuditScaleOpts): Promise<number>;
   auditBacktest(): Promise<number>;
+  auditJudge(opts: AuditJudgeOpts): Promise<number>;
   auditHoldoutAdd(text: string): Promise<number>;
   auditHoldoutList(): Promise<number>;
   auditHoldoutClear(): Promise<number>;
 };
 
 export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
+export type AuditJudgeOpts = { limit?: number };
 export type AuditScaleOpts = { last?: boolean; decided?: boolean; dryRun?: boolean };
 
 const PASS_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -399,6 +401,16 @@ export function buildProgram(h: CliHandlers): Command {
     .description('Compare the scale rule with the cases you kept or killed; writes output/audit/backtest-<date>.md (no model calls)')
     .action(async () => {
       process.exitCode = await h.auditBacktest();
+    });
+  auditCmd.command('judge')
+    .description('Calibrate the tournament judge against your Board decisions on held-out pairs; writes output/audit/judge-<date>.md (costs model calls, two per pair)')
+    .option('--limit <n>', 'judge at most this many held-out pairs', (v: string) => {
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 1) throw new CliError('--limit must be a whole number of 1 or more.', 2);
+      return n;
+    })
+    .action(async (opts: AuditJudgeOpts) => {
+      process.exitCode = await h.auditJudge(opts);
     });
   const holdoutCmd = auditCmd.command('holdout').description('Holdout examples: ideas you would want, compared with each pass by `bench report` (never shown to the model)');
   holdoutCmd.command('add')

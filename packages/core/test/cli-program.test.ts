@@ -8,7 +8,7 @@ function handlers() {
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok), feedsRun: vi.fn(ok), dossiersRun: vi.fn(ok), findsAdd: vi.fn(ok), findsList: vi.fn(ok), findsRun: vi.fn(ok), telegramReset: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
-    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok), libraryAssess: vi.fn(ok),
+    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok), auditJudge: vi.fn(ok), libraryAssess: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -270,6 +270,12 @@ describe('gen audit scale and backtest', () => {
     await expect(parse(['audit', 'scale', '--last', '--decided'])).rejects.toThrow(/pass id, --last or --decided/);
     await expect(parse(['audit', 'scale', 'abc'])).rejects.toThrow(/not a pass id/);
   });
+  it('wires judge with an optional limit', async () => {
+    expect((await parse(['audit', 'judge'])).auditJudge).toHaveBeenCalledWith({});
+    expect((await parse(['audit', 'judge', '--limit', '25'])).auditJudge).toHaveBeenCalledWith({ limit: 25 });
+    await expect(parse(['audit', 'judge', '--limit', '0'])).rejects.toThrow();
+  });
+
   it('wires backtest', async () => {
     expect((await parse(['audit', 'backtest'])).auditBacktest).toHaveBeenCalled();
   });
