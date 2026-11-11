@@ -115,6 +115,12 @@ function GateKills({ kills }: { kills: GateKill[] }) {
                   <span className="check">❌ {checkLabel(f.check)}:</span> <span className="pre">{f.reasoning}</span>
                 </li>
               ))}
+              {/* Advisory verdicts (comps) are flags, never kill reasons. */}
+              {k.flags.map((f) => (
+                <li key={f.check} className="flag">
+                  <span className="check">⚠️ {checkLabel(f.check)} (flag):</span> <span className="pre">{f.reasoning}</span>
+                </li>
+              ))}
             </ul>
             <form action={rerunGateKillAction}>
               <input type="hidden" name="ideaId" value={k.ideaId} />

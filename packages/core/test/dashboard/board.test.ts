@@ -97,6 +97,17 @@ describe('board', () => {
     expect(kills[1]!.failed).toEqual([{ check: 'control', reasoning: 'needs platform access' }]);
     expect(await listGateKills(db, 1)).toHaveLength(1);
   });
+
+  it('listGateKills never lists a flagged comps verdict (advisory) as a kill reason; it comes back as a flag', async () => {
+    const idea = await insertIdea(db, runId, { title: 'Trivial', status: 'gated_out', createdAt: new Date('2026-10-05T00:00:00Z') });
+    await db.insert(gateVerdicts).values([
+      { ideaId: idea.id, check: 'trivial', pass: false, reasoning: 'a spreadsheet does it', model: 'm', promptVersion: 'gate.v7' },
+      { ideaId: idea.id, check: 'comps', pass: false, reasoning: 'no comps found: no library startup is near this idea', model: 'rule', promptVersion: 'comps-rule.v1' },
+    ]);
+    const kill = (await listGateKills(db)).find((k) => k.ideaId === idea.id)!;
+    expect(kill.failed).toEqual([{ check: 'trivial', reasoning: 'a spreadsheet does it' }]);
+    expect(kill.flags).toEqual([{ check: 'comps', reasoning: 'no comps found: no library startup is near this idea' }]);
+  });
 });
 
 describe('example on the board', () => {

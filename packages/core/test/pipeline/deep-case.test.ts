@@ -300,10 +300,13 @@ describe('deepCase', () => {
     const idea = await ideaWithSignal(db, run.id, 'owner');
     const longProblem = `${'x'.repeat(2000)}TAIL`;
     await db.update(ideas).set({ title: 'Form\nchecks', problem: longProblem }).where(eq(ideas.id, idea.id));
-    await db.insert(gateVerdicts).values({
+    await db.insert(gateVerdicts).values([{
       ideaId: idea.id, check: 'regulation', pass: false, reasoning: 'Needs a licence in Quebec',
       sources: [], model: 'gpt-6-sol', promptVersion: 'gate.v1',
-    });
+    }, {
+      ideaId: idea.id, check: 'comps', pass: false, reasoning: 'no comps found: no library startup is near this idea',
+      sources: [], model: 'rule', promptVersion: 'comps-rule.v1',
+    }]);
     const router = recordingRouter([draft()]);
     await deepCase(deps(db, router), run, { passed: [idea.id], advisory: [{ ideaId: idea.id, failedChecks: ['regulation'] }] });
 
@@ -312,6 +315,9 @@ describe('deepCase', () => {
     expect(res!.prompt).toContain('x'.repeat(2000));
     expect(res!.prompt).not.toContain('TAIL');
     expect(write!.prompt).toContain('regulation (fail): Needs a licence in Quebec');
+    // An advisory verdict (comps) is a flag for the writer, never a failure.
+    expect(write!.prompt).toContain('comps (flag): no comps found');
+    expect(write!.prompt).not.toContain('comps (fail)');
   });
 
   it('stores evidence signals from the real signal rows, never the model copy', async () => {

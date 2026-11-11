@@ -1,6 +1,7 @@
 import { and, count, countDistinct, desc, eq, gte, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { benchmarkPasses, caseStage, cases, gateVerdicts, ideas, outreachEvents, prospects, runs, scores, type CaseStage } from '../db/schema';
+import { isAdvisoryGateCheck } from '../pipeline/gate-checks';
 import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
 
 /** Most cards shown per stage column (counts are not limited). */
@@ -113,7 +114,10 @@ export type GateKill = {
   title: string;
   oneLiner: string;
   createdAt: Date;
+  /** The kill reasons: failed checks, advisory verdicts (ADVISORY_GATE_CHECKS) left out. */
   failed: { check: (typeof gateVerdicts.$inferSelect)['check']; reasoning: string }[];
+  /** Flagged advisory verdicts (gate.v7 comps): shown as flags, never as a kill reason. */
+  flags: { check: (typeof gateVerdicts.$inferSelect)['check']; reasoning: string }[];
 };
 
 /**
@@ -134,8 +138,8 @@ export async function listGateKills(db: Db, limit = 50): Promise<GateKill[]> {
     .from(gateVerdicts)
     .where(inArray(gateVerdicts.ideaId, rows.map((r) => r.ideaId)))
     .orderBy(gateVerdicts.ideaId, gateVerdicts.check, desc(gateVerdicts.createdAt));
-  return rows.map((r) => ({
-    ...r,
-    failed: verdicts.filter((v) => v.ideaId === r.ideaId && !v.pass).map((v) => ({ check: v.check, reasoning: v.reasoning })),
-  }));
+  return rows.map((r) => {
+    const notPassed = verdicts.filter((v) => v.ideaId === r.ideaId && !v.pass).map((v) => ({ check: v.check, reasoning: v.reasoning }));
+    return { ...r, failed: notPassed.filter((v) => !isAdvisoryGateCheck(v.check)), flags: notPassed.filter((v) => isAdvisoryGateCheck(v.check)) };
+  });
 }

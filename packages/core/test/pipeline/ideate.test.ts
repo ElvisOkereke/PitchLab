@@ -1688,6 +1688,23 @@ describe('ideate v15 expands sketches (engine v2)', () => {
     expect(row).toMatchObject({ sketchId: ids[1], elo: null });
   });
 
+  it('a v2 run with no sketch ids warns, falls back to ideate.v14 and records the fallback (Ruling R12)', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1 });
+    const t = await setup(config, {});
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const r = versioned({ structured: { ideate: [mk(1, [])] } });
+    const out = await ideate({ ...t.deps, router: r }, t.run, { signalIds: [] });
+    expect(r.versions).toEqual(['ideate.v14']);
+    expect(out.fallback).toBe('v14');
+    expect(t.logs).toContain('ideate: WARNING engine v2 run has no sketches; falling back to v14');
+
+    const v1 = await setup(cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1, engine: 'v1' }), {});
+    await v1.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const v1Out = await ideate({ ...v1.deps, router: versioned({ structured: { ideate: [mk(1, [])] } }) }, v1.run, { signalIds: [] });
+    expect(v1Out.fallback).toBeUndefined();
+    expect(v1.logs.some((l) => l.includes('WARNING'))).toBe(false);
+  });
+
   it('a v1 run still uses ideate.v14 and stores no sketch', async () => {
     const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 1, engine: 'v1' });
     const t = await setup(config, {});

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { gateCheck, gateVerdicts } from '../../src/db/schema';
+import { ADVISORY_GATE_CHECKS, isAdvisoryGateCheck } from '../../src/pipeline/gate-checks';
 import { insertIdea, insertRun, testDb } from '../helpers/db';
 import { defaultRunConfig } from '../../src/pipeline/types';
 
@@ -12,6 +13,10 @@ describe('migration 0017 (gate v7 checks)', () => {
     const labels = ((await db.execute(sql`select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'gate_check' order by e.enumsortorder`)) as unknown as { rows: { enumlabel: string }[] }).rows.map((r) => r.enumlabel);
     expect(labels).toEqual(['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale', 'trivial', 'comps']);
     expect([...gateCheck.enumValues]).toEqual(labels);
+    // The advisory (flag-only) verdicts are gate checks; only comps is advisory.
+    expect([...ADVISORY_GATE_CHECKS]).toEqual(['comps']);
+    for (const c of ADVISORY_GATE_CHECKS) expect(labels).toContain(c);
+    expect(labels.filter(isAdvisoryGateCheck)).toEqual(['comps']);
 
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const idea = await insertIdea(db, run.id);

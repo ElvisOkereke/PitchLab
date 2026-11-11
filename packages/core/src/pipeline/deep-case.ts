@@ -5,6 +5,7 @@ import { NumberInputsSchema, type NumberInputs } from '../calc/schema';
 import { CaseDraftSchema, competitorPricingText, hasPriceFigure, type CaseSections } from '../case/schema';
 import type { Db } from '../db/client';
 import { cases, claims, gateVerdicts, ideas, markets, signals } from '../db/schema';
+import { isAdvisoryGateCheck } from './gate-checks';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
 import { isBannedSource } from '../tools/banned-sources';
@@ -115,7 +116,8 @@ export async function deepCase(
       const wrappedGate = wrapUntrusted(
         'gate-findings',
         [...latest.values()]
-          .map((v) => `- ${v.check} (${v.pass ? 'pass' : 'fail'}): ${capField(v.reasoning, 1000)}\n  urls: ${urlList(v.sources).join(' ') || '(none)'}`)
+          // An advisory verdict (comps) that did not pass is a flag, never a failure.
+          .map((v) => `- ${v.check} (${v.pass ? 'pass' : isAdvisoryGateCheck(v.check) ? 'flag' : 'fail'}): ${capField(v.reasoning, 1000)}\n  urls: ${urlList(v.sources).join(' ') || '(none)'}`)
           .join('\n') || '(no gate findings recorded)',
       );
 

@@ -3,6 +3,7 @@ import { money } from '@bcg/core/case/export-markdown';
 import { safeHttpUrl } from '@bcg/core/case/links';
 import { forYouToCheck, linkFlags, type LinkFlags } from '@bcg/core/case/review';
 import type { CaseView } from '@bcg/core/dashboard/case-view';
+import { isAdvisoryGateCheck } from '@bcg/core/pipeline/gate-checks';
 import { FREE_PRICE_CEILING_NOTE, userPaysNothing, type ScaleEstimate, type ScaleResult } from '@bcg/core/pipeline/business-models';
 import { checkLabel } from '@/lib/gate';
 import { libraryHref } from '@/lib/library-query';
@@ -97,7 +98,9 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
     ['Next action', s.nextAction],
   ];
   // Core already orders failed checks first; kept stable here so the page never depends on it.
-  const gate = [...view.gate].sort((a, b) => Number(a.pass) - Number(b.pass));
+  // Failures first, then flags (a failed advisory verdict, comps), then passes.
+  const rank = (g: { pass: boolean; check: string }) => (g.pass ? 2 : isAdvisoryGateCheck(g.check) ? 1 : 0);
+  const gate = [...view.gate].sort((a, b) => rank(a) - rank(b));
 
   return (
     <div className="tab tab-summary">
@@ -177,14 +180,18 @@ export function SummaryTab({ view, flags = linkFlags(view.claims) }: { view: Cas
       <h2>Gate verdicts</h2>
       {gate.length === 0 ? <p className="muted">No gate verdicts recorded.</p> : null}
       <ul className="plain verdicts" data-testid="gate-verdicts">
-        {gate.map((g) => (
-          <li key={g.id} className={g.pass ? 'verdict pass' : 'verdict fail'}>
-            <span className="check">
-              {g.pass ? '✅' : '❌'} {checkLabel(g.check)}:
-            </span>{' '}
-            <span className="pre">{g.reasoning}</span>
-          </li>
-        ))}
+        {gate.map((g) => {
+          // Advisory verdicts (comps) only flag: a failed one is a flag, never a failure.
+          const flag = !g.pass && isAdvisoryGateCheck(g.check);
+          return (
+            <li key={g.id} className={g.pass ? 'verdict pass' : flag ? 'verdict flag' : 'verdict fail'}>
+              <span className="check">
+                {g.pass ? '✅' : flag ? '⚠️' : '❌'} {checkLabel(g.check)}{flag ? ' (flag)' : ''}:
+              </span>{' '}
+              <span className="pre">{g.reasoning}</span>
+            </li>
+          );
+        })}
       </ul>
 
       <ForYouToCheck view={view} flags={flags} />

@@ -22,6 +22,7 @@ const board = {
 const kills: GateKill[] = [{
   ideaId: '22222222-2222-4222-8222-222222222222', title: '<b>bad</b> idea', oneLiner: 'x', createdAt: new Date(),
   failed: [{ check: 'reachability', reasoning: 'no reachable buyer <script>alert(1)</script>' }],
+  flags: [],
 }];
 
 afterEach(cleanup);
@@ -68,6 +69,15 @@ describe('BoardView', () => {
     expect(details.textContent).toContain('Revenue ceiling:');
     expect(details.textContent).toContain('Too small: 2,000 businesses');
     expect(details.textContent).not.toMatch(/❌ scale:/);
+  });
+
+  it('shows a flagged comps verdict as a flag, never as a kill reason', () => {
+    const kill: GateKill = { ...kills[0]!, flags: [{ check: 'comps', reasoning: 'only dead comps: all 2 nearest library startups died' }] };
+    const { container } = render(<BoardView board={board} gateKills={[kill]} lenses={[]} query={{}} />);
+    const details = within(container.querySelector('[data-stage="killed"]') as HTMLElement).getByTestId('gate-kills');
+    expect(details.textContent).toContain('⚠️ Comps (flag): only dead comps');
+    expect(details.textContent).not.toContain('❌ Comps');
+    expect(details.textContent).toContain('❌ Reachability:');
   });
 
   it('shows the overturn-refused notice', () => {

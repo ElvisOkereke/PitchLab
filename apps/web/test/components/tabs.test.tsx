@@ -19,7 +19,7 @@ describe('SummaryTab', () => {
         claimRow('verified', { text: 'Claim C' }),
       ],
     });
-    view.gate = [gateRow('generic', true, 'specific enough'), gateRow('reachability', false, 'no reachable buyer')];
+    view.gate = [gateRow('generic', true, 'specific enough'), gateRow('reachability', false, 'no reachable buyer'), gateRow('comps', false, 'no comps found')];
     const { container, getByText } = render(<SummaryTab view={view} />);
 
     expect(getByText(/Daily synthetic test leads/)).toBeTruthy();
@@ -28,8 +28,11 @@ describe('SummaryTab', () => {
     const gate = within(container.querySelector('[data-testid="gate-verdicts"]') as HTMLElement).getAllByRole('listitem');
     expect(gate.map((li) => li.textContent)).toEqual([
       expect.stringMatching(/^❌ Reachability: no reachable buyer/),
+      // An advisory verdict (comps) is a flag, never a failure: after the failures, before the passes.
+      expect.stringMatching(/^⚠️ Comps \(flag\): no comps found/),
       expect.stringMatching(/^✅ Not generic: specific enough/),
     ]);
+    expect(gate[1]!.className).toBe('verdict flag');
 
     const forYou = container.querySelector('[data-testid="for-you"]') as HTMLElement;
     const merged = within(forYou).getAllByRole('listitem').find((li) => li.textContent?.includes('Claim A'))!;

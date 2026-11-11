@@ -1,9 +1,10 @@
 // Pass audit: where a benchmark pass's evidence, ideas and gate kills came from, with plain-language flags for lopsided
 // results. Web-safe (drizzle, db/schema and bench constants only). Read-only; no model calls.
-import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { benchmarkPasses, cases, gateVerdicts, ideaReviews, ideas, knowledgeItems, runStages, runs, signals } from '../db/schema';
 import { IDEA_REVIEW_VERSION } from '../bench/definitions';
+import { ADVISORY_GATE_CHECKS } from '../pipeline/gate-checks';
 
 /** A flag is raised when a share (in percent) is strictly above its limit. */
 export const FLAG_LIMITS = { topDomain: 15, vendorVoice: 40, lens: 35, gateCheck: 50, niche: 30 } as const;
@@ -87,8 +88,8 @@ export async function computePassAudit(db: Db, passId: string): Promise<PassAudi
       .where(and(generated, isNotNull(ideas.lensId))).groupBy(ideas.lensId).orderBy(ideas.lensId),
     db.select({ check: gateVerdicts.check, killed: sql<number>`count(distinct ${ideas.id})::int` })
       .from(gateVerdicts).innerJoin(ideas, eq(ideas.id, gateVerdicts.ideaId)).innerJoin(runs, eq(runs.id, ideas.runId))
-      // The comps verdict (gate.v7) is advisory and never kills, so it is not a kill reason.
-      .where(and(generated, eq(ideas.status, 'gated_out'), eq(gateVerdicts.pass, false), ne(gateVerdicts.check, 'comps'))).groupBy(gateVerdicts.check),
+      // Advisory verdicts (ADVISORY_GATE_CHECKS, gate.v7 comps) never kill, so they are not kill reasons.
+      .where(and(generated, eq(ideas.status, 'gated_out'), eq(gateVerdicts.pass, false), notInArray(gateVerdicts.check, [...ADVISORY_GATE_CHECKS]))).groupBy(gateVerdicts.check),
     db.select({ n: sql<number>`count(distinct ${ideas.id})::int` }).from(ideas)
       .innerJoin(runs, eq(runs.id, ideas.runId)).where(and(generated, eq(ideas.status, 'gated_out'))),
     db.select({ output: runStages.output }).from(runStages).where(and(inArray(runStages.runId, runIds), eq(runStages.stage, 'ideate'))),

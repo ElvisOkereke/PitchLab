@@ -13,6 +13,7 @@ import {
 import { DEMAND_LIBRARY_KINDS, evaluateEvidence } from './evidence';
 import { nearestComps, type Comp } from './engine/evolve';
 import { COMPS_PER_SKETCH } from './engine/kinds';
+import { isAdvisoryGateCheck } from './gate-checks';
 import { ideaBlock } from './idea-text';
 import type { RunConfig, StageDeps } from './types';
 
@@ -22,8 +23,6 @@ export { COMMUNITY_PLATFORMS, countEvidence, countEvidenceForSignals } from './e
 /** The model's checks (gate.v7 adds `trivial`); the code verdicts follow in ORDER. */
 const CHECKS = ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'trivial'] as const;
 const ORDER = [...CHECKS, 'evidence', 'scale', 'comps'] as const;
-/** Verdicts that are only shown, never a failed check: they never kill and are never an owner idea's flag. */
-const NEVER_KILLS: ReadonlySet<string> = new Set(['comps']);
 
 const judgeSchema = z
   .object({
@@ -276,7 +275,8 @@ Why not trivial (the idea's own unverified claim): ${capField(why, WHY_NOT_TRIVI
       sources: [], model: 'rule', promptVersion: COMPS_RULE_VERSION,
     });
     // A failed check kills a generated idea; owner ideas are advisory for every check (scale and trivial included).
-    const failed = ORDER.filter((c) => !NEVER_KILLS.has(c) && !results.get(c));
+    // ADVISORY_GATE_CHECKS (comps) only flag: never a failed check.
+    const failed = ORDER.filter((c) => !isAdvisoryGateCheck(c) && !results.get(c));
     const kill = failed.length > 0 && idea.origin !== 'owner';
     // One transaction per idea: replace verdicts and set status together (idempotent on re-run, R20).
     await db.transaction(async (tx) => {

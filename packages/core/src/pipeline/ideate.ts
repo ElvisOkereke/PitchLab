@@ -530,6 +530,8 @@ export type IdeateOutput = {
   toCopyLowered: number;
   /** The run's mix after the optional re-ask; null for owner ideas. */
   mix: (Mix & { reask: boolean }) | null;
+  /** Set when an engine v2 run reached ideate with no sketch ids and generated with ideate.v14 instead (Ruling R12). */
+  fallback?: 'v14';
 };
 
 export async function ideate(
@@ -583,7 +585,8 @@ export async function ideate(
   const sketchIds = usesEngineV2(cfg) && Array.isArray(input.sketchIds)
     ? [...new Set(input.sketchIds.filter((x): x is string => typeof x === 'string'))]
     : null;
-  if (usesEngineV2(cfg) && !sketchIds) log('ideate: an engine v2 run with no sketch ids; generating ideas with ideate.v14');
+  const fallback = usesEngineV2(cfg) && !sketchIds;
+  if (fallback) log('ideate: WARNING engine v2 run has no sketches; falling back to v14');
   const sketchRows = sketchIds?.length ? await db.select().from(sketches).where(inArray(sketches.id, sketchIds)) : [];
   const sketchById = new Map(sketchRows.map((s) => [s.id, s]));
   const finalSketches = (sketchIds ?? []).map((id) => {
@@ -834,5 +837,8 @@ export async function ideate(
     : 'no';
   log(`ideate: mix consumer ${Math.round(after.consumerShare * 100)}% models ${after.models} (re-ask: ${reask ? 'yes' : 'no'}, still short: ${stillShort})`);
   log(`ideate: ${ideaIds.length} ideas from ${chosen.length} lenses`);
-  return { ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, toCopyLowered, mix: { ...after, reask } };
+  return {
+    ideaIds, dropped, dropReasons, requested, returned, truncatedCalls, failedCalls, toCopyLowered, mix: { ...after, reask },
+    ...(fallback ? { fallback: 'v14' as const } : {}),
+  };
 }

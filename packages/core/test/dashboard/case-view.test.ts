@@ -17,10 +17,11 @@ describe('getCaseView', () => {
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
     const idea = await insertIdea(db, run.id, { lensId: 'money-leak' });
     const c = await insertCase(db, idea.id, { slug: 'good-slug' });
-    const v = (check: 'generic' | 'control' | 'evidence', pass: boolean, reasoning: string, s: number) =>
+    const v = (check: 'generic' | 'control' | 'evidence' | 'comps', pass: boolean, reasoning: string, s: number) =>
       ({ ideaId: idea.id, check, pass, reasoning, model: 'm', promptVersion: 'p', createdAt: new Date(Date.UTC(2026, 9, 3, 0, 0, s)) });
     await db.insert(gateVerdicts).values([
       v('control', true, 'ok', 0), v('evidence', true, 'old pass', 0), v('evidence', false, 'thin', 1), v('generic', true, 'fine', 0),
+      v('comps', false, 'no comps found', 0),
     ]);
     await db.insert(claims).values({ caseId: c.id, section: 'evidence', text: 'c', sourceUrl: 'https://x.test' });
     await db.insert(scores).values({ caseId: c.id, criterion: 'gut', value: 3, note: '', by: 'owner' });
@@ -33,7 +34,8 @@ describe('getCaseView', () => {
     expect(view.case.id).toBe(c.id);
     expect(view.case.stage).toBe('validating');
     expect(view.lensName).toBe('Money-leak recovery');
-    expect(view.gate.map((g) => [g.check, g.pass])).toEqual([['evidence', false], ['generic', true], ['control', true]]);
+    // Failures first, then flags (a failed advisory comps verdict), then passes.
+    expect(view.gate.map((g) => [g.check, g.pass])).toEqual([['evidence', false], ['comps', false], ['generic', true], ['control', true]]);
     expect(view.claims).toHaveLength(1);
     expect(view.scores).toHaveLength(1);
     expect(view.events).toHaveLength(1);

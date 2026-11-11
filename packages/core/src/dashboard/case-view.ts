@@ -1,6 +1,7 @@
 import { desc, eq } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { benchmarkPasses, cases, claims, gateCheck, gateVerdicts, ideas, lenses, runs, scores, stageEvents } from '../db/schema';
+import { isAdvisoryGateCheck } from '../pipeline/gate-checks';
 import { runSeedSql, toRunOrigin, type RunOrigin } from './runs';
 import {
   EdgeSchema, ScaleEstimateSchema, ScaleSchema, currentScale, priceIsFree, type Edge, type Scale, type ScaleEstimate, type ScaleResult,
@@ -65,8 +66,9 @@ export async function getCaseView(db: Db, slug: string): Promise<CaseView | null
       .orderBy(gateVerdicts.check, desc(gateVerdicts.createdAt)),
     db.select().from(stageEvents).where(eq(stageEvents.caseId, kase.id)).orderBy(desc(stageEvents.at), desc(stageEvents.id)).limit(CASE_EVENTS_MAX),
   ]);
-  const gate = [...verdicts].sort((a, b) =>
-    Number(a.pass) - Number(b.pass) || (CHECK_ORDER.get(a.check)! - CHECK_ORDER.get(b.check)!));
+  // Failures first, then flags (a failed advisory verdict, comps), then passes; each in check order.
+  const rank = (v: { pass: boolean; check: string }) => (v.pass ? 2 : isAdvisoryGateCheck(v.check) ? 1 : 0);
+  const gate = [...verdicts].sort((a, b) => rank(a) - rank(b) || (CHECK_ORDER.get(a.check)! - CHECK_ORDER.get(b.check)!));
   const edge = EdgeSchema.safeParse(row.edge);
   const scale = ScaleSchema.safeParse(row.scale);
   const scaleEstimate = ScaleEstimateSchema.safeParse(row.scaleEstimate);
