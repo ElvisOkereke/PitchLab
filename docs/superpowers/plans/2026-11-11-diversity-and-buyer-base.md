@@ -134,3 +134,44 @@
 - [ ] **Step 3:** Implement, and write the docs.
 - [ ] **Step 4:** Run all merge gates. Expected: PASS.
 - [ ] **Step 5:** Commit `feat(core): diversity scorecard rows; docs`.
+
+### Task 4: Reviewer-ranked screen (the judge fallback)
+
+**Why:** judge calibration on 2026-11-11 compared four variants on 79 held-out Board pairs. Each variant changes the prompt, the model or the context. None of them came close to the old reviewer.
+
+| Variant | Accuracy |
+|---|---|
+| judge v1 | 0.47 (38 pairs) |
+| judge v2 | 0.43 |
+| judge v2 + case context | 0.49 |
+| Gemini judge | 0.41 |
+| reviewer score total (scale + edge + novelty + niche) on the same pairs | 0.72 |
+
+The owner approved the fallback: "rank by the old reviewer's scores plus the tournament".
+
+**Files:**
+- Modify: `src/pipeline/screen.ts`, `src/audit/review.ts`. Factor out a per-run entry, `reviewRunIdeas(deps, runId, ideaIds)`, that reuses the same prompt (`idea-review.v2`), schema and storage (`idea_reviews`).
+- Test: the screen and review tests.
+
+**Interfaces:**
+- `reviewRunIdeas(deps: ReviewDeps, runId: string, ideaIds: string[]): Promise<Map<string, number>>`
+  - Reviews only the given ideas that have no review yet. Batches use `REVIEW_BATCH_SIZE`, router stage `'review'`, prompt version `idea-review.v2`, and `runId`.
+  - Returns each idea's newest total: scale + edge + novelty + niche, the same formula as calibration's `reviewerTotals`.
+  - A failed batch leaves those ideas out of the map and logs once. It never throws for a model failure.
+- `reviewBand(total: number | null, allTotals: readonly (number | null)[]): 0 | 1 | 2 | 3`
+  - Top quartile 3, second quartile 2, third quartile 1, else 0. Null gives 0.
+- **Screen for v2 runs** (`usesEngineV2`): before ranking, call `reviewRunIdeas` on the run's generated ideas. Add `reviewBand` to each total. `eloBand` becomes a tiebreak only: it is no longer added to the total, but sorts within equal totals.
+- **v1 runs and owner ideas are unchanged.**
+
+- [ ] **Step 1:** Write failing tests:
+  - a v2 screen calls review once per batch, and only for unreviewed ideas;
+  - a high-review idea outranks a high-Elo idea with an otherwise equal total;
+  - Elo breaks ties;
+  - a review failure leaves `reviewBand` at 0 and the screen still advances ideas;
+  - a v1 screen makes no review call and its totals are unchanged;
+  - `reviewBand` quartiles;
+  - a resumed screen does not re-review ideas that already have reviews.
+- [ ] **Step 2:** Run them. Expected: FAIL.
+- [ ] **Step 3:** Implement.
+- [ ] **Step 4:** Run the core suite and core tsc. Expected: PASS.
+- [ ] **Step 5:** Commit `feat(core): reviewer-ranked screen for engine v2 (judge fallback)`.
