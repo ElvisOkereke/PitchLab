@@ -7,7 +7,7 @@ import { benchmarkPasses, ideaReviews, llmCalls } from '../../src/db/schema';
 import { IDEA_REVIEW_VERSION } from '../../src/bench/definitions';
 import { loadPrompt } from '../../src/llm/prompts';
 import {
-  REVIEW_BATCH_SIZE, ReviewRefusal, ReviewOutputSchema, estimateReviewUsd, newestPassId, reviewPassIdeas,
+  REVIEW_BATCH_SIZE, ReviewRefusal, ReviewOutputSchema, estimateReviewUsd, newestPassId, reviewPassIdeas, reviewRunIdeas,
 } from '../../src/audit/review';
 import { defaultRunConfig } from '../../src/pipeline/types';
 import { insertIdea, insertRun, testDb } from '../helpers/db';
@@ -303,5 +303,45 @@ describe('newestPassId', () => {
     const [done] = await db.insert(benchmarkPasses).values({ version: 'bench-v3', label: 'a', kind: 'pass', status: 'incomplete', runIds: [], createdAt: at(2) }).returning();
     await db.insert(benchmarkPasses).values({ version: 'bench-v3', label: 'b', kind: 'pass', status: 'running', runIds: [], createdAt: at(3) });
     expect(await newestPassId(db)).toBe(done!.id);
+  });
+});
+
+describe('reviewRunIdeas', () => {
+  it('reviews with the review stage, the run id and the v2 prompt version, and returns totals', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const a = await insertIdea(db, r.id, { title: 'A' });
+    const metas: unknown[] = [];
+    const stages: string[] = [];
+    const base = echoRouter();
+    const router: ModelRouter = { ...base, async structured(stage, req, meta) { stages.push(stage); metas.push(meta); return base.structured(stage, req, meta); } };
+    const totals = await reviewRunIdeas({ db, router, ...quiet }, r.id, [a.id]);
+    expect(totals.get(a.id)).toBe(13);
+    expect(stages).toEqual(['review']);
+    expect(metas).toEqual([{ runId: r.id, promptVersion: 'idea-review.v2' }]);
+  });
+
+  it('a router failure (invalid output or any other error) leaves the ideas out of the map, logs once, and does not throw', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const a = await insertIdea(db, r.id, { title: 'A' });
+    for (const err of [new StructuredOutputError('review: still invalid', 'bad'), new Error('network down')]) {
+      const logs: string[] = [];
+      const router: ModelRouter = { ...fakeRouter({}), async structured() { throw err; } };
+      const totals = await reviewRunIdeas({ db, router, log: (m) => logs.push(m) }, r.id, [a.id]);
+      expect(totals.size).toBe(0);
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatch(/review: 1 of 1 ideas unreviewed \(last error: /);
+    }
+  });
+
+  it('a storage failure rejects instead of being reported as a model failure', async () => {
+    const db = await testDb();
+    const r = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+    const a = await insertIdea(db, r.id, { title: 'A' });
+    const broken = new Proxy(db, {
+      get: (t, k, rcv) => (k === 'insert' ? () => { throw new Error('insert exploded'); } : Reflect.get(t, k, rcv)),
+    }) as Db;
+    await expect(reviewRunIdeas({ db: broken, router: echoRouter(), ...quiet }, r.id, [a.id])).rejects.toThrow('insert exploded');
   });
 });

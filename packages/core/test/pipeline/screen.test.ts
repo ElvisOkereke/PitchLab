@@ -764,11 +764,13 @@ const idsIn = (prompt: string) => [...prompt.matchAll(/^Id: ([0-9a-f-]{36})$/gm)
 function reviewRouter(screenScores: unknown[], total: (id: string) => number | null, failReview = false) {
   const base = fakeRouter({ structured: { screen: screenScores } });
   const reviewPrompts: string[] = [];
+  const reviewMetas: unknown[] = [];
   return Object.assign(Object.create(base) as typeof base, {
-    reviewPrompts,
+    reviewPrompts, reviewMetas,
     async structured(stage: string, req: { prompt: string; schema: { parse: (v: unknown) => unknown } }, meta: unknown) {
       if (stage !== 'review') return (base.structured as (...a: unknown[]) => unknown)(stage, req, meta);
       reviewPrompts.push(req.prompt);
+      reviewMetas.push(meta);
       if (failReview) throw new StructuredOutputError('review: still invalid', 'bad');
       const reviews = idsIn(req.prompt).flatMap((ideaId) => {
         const t = total(ideaId);
@@ -779,7 +781,7 @@ function reviewRouter(screenScores: unknown[], total: (id: string) => number | n
       });
       return req.schema.parse({ reviews });
     },
-  }) as unknown as typeof base & { reviewPrompts: string[] };
+  }) as unknown as typeof base & { reviewPrompts: string[]; reviewMetas: unknown[] };
 }
 
 describe('reviewBand', () => {
@@ -804,6 +806,7 @@ describe('engine v2 screen ranks by review band', () => {
     expect(router.reviewPrompts).toHaveLength(2);
     expect(idsIn(router.reviewPrompts[0]!)).toHaveLength(10);
     expect(idsIn(router.reviewPrompts[1]!)).toHaveLength(2);
+    expect(router.reviewMetas).toEqual([{ runId: run.id, promptVersion: 'idea-review.v2' }, { runId: run.id, promptVersion: 'idea-review.v2' }]);
   });
 
   it('a resumed screen does not re-review ideas that already have reviews', async () => {
@@ -858,6 +861,7 @@ describe('engine v2 screen ranks by review band', () => {
     expect(out.ideaIds).toEqual([b.id]);
     expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo(total6(scores(4)));
     expect(logs.filter((l) => l.startsWith('review:'))).toHaveLength(1);
+    expect(logs).toContain('screen: 2 of 2 ideas ranked without a review');
   });
 
   it('a model error other than invalid output is also survived', async () => {

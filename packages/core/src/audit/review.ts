@@ -104,11 +104,13 @@ const renderBatch = (prompt: ReturnType<typeof loadPrompt>, batch: ReviewIdea[])
 /**
  * One review call and its storage, shared by the benchmark-pass review and the per-run review: valid entries (known
  * id, not repeated, scores 1-5) are stored; `failed` is true when the output stayed invalid after the router's re-asks
- * (any other error is thrown).
+ * (any other router error is thrown unless `anyModelError`, which treats every router error as a model failure, with its
+ * message in `error`). Only the router call is guarded: storage and code errors always throw.
  */
 async function reviewBatch(
   deps: ReviewDeps, promptVersion: string, model: string, prompt: string, batch: ReviewIdea[], runId: string | null,
-): Promise<{ failed: boolean; stored: number; invalid: number }> {
+  anyModelError = false,
+): Promise<{ failed: boolean; stored: number; invalid: number; error?: string }> {
   const { db, router } = deps;
   let entries: Entry[];
   try {
@@ -117,8 +119,8 @@ async function reviewBatch(
     }, { runId, promptVersion });
     entries = out.reviews;
   } catch (err) {
-    if (!(err instanceof StructuredOutputError)) throw err;
-    return { failed: true, stored: 0, invalid: 0 };
+    if (!(err instanceof StructuredOutputError) && !anyModelError) throw err;
+    return { failed: true, stored: 0, invalid: 0, error: err instanceof Error ? err.message : String(err) };
   }
   const wanted = new Set(batch.map((b) => b.id));
   const rows: (typeof ideaReviews.$inferInsert)[] = [];
@@ -162,7 +164,8 @@ export async function reviewTotals(db: Db, ideaIds: string[]): Promise<Map<strin
 /**
  * Reviews the given ideas of one run that have no review yet (same prompt, schema and storage as reviewPassIdeas, 10 per
  * call on the `review` stage, logged under `runId`) and returns each idea's newest review total. A failed batch (invalid
- * output or any model error) leaves its ideas out of the map and is logged once; this never throws for a model failure.
+ * output or any router error) leaves its ideas out of the map and is logged once; this never throws for a model failure,
+ * but a storage or code error rejects.
  */
 export async function reviewRunIdeas(deps: ReviewDeps, runId: string, ideaIds: string[]): Promise<Map<string, number>> {
   const { db, router, log } = deps;
@@ -177,19 +180,16 @@ export async function reviewRunIdeas(deps: ReviewDeps, runId: string, ideaIds: s
     .orderBy(asc(ideas.createdAt), asc(ideas.id));
   if (todo.length > 0) {
     const model = router.modelFor('review');
-    let failedBatches = 0;
+    let unreviewed = 0;
     let lastError = '';
     for (let i = 0; i < todo.length; i += REVIEW_BATCH_SIZE) {
       const batch = todo.slice(i, i + REVIEW_BATCH_SIZE);
-      try {
-        const res = await reviewBatch(deps, prompt.version, model, renderBatch(prompt, batch), batch, runId);
-        if (res.failed) { failedBatches += 1; lastError = 'the output stayed invalid'; }
-      } catch (err) {
-        failedBatches += 1;
-        lastError = err instanceof Error ? err.message : String(err);
-      }
+      // A model failure leaves the batch unreviewed; a storage or code error propagates.
+      const res = await reviewBatch(deps, prompt.version, model, renderBatch(prompt, batch), batch, runId, true);
+      unreviewed += batch.length - res.stored;
+      if (res.failed) lastError = res.error ?? 'the output stayed invalid';
     }
-    if (failedBatches > 0) log(`review: ${plural(failedBatches, 'batch')} failed (${lastError}); those ideas rank without a review.`);
+    if (unreviewed > 0) log(`review: ${unreviewed} of ${todo.length} ideas unreviewed (last error: ${lastError || 'invalid or missing entries'}); they rank without a review.`);
   }
   return reviewTotals(db, ideaIds);
 }

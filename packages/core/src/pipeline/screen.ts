@@ -158,7 +158,12 @@ type Scored = {
 };
 const isConsumer = (s: { audience: string | null }) => s.audience === 'consumer' || s.audience === 'both';
 /** Rank order: higher total first; within equal totals the higher tournament Elo (none last), then the original order. */
-const byRank = (a: Scored, b: Scored) => b.total - a.total || (b.elo ?? -Infinity) - (a.elo ?? -Infinity) || a.index - b.index;
+const byRank = (a: Scored, b: Scored) => b.total - a.total || eloOrder(a.elo, b.elo) || a.index - b.index;
+/** Higher Elo first; an idea with no Elo sorts after one that has it, and two without are equal. */
+function eloOrder(a: number | null, b: number | null): number {
+  if (a === null || b === null) return a === b ? 0 : a === null ? 1 : -1;
+  return b - a;
+}
 
 /** The most similar other idea (by embedding) matching `extra`, or null; NaN similarities are ignored. */
 async function closest(db: Db, s: Scored & { embedding: number[] }, extra: 'has_case' | 'gated_out'): Promise<{ id: string; sim: number } | null> {
@@ -265,6 +270,9 @@ export async function screen(
     ? await reviewRunIdeas({ db, router, log }, run.id, generated.map((i) => i.id))
     : new Map<string, number>();
   const allReviewTotals = generated.map((i) => reviewTotalOf.get(i.id) ?? null);
+  if (usesEngineV2(run.config) && reviewTotalOf.size < generated.length) {
+    log(`screen: ${generated.length - reviewTotalOf.size} of ${generated.length} ideas ranked without a review`);
+  }
   const scored: Scored[] = [];
   let noMultiple = 0;
   let paysNothing = 0;
