@@ -24,8 +24,9 @@ describe('getMarket', () => {
   it('returns the queue market with its sectors, or null for an unknown id', async () => {
     const db = await testDb();
     const m = await getMarket(db, QUEUE_MARKET_ID);
-    expect(m).toMatchObject({ id: 'ca-us', name: 'Canada + US' });
-    expect(m!.sectors).toContain('HVAC');
+    expect(m).toMatchObject({ id: 'broad', name: 'North America, all tiers' });
+    expect(m!.sectors).toContain('insurance carriers');
+    expect((await getMarket(db, 'ca-us'))!.sectors).toContain('HVAC'); // ca-us stays as the small-business profile
     expect(Object.keys(m!).sort()).toEqual(['id', 'name', 'sectors']);
     expect(await getMarket(db, 'nowhere')).toBeNull();
   });

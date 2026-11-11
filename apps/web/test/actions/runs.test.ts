@@ -45,12 +45,12 @@ describe('queueRunAction: From my finds', () => {
 
 describe('queueRunAction', () => {
   it('queueRunAction inserts one queued run with the parsed config', async () => {
-    const r = await queueRunAction({}, form({ seedType: 'sector', sectors: ['HVAC', 'plumbing'], lensIds: ['aggregator'], ideaText: 'ignored', ideaCount: '5', advanceCount: '2' }));
+    const r = await queueRunAction({}, form({ seedType: 'sector', sectors: ['law firms', 'mining'], lensIds: ['aggregator'], ideaText: 'ignored', ideaCount: '5', advanceCount: '2' }));
     expect(r).toEqual({ ok: true });
     const rows = await state.db.select().from(runs);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.status).toBe('queued');
-    expect(rows[0]!.config).toMatchObject({ seedType: 'sector', sectors: ['HVAC', 'plumbing'], ideaCount: 5, advanceCount: 2, marketId: 'ca-us' });
+    expect(rows[0]!.config).toMatchObject({ seedType: 'sector', sectors: ['law firms', 'mining'], ideaCount: 5, advanceCount: 2, marketId: 'broad' });
     expect(rows[0]!.config).not.toHaveProperty('lensIds');
     expect(rows[0]!.config).not.toHaveProperty('ideaText');
     expect(request.revalidated).toEqual(expect.arrayContaining(['/runs', '/command']));

@@ -11,7 +11,7 @@ The starting point for a run. Open looks across every sector, Sectors and Lenses
 A lens is a pattern for spotting a business idea, such as a silent failure to monitor or a task to turn into a fixed-price service. Tick lenses to make the run look only through those patterns.
 
 ### Sectors
-The kinds of small business the run can research, such as HVAC, dental clinics or managed IT providers. Tick some to keep the run to those sectors.
+The kinds of business the run can research, from banks, insurers and manufacturers to law firms, logistics companies and franchise groups. Tick some to keep the run to those sectors.
 
 ### Ideas to generate
 How many raw ideas the run writes down before it filters them. More ideas give the filters more to choose from.

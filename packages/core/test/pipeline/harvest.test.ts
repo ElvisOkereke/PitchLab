@@ -247,6 +247,25 @@ describe('harvest', () => {
     for (const q of queries) expect(q).toMatch(/^managed IT providers (ticket backlog|manual patch reporting)$/);
   });
 
+  it('open seeds on the broad market pick tier-balanced sectors (at least 3 enterprise or mid of 6)', async () => {
+    const { MARKET_TIERS } = await import('../../src/pipeline/market-tiers');
+    const db = await testDb();
+    for (const r of [0.01, 0.5, 0.99]) {
+      const queries: string[] = [];
+      const router = fakeRouter({ research: { harvest: Array.from({ length: 9 }, () => ({ text: '', sources: [] })) }, structured: { extract: [{ signals: [] }, { signals: [] }] } });
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+      expect(run.config.marketId).toBe('broad');
+      await harvest({ db, router, sources: [hn(queries)], fetchPage, log: () => {} }, run, { random: () => r });
+      const sectors = router.calls.filter((c) => c.kind === 'research').slice(0, 6)
+        .map((c) => Object.keys(MARKET_TIERS.broad!).find((s) => c.prompt.includes(`<sector>
+${s}
+</sector>`)));
+      expect(sectors.every(Boolean)).toBe(true);
+      expect(new Set(sectors).size).toBe(6);
+      expect(sectors.filter((s) => MARKET_TIERS.broad![s!] !== 'small').length).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   describe('per-sector research and tech forums only for software-adjacent sectors', () => {
     // random 0.99 leaves pick() order untouched, so an open seed chooses the first 6 seeded sectors.
     const FIRST_SIX = ['web design agencies', 'digital marketing agencies', 'managed IT providers', 'HVAC', 'plumbing', 'electrical'];
@@ -272,7 +291,7 @@ describe('harvest', () => {
         research: { harvest: Array.from({ length: 9 }, (_, i) => researchOf(i)) },
         structured: { extract: [{ signals: [] }, { signals: [] }] },
       }));
-      const run = await insertRun(db, defaultRunConfig({ seedType: 'open' }));
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', marketId: 'ca-us' })); // ca-us has no tiers: plain pick
       await harvest({ db, router, sources: [], fetchPage, log: () => {} }, run, { random: () => 0.99 });
       // Six sector pain calls, one consumer-segment pain call (harvest-research.v6), then round(6 x 0.4) = 2
       // opportunity calls aimed at the first two sectors.

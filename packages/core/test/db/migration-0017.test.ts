@@ -11,7 +11,7 @@ describe('migration 0017 (gate v7 checks)', () => {
   it('adds trivial and comps to the gate check enum, additively', async () => {
     const db = await testDb();
     const labels = ((await db.execute(sql`select enumlabel from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'gate_check' order by e.enumsortorder`)) as unknown as { rows: { enumlabel: string }[] }).rows.map((r) => r.enumlabel);
-    expect(labels).toEqual(['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale', 'trivial', 'comps']);
+    expect(labels.slice(0, 9)).toEqual(['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale', 'trivial', 'comps']); // 0018 appends buyers
     expect([...gateCheck.enumValues]).toEqual(labels);
     // The advisory (flag-only) verdicts are gate checks; only comps is advisory.
     expect([...ADVISORY_GATE_CHECKS]).toEqual(['comps']);

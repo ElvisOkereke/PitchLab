@@ -8,7 +8,7 @@ import { rateIdea } from '../../src/dashboard/idea-ratings';
 import { upsertKnowledgeItem } from '../../src/library/store';
 import { BUSINESS_MODELS, computeScale } from '../../src/pipeline/business-models';
 import {
-  checkMix, checkToCopy, hasDemandEvidence, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, MOAT_KEYWORDS, normalizeIdea, pickConsumerSegments, pickReaskLens,
+  checkMix, checkToCopy, hasDemandEvidence, IDEAS_PER_CALL, ideate, MAX_LENSES_PER_RUN, MIN_CONSUMER_LENSES, MIN_CONSUMER_SHARE, MOAT_KEYWORDS, normalizeIdea, pickConsumerSegments, pickReaskLens,
   AMBITION_LENS_IDS, seededRandom, selectLenses, splitCounts,
 } from '../../src/pipeline/ideate';
 import type { ModelRouter } from '../../src/llm/types';
@@ -506,7 +506,7 @@ describe('ideate', () => {
     expect(p2).not.toContain('ideas it asked for'); // the count is met: no top-up line
     expect(p2).toContain('Fill the gap.');
     expect(p2).toContain('Generate exactly 3 ideas');
-    expect(p2).toContain('At least 3 of the 3 ideas must be consumer ideas');
+    expect(p2).not.toContain('must be consumer ideas'); // no consumer quota: only the model mix is re-asked
     expect(p2).toContain('Use at least 3 business models this run has not used yet, from: `one_off`, `usage`, `marketplace`');
     expect(p2).not.toMatch(/from: [^\n]*`subscription`/);
     expect(block(p2, 'focus')).toMatch(/Consumer segments: /);
@@ -536,9 +536,18 @@ describe('ideate', () => {
     expect(structuredPrompts(t.router)).toHaveLength(3);
     expect(out.ideaIds).toHaveLength(5);
     expect(out.mix).toMatchObject({ consumerShare: 0, models: 2, reask: true });
-    expect(out.mix!.short.consumer).toBe(3);
+    expect(out.mix!.short.consumer).toBe(0);
     expect(out.mix!.short.models).toEqual(BUSINESS_MODELS.filter((m) => m !== 'subscription' && m !== 'usage'));
-    expect(t.logs).toContain('ideate: mix consumer 0% models 2 (re-ask: yes, still short: 3 consumer, 2 models)');
+    expect(t.logs).toContain('ideate: mix consumer 0% models 2 (re-ask: yes, still short: 2 models)');
+  });
+
+  it('never fires the consumer re-ask: an all-business run with 4 models met makes no extra call', async () => {
+    const config = cfg({ seedType: 'lens', lensIds: ['tl1'], ideaCount: 4 });
+    const t = await setup(config, { structured: { ideate: [mk(3, [], { audience: 'business' }), mk(1, [], { audience: 'business', title: 'T3' })] } });
+    await t.db.insert(lenses).values({ id: 'tl1', name: 'L1', pattern: 'pat1', promptHint: 'hint1' });
+    const out = await ideate(t.deps, t.run, { signalIds: [] });
+    expect(structuredPrompts(t.router)).toHaveLength(2);
+    expect(out.mix).toMatchObject({ consumerShare: 0, reask: false, short: { consumer: 0, models: [] } });
   });
 
   it('keeps the lens ideas when the re-ask call itself fails', async () => {
@@ -903,7 +912,7 @@ describe('ideate calls of 3', () => {
     const p5 = prompts[4]!;
     expect(p5).toContain('Generate exactly 3 ideas');
     expect(p5).toContain('The run has 4 of the 12 ideas it asked for');
-    expect(p5).toContain('At least 3 of the 3 ideas must be consumer ideas');
+    expect(p5).not.toContain('must be consumer ideas');
     expect(p5).toContain('Use at least 3 business models this run has not used yet');
   });
 });
@@ -1114,16 +1123,16 @@ describe('selectLenses', () => {
   ];
   const ids = (ls: { id: string }[]) => ls.map((l) => l.id);
 
-  it('open and sector seeds pick at most 6 active lenses, at least 2 of them consumer', () => {
+  it('open and sector seeds pick at most 6 active lenses, with no consumer quota (a run may have 0 consumer lenses)', () => {
     expect(MAX_LENSES_PER_RUN).toBe(6);
-    expect(MIN_CONSUMER_LENSES).toBe(2);
+    expect(MIN_CONSUMER_LENSES).toBe(0); // the diversity round removed the forced consumer lenses
     for (const seedType of ['open', 'sector'] as const) {
       for (const seed of ['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) {
         const got = selectLenses(pool, { seedType }, seededRandom(seed));
         expect(got).toHaveLength(6);
         expect(new Set(ids(got)).size).toBe(6);
         expect(got.every((l) => l.active)).toBe(true);
-        expect(got.filter((l) => l.audience === 'consumer').length).toBeGreaterThanOrEqual(2);
+        expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0); // 9 non-consumer lenses fill the 6 slots
       }
     }
   });
@@ -1134,11 +1143,11 @@ describe('selectLenses', () => {
     expect(new Set(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(pickFor)).size).toBeGreaterThan(1);
   });
 
-  it('uses the consumer lenses there are when fewer than 2, and every active lens when fewer than 6', () => {
+  it('adds a consumer lens only to fill the slots, and uses every active lens when fewer than 6', () => {
     const oneConsumer = [...pool.filter((l) => l.audience !== 'consumer'), L('c0', 'consumer')];
     const got = selectLenses(oneConsumer, { seedType: 'open' }, seededRandom('x'));
     expect(got).toHaveLength(6);
-    expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(1);
+    expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
     const small = [L('b0', 'business'), L('c0', 'consumer'), L('any0', 'any'), L('off', 'consumer', false)];
     expect(ids(selectLenses(small, { seedType: 'open' }, seededRandom('x'))).sort()).toEqual(['any0', 'b0', 'c0']);
   });
@@ -1163,20 +1172,20 @@ describe('selectLenses', () => {
       );
     });
 
-    it('open and sector runs get at least 2 ambition and 2 consumer lenses among 6', () => {
+    it('open and sector runs get at least 2 ambition lenses and no forced consumer lens among 6', () => {
       for (let i = 0; i < 60; i++) {
         const got = selectLenses(big, { seedType: i % 2 ? 'open' : 'sector' }, seededRandom(`m${i}`));
         expect(got).toHaveLength(6);
-        expect(got.filter((l) => l.audience === 'consumer').length).toBeGreaterThanOrEqual(2);
+        expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
         expect(got.filter((l) => AMBITION_LENS_IDS.includes(l.id)).length).toBeGreaterThanOrEqual(2);
       }
     });
 
-    it('an ambition lens does not count as consumer, and fewer than 2 available are all used', () => {
+    it('fewer than 2 ambition lenses available are all used, and no consumer lens is forced', () => {
       const few = [...big.filter((l) => !AMBITION_LENS_IDS.includes(l.id)), A('ten-x-incumbent')];
       const got = selectLenses(few, { seedType: 'open' }, seededRandom('f'));
       expect(got.map((l) => l.id)).toContain('ten-x-incumbent');
-      expect(got.filter((l) => l.audience === 'consumer').length).toBeGreaterThanOrEqual(2);
+      expect(got.filter((l) => l.audience === 'consumer')).toHaveLength(0);
     });
 
     it('weights change how often a lens is picked', () => {
@@ -1213,10 +1222,11 @@ describe('checkMix', () => {
     expect(m.short.models).toEqual(BUSINESS_MODELS.filter((x) => !['subscription', 'ads', 'usage'].includes(x)));
   });
 
-  it('short.consumer is how many consumer ideas reach 30%; a met mix is not short', () => {
+  it('short.consumer is always 0 with MIN_CONSUMER_SHARE 0 (no consumer re-ask); only models can be short', () => {
     const allBiz = checkMix(Array.from({ length: 12 }, () => i('business', 'subscription')));
     expect(allBiz.consumerShare).toBe(0);
-    expect(allBiz.short.consumer).toBe(6); // 6 of 18 is at least 30%; 5 of 17 is not
+    expect(MIN_CONSUMER_SHARE).toBe(0);
+    expect(allBiz.short.consumer).toBe(0);
     const exact = checkMix([
       i('consumer', 'ads'), i('consumer', 'affiliate'), i('both', 'freemium'),
       ...Array.from({ length: 7 }, () => i('business', 'usage')),

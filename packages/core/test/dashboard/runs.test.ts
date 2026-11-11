@@ -64,14 +64,14 @@ describe('run config schemas', () => {
 
 describe('queueRun', () => {
   it('queueRun inserts a queued run with defaultRunConfig, refuses a 4th queued run and unknown lens/sector', async () => {
-    const r = await queueRun(db, QueueRunInputSchema.parse({ seedType: 'sector', sectors: ['HVAC', 'plumbing'], ideaCount: 4, advanceCount: 2 }));
+    const r = await queueRun(db, QueueRunInputSchema.parse({ seedType: 'sector', sectors: ['law firms', 'mining'], ideaCount: 4, advanceCount: 2 }));
     expect(r.ok).toBe(true);
     const [row] = await db.select().from(runs).where(eq(runs.id, (r as { id: string }).id));
     expect(row!.status).toBe('queued');
-    expect(row!.config).toEqual(defaultRunConfig({ seedType: 'sector', marketId: 'ca-us', sectors: ['HVAC', 'plumbing'], ideaCount: 4, advanceCount: 2 }));
+    expect(row!.config).toEqual(defaultRunConfig({ seedType: 'sector', marketId: 'broad', sectors: ['law firms', 'mining'], ideaCount: 4, advanceCount: 2 }));
     expect(row!.config.engine).toBe('v2'); // queueing keeps the engine (RunConfigSchema used to drop it)
 
-    expect(await queueRun(db, QueueRunInputSchema.parse({ seedType: 'sector', sectors: ['HVAC', 'underwater basket weaving'] })))
+    expect(await queueRun(db, QueueRunInputSchema.parse({ seedType: 'sector', sectors: ['law firms', 'underwater basket weaving'] })))
       .toEqual({ ok: false, reason: 'unknown_sector', detail: 'underwater basket weaving' });
     expect(await queueRun(db, QueueRunInputSchema.parse({ seedType: 'lens', lensIds: ['aggregator', 'nope'] })))
       .toEqual({ ok: false, reason: 'unknown_lens', detail: 'nope' });
@@ -81,6 +81,15 @@ describe('queueRun', () => {
     expect(MAX_QUEUED).toBe(3);
     expect(await queueRun(db, QueueRunInputSchema.parse({ seedType: 'open' }))).toEqual({ ok: false, reason: 'too_many_queued' });
     expect(await queued()).toHaveLength(3);
+  });
+
+  it('queues on the broad market by default and throws a clear error when broad is missing', async () => {
+    expect(QUEUE_MARKET_ID).toBe('broad');
+    expect(defaultRunConfig({ seedType: 'open' }).marketId).toBe('broad');
+    const { markets } = await import('../../src/db/schema');
+    await db.delete(markets).where(eq(markets.id, 'broad'));
+    await expect(queueRun(db, QueueRunInputSchema.parse({ seedType: 'open' }))).rejects.toThrow(/Market "broad" is missing.*migration/);
+    expect(await queued()).toHaveLength(0);
   });
 
   it('an inactive lens counts as unknown', async () => {
@@ -127,7 +136,7 @@ describe('queueRun', () => {
     expect(r.ok).toBe(true);
     const [row] = await db.select().from(runs).where(eq(runs.id, (r as { id: string }).id));
     expect(row!.status).toBe('queued');
-    expect(row!.config).toMatchObject({ seedType: 'idea', marketId: 'ca-us', overturnOfIdeaId: killed.id, ideaCount: 12, advanceCount: 3 });
+    expect(row!.config).toMatchObject({ seedType: 'idea', marketId: 'broad', overturnOfIdeaId: killed.id, ideaCount: 12, advanceCount: 3 });
     for (const part of ['Rent notice engine', 'Track notice deadlines', 'property managers', 'missed notices', 'a deadline engine', 'no deadline tracking']) {
       expect(row!.config.ideaText).toContain(part);
     }

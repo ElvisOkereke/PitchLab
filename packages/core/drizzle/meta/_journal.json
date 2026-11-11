@@ -127,6 +127,13 @@
       "when": 1794371324383,
       "tag": "0017_gate_v7_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794471324383,
+      "tag": "0018_diversity",
+      "breakpoints": true
     }
   ]
 }

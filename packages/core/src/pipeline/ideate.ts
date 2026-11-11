@@ -25,7 +25,7 @@ export {
 const VALUE_KINDS = ValueToUserSchema.shape.kind.options;
 
 /** The run's generated ideas should be at least this share consumer (audience `consumer` or `both`)… */
-export const MIN_CONSUMER_SHARE = 0.3;
+export const MIN_CONSUMER_SHARE = 0;
 /** …and use at least this many distinct business models (or as many as the run asks ideas for, if fewer). */
 export const MIN_MODELS = 4;
 /** The one re-ask round (mix gap and count top-up) asks for at most this many ideas. */

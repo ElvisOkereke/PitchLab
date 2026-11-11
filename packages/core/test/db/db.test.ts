@@ -11,8 +11,8 @@ describe('db', () => {
   it('migrates, seeds idempotently, and supports vector similarity', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    expect(await db.select().from(lenses)).toHaveLength(20);
-    expect((await db.select().from(markets))[0].currency).toBe('USD');
+    expect(await db.select().from(lenses)).toHaveLength(21);
+    expect((await db.select().from(markets).where(eq(markets.id, 'ca-us')))[0].currency).toBe('USD');
     const [run] = await db.insert(runs).values({ config: {} as never, status: 'queued' }).returning();
     const v = Array(1536).fill(0);
     v[0] = 1;
@@ -29,7 +29,7 @@ describe('db', () => {
     expect(consumer).toHaveLength(6);
     expect(consumer.every((l) => l.id.startsWith('consumer-'))).toBe(true);
     expect(consumer.map((l) => l.id)).toEqual(expect.arrayContaining(['consumer-earn-side', 'consumer-save-auto']));
-    expect(rows.filter((l) => l.audience === 'business')).toHaveLength(8);
+    expect(rows.filter((l) => l.audience === 'business')).toHaveLength(9);
     expect(CONSUMER_SEGMENTS).toHaveLength(17);
     expect(new Set(CONSUMER_SEGMENTS).size).toBe(CONSUMER_SEGMENTS.length);
     for (const l of consumer) expect(l.promptHint).toMatch(/individual/);
@@ -57,7 +57,7 @@ describe('db', () => {
     await db.delete(lenses).where(eq(lenses.id, 'data-flywheel'));
     await seedDefaults(db);
     rows = await db.select().from(lenses);
-    expect(rows).toHaveLength(20);
+    expect(rows).toHaveLength(21);
     expect(rows.find((l) => l.id === 'review-gap')?.weight).toBe(0.5);
     expect(rows.find((l) => l.id === 'platform-shockwave')?.weight).toBe(2);
   });
@@ -172,25 +172,25 @@ describe('seed sectors', () => {
   it('are present on a fresh database', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    const [m] = await db.select().from(markets);
+    const [m] = await db.select().from(markets).where(eq(markets.id, 'ca-us'));
     for (const x of NEW) expect(m!.sectors).toContain(x);
   });
   it('are added to an existing database once, keeping its own edits', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] });
+    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] }).where(eq(markets.id, 'ca-us'));
     await seedDefaults(db);
     await seedDefaults(db);
-    const [m] = await db.select().from(markets);
+    const [m] = await db.select().from(markets).where(eq(markets.id, 'ca-us'));
     expect(m!.sectors.slice(0, 2)).toEqual(['my own sector', 'HVAC']);
     for (const x of NEW) expect(m!.sectors.filter((s) => s === x)).toHaveLength(1);
   });
   it('never re-add a default sector the owner removed (only the bench-v3 sectors are appended)', async () => {
     const db = await testDb();
     await seedDefaults(db);
-    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] });
+    await db.update(markets).set({ sectors: ['my own sector', 'HVAC'] }).where(eq(markets.id, 'ca-us'));
     await seedDefaults(db);
-    const [m] = await db.select().from(markets);
+    const [m] = await db.select().from(markets).where(eq(markets.id, 'ca-us'));
     expect(m!.sectors).toEqual(['my own sector', 'HVAC', ...NEW]);
   });
 });

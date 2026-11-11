@@ -1,6 +1,7 @@
 import type { Db } from './client';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { lenses, markets } from './schema';
+import { BROAD_TIERS } from '../pipeline/market-tiers';
 
 export const CA_US = {
   id: 'ca-us',
@@ -16,6 +17,15 @@ export const CA_US = {
     'franchise groups', 'logistics/freight brokers',
     'logistics and freight', 'construction and trades', 'healthcare clinics', 'education and tutoring',
   ],
+};
+
+export const BROAD = {
+  id: 'broad',
+  name: 'North America, all tiers',
+  countries: ['CA', 'US'],
+  language: 'en',
+  currency: 'USD',
+  sectors: Object.keys(BROAD_TIERS),
 };
 
 /** The sectors bench-v3 names. Existing databases get only these appended when missing (see seedDefaults). */
@@ -69,6 +79,12 @@ export const LENSES = [
     name: 'Incumbent review gap',
     pattern: "Mine incumbents' bad reviews for a narrow, underserved job-to-be-done",
     promptHint: 'Use complaints about incumbent products in the signals to find a narrow, underserved job-to-be-done and build only for that.',
+  },
+  {
+    id: 'industry-shift',
+    name: 'Industry shift',
+    pattern: 'A structural change across a large industry (regulation, technology, labour, capital) that forces thousands of companies to change how they work; build what they will all need.',
+    promptHint: "Find a structural change across a large industry (regulation, technology, labour or capital) in the signals that forces thousands of companies to change how they work, and propose what they will all need. Name today's option, the change forcing the move, and the concrete advantage.",
   },
 ];
 
@@ -168,7 +184,11 @@ export const AMBITION_LENSES = [
 ];
 
 /** Sampling weight for the fix-it lenses, so the ambition lenses get more of the six slots. */
-export const LENS_WEIGHTS: Record<string, number> = { 'review-gap': 0.5, 'platform-shockwave': 0.5 };
+export const LENS_WEIGHTS: Record<string, number> = {
+  'money-leak': 0.5, 'silent-failure': 0.5, 'review-gap': 0.5, 'platform-shockwave': 0.5,
+  'new-capability': 1.5, 'ai-replaces-labour': 1.5, 'data-flywheel': 1.5, 'compliance-demand': 1.5,
+  'picks-and-shovels': 1.5, 'ten-x-incumbent': 1.5, 'industry-shift': 1.5,
+};
 
 export const CONSUMER_SEGMENTS = [
   'new parents', 'students', 'renters', 'first-time homebuyers', 'retirees',
@@ -179,8 +199,8 @@ export const CONSUMER_SEGMENTS = [
 
 /** Idempotent; never overwrites rows (lenses are editable in Settings). */
 export async function seedDefaults(db: Db): Promise<void> {
-  await db.insert(markets).values(CA_US).onConflictDoNothing({ target: markets.id });
-  await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES]).onConflictDoNothing({ target: lenses.id });
+  await db.insert(markets).values([CA_US, BROAD]).onConflictDoNothing({ target: markets.id });
+  await db.insert(lenses).values([...LENSES, ...CONSUMER_LENSES, ...AMBITION_LENSES].map((l) => ({ ...l, weight: LENS_WEIGHTS[l.id] ?? null }))).onConflictDoNothing({ target: lenses.id });
   // Existing databases: append a bench-v3 sector the market lacks; never remove or reorder. Other defaults are not
   // re-added, so a default sector the owner removed stays removed.
   for (const sector of BENCH_V3_SECTORS) {

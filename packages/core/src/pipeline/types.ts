@@ -29,7 +29,7 @@ export type RunConfig = {
 
 export function defaultRunConfig(partial: Partial<RunConfig> & Pick<RunConfig, 'seedType'>): RunConfig {
   return {
-    marketId: 'ca-us',
+    marketId: 'broad',
     ideaCount: 12,
     advanceCount: 3,
     maxSearchesPerCall: 5,

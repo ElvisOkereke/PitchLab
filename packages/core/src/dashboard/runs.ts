@@ -82,7 +82,7 @@ export type QueueRunInput = z.infer<typeof QueueRunInputSchema>;
 /** Most runs that may wait in the queue at once. */
 export const MAX_QUEUED = 3;
 /** The market every dashboard-queued run uses. */
-export const QUEUE_MARKET_ID = 'ca-us';
+export const QUEUE_MARKET_ID = 'broad';
 const MARKET_ID = QUEUE_MARKET_ID;
 /** Serialises queue inserts so two submits cannot both pass the MAX_QUEUED check (transaction-scoped lock). */
 export const QUEUE_LOCK_KEY = 0x6263_7131; // "bcq1"
@@ -102,9 +102,16 @@ async function insertQueued(tx: Tx, config: RunConfig): Promise<QueueResult> {
   return { ok: true, id: row!.id };
 }
 
-/** Queues a run for `gen worker` with the same config shape as `gen run` (defaultRunConfig, market ca-us). */
+/** Throws a clear error when the queue market is missing (migration 0018 not run), instead of queueing a run that cannot start. */
+async function requireQueueMarket(db: Db): Promise<void> {
+  const [m] = await db.select({ id: markets.id }).from(markets).where(eq(markets.id, MARKET_ID));
+  if (!m) throw new Error(`Market "${MARKET_ID}" is missing. Run the database migrations (migration 0018 adds it), then try again.`);
+}
+
+/** Queues a run for `gen worker` with the same config shape as `gen run` (defaultRunConfig, market broad). */
 export async function queueRun(db: Db, raw: QueueRunInput): Promise<QueueResult> {
   const input = QueueRunInputSchema.parse(raw);
+  await requireQueueMarket(db);
   if (input.seedType === 'sector') {
     const [market] = await db.select({ sectors: markets.sectors }).from(markets).where(eq(markets.id, MARKET_ID));
     const unknown = input.sectors.filter((s) => !market?.sectors.includes(s));
@@ -166,6 +173,7 @@ export async function queueGateKillRerun(
   const [idea] = await db.select().from(ideas).where(eq(ideas.id, ideaId));
   if (!idea) return { ok: false, reason: 'not_found' };
   if (idea.status !== 'gated_out') return { ok: false, reason: 'not_gated_out' };
+  await requireQueueMarket(db);
   const ideaText = [
     `Title: ${idea.title}`,
     `One-liner: ${idea.oneLiner}`,

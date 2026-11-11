@@ -61,7 +61,7 @@ export const GLOSSARY: Record<GlossaryTerm, { label: string; text: string }> = {
   },
   sector: {
     label: 'Sectors',
-    text: 'The kinds of small business the run can research, such as HVAC, dental clinics or managed IT providers. Tick some to keep the run to those sectors.',
+    text: 'The kinds of business the run can research, from banks, insurers and manufacturers to law firms, logistics companies and franchise groups. Tick some to keep the run to those sectors.',
   },
   ideaCount: {
     label: 'Ideas to generate',

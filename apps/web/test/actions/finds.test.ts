@@ -115,7 +115,7 @@ describe('startRunFromFindsAction', () => {
     expect(r.notice).toMatch(/Queued a run from 2 finds/);
     const [run] = await state.db.select().from(runs);
     expect(run!.status).toBe('queued');
-    expect(run!.config).toMatchObject({ seedType: 'finds', marketId: 'ca-us' });
+    expect(run!.config).toMatchObject({ seedType: 'finds', marketId: 'broad' });
     expect([...run!.config.findIds!].sort()).toEqual(results.slice(0, 2).map((x) => x.id!).sort());
     expect(request.revalidated).toEqual(expect.arrayContaining(['/runs', '/command', '/library/finds']));
   });

@@ -15,6 +15,7 @@ import { getSetting } from '../validation/settings';
 import { logDataCall } from '../tools/data-calls';
 import { pickConsumerSegments } from './seed-context';
 import { phrasesFor } from './pain-phrases';
+import { MARKET_TIERS, pickTieredSectors } from './market-tiers';
 import type { RunConfig, StageDeps } from './types';
 
 /** Most library entries retrieved for a run. */
@@ -271,7 +272,7 @@ export async function harvest(
   let libraryHints: string[] = [];
   let openSectors: string[] = [];
   if (cfg.seedType === 'open' || cfg.seedType === 'sector') {
-    const sectors = cfg.seedType === 'open' ? pick(market.sectors, 6, random) : (cfg.sectors ?? []);
+    const sectors = cfg.seedType === 'open' ? pickTieredSectors(market.sectors, MARKET_TIERS[market.id], 6, random) : (cfg.sectors ?? []);
     if (cfg.seedType === 'open') openSectors = sectors;
     const phrases = sectors.map((s) => phrasesFor(s, random));
     phraseQueries = sectors.flatMap((s, i) => phrases[i]!.map((p) => `${s} ${p}`));

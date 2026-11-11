@@ -18,7 +18,7 @@ export const runStatus = pgEnum('run_status', ['queued', 'running', 'succeeded',
 export const stageStatus = pgEnum('stage_status', ['running', 'done', 'failed']);
 export const ideaOrigin = pgEnum('idea_origin', ['generated', 'owner']);
 export const ideaStatus = pgEnum('idea_status', ['candidate', 'duplicate', 'screened_out', 'gated_out', 'advanced']);
-export const gateCheck = pgEnum('gate_check', ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale', 'trivial', 'comps']);
+export const gateCheck = pgEnum('gate_check', ['generic', 'regulation', 'control', 'autonomy', 'reachability', 'evidence', 'scale', 'trivial', 'comps', 'buyers']);
 // ADVISORY_GATE_CHECKS (verdicts that only flag, never kill) live in pipeline/gate-checks, which has no imports.
 export const caseStage = pgEnum('case_stage', ['new', 'validating', 'pilot', 'live', 'killed']);
 export const claimVerified = pgEnum('claim_verified', ['unverified', 'verified', 'unsupported', 'unreachable', 'needs_review']);

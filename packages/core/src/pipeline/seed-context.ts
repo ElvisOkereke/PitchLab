@@ -19,7 +19,7 @@ export const MAX_SIGNALS = 40;
 /** Open and sector seeds sample at most this many lenses per run (lens seeds use exactly their lenses). */
 export const MAX_LENSES_PER_RUN = 6;
 /** Of the sampled lenses, at least this many are consumer lenses when that many are active. */
-export const MIN_CONSUMER_LENSES = 2;
+export const MIN_CONSUMER_LENSES = 0;
 export const AMBITION_LENS_IDS: readonly string[] = AMBITION_LENSES.map((l) => l.id);
 export const MIN_AMBITION_LENSES = 2;
 /** Consumer segments an open seed (and the mix re-ask) shows next to the business sectors. */
