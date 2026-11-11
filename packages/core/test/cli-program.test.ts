@@ -8,7 +8,7 @@ function handlers() {
     validate: vi.fn(ok), prospectsImport: vi.fn(ok), outreachMark: vi.fn(ok), outreachStatus: vi.fn(ok),
     configSet: vi.fn(ok), configGet: vi.fn(ok), worker: vi.fn(ok), feedsRun: vi.fn(ok), findsAdd: vi.fn(ok), findsList: vi.fn(ok), findsRun: vi.fn(ok), telegramReset: vi.fn(ok),
     benchBaseline: vi.fn(ok), benchRun: vi.fn(ok), benchReport: vi.fn(ok), research: vi.fn(ok), researchStatus: vi.fn(ok),
-    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok),
+    auditReview: vi.fn(ok), auditHoldoutAdd: vi.fn(ok), auditHoldoutList: vi.fn(ok), auditHoldoutClear: vi.fn(ok), auditScale: vi.fn(ok), auditBacktest: vi.fn(ok), libraryAssess: vi.fn(ok),
   } satisfies CliHandlers;
 }
 
@@ -108,6 +108,13 @@ describe('gen prospects import / outreach / config', () => {
     expect((await parse(['worker', '--once', '--feeds'])).worker).toHaveBeenCalledWith({ interval: 10, once: true, feeds: true });
     expect((await parse(['feeds', 'run'])).feedsRun).toHaveBeenCalledTimes(1);
     await expect(parse(['feeds', 'nope'])).rejects.toThrow(/gen feeds run/);
+  });
+
+  it('library assess takes --max-usd (default 25, 0.5 to 25) and refuses other actions', async () => {
+    expect((await parse(['library', 'assess'])).libraryAssess).toHaveBeenCalledWith({ maxUsd: 25 });
+    expect((await parse(['library', 'assess', '--max-usd', '3'])).libraryAssess).toHaveBeenCalledWith({ maxUsd: 3 });
+    await expect(parse(['library', 'assess', '--max-usd', '100'])).rejects.toThrow(/--max-usd/);
+    await expect(parse(['library', 'nope'])).rejects.toThrow(/gen library assess/);
   });
 
   it('finds add <url> [note], finds list and finds run call their handlers; other actions are refused', async () => {

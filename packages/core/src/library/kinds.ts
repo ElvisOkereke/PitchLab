@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Directness } from './strength';
 
 /** Web-safe: zod and types only. Keep this file free of db/runtime imports. */
 export const KNOWLEDGE_KINDS = ['problem', 'startup', 'pricing', 'trend', 'rule_change', 'market'] as const;
@@ -107,6 +108,9 @@ export const KIND_LABELS: Record<LibraryEntryKind, string> = {
   find: 'Seen in the wild',
 };
 
+/** What the extraction model said about how strong a draft's evidence is (strength itself is computed in code). */
+export type DraftAssessment = { directness: Directness; bias: string | null; why: string };
+
 export type KnowledgeDraft = {
   kind: LibraryEntryKind;
   title: string;
@@ -116,6 +120,7 @@ export type KnowledgeDraft = {
   countries: string[];
   industries: string[];
   voice?: KnowledgeVoice;
+  assessment?: DraftAssessment;
   facts: unknown;
   source: { url: string; domain: string; sourceType: string; publishedAt?: Date; quote?: string; quoteVerified: boolean; voice?: KnowledgeVoice; via?: 'direct' | 'archive' | 'browser' | 'real_browser' | 'scraper'; snapshotAt?: Date };
 };

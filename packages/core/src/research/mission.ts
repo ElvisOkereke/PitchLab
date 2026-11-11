@@ -2,7 +2,8 @@ import { eq, sql, type AnyColumn } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../db/client';
 import { dataCalls, llmCalls, researchMissions } from '../db/schema';
-import { KNOWLEDGE_KINDS, parseFacts, SLICE_A_KINDS, type KnowledgeDraft, type KnowledgeKind } from '../library/kinds';
+import { KNOWLEDGE_KINDS, parseFacts, SLICE_A_KINDS, type DraftAssessment, type KnowledgeDraft, type KnowledgeKind } from '../library/kinds';
+import { normalizeDirectness } from '../library/strength';
 import { upsertKnowledgeItem } from '../library/store';
 import { loadPrompt } from '../llm/prompts';
 import type { CallCtx, ModelRouter } from '../llm/types';
@@ -261,6 +262,10 @@ const ExtractSchema = z.object({
       countries: z.array(z.string()),
       industries: z.array(z.string()),
       voice: z.enum(['operator', 'neutral', 'vendor']).nullable().optional(),
+      // Evidence assessment (library-extract.v4). Free text: directness is mapped into its enum in code, why and bias are scrubbed.
+      directness: z.string().nullable().optional(),
+      bias: z.string().nullable().optional(),
+      why: z.string().nullable().optional(),
       facts: z.record(z.string(), z.unknown()),
     }),
   ),
@@ -1056,6 +1061,13 @@ export async function extractDrafts(
   return { drafts, invalid, batchesOk, batchesFailed };
 }
 
+/** The model's directness, bias and why, cleaned like any stored text; nothing when it gave no why (the backfill assesses it later). */
+function assessmentOf(e: ExtractEntry): { assessment?: DraftAssessment } {
+  const why = cleanStored(e.why ?? '');
+  if (!why) return {};
+  return { assessment: { directness: normalizeDirectness(e.directness), bias: cleanStored(e.bias ?? '') || null, why: capField(why, 400) } };
+}
+
 /** Validate one extracted entry against its own source and the kind's facts schema; null means invalid (dropped). */
 function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: KnowledgeKind[]): KnowledgeDraft | null {
   const src = batch[e.source - 1];
@@ -1096,6 +1108,7 @@ function toDraft(e: ExtractEntry, batch: Collected[], shown: string[], kinds: Kn
     countries: cleanCountries(e.countries),
     industries: cleanIndustries(e.industries),
     voice: e.kind === 'startup' ? undefined : (e.voice ?? undefined),
+    ...assessmentOf(e),
     facts: cleanFacts(facts),
     source: {
       url: src.url,

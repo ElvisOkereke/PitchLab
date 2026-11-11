@@ -1,5 +1,6 @@
 import type { MissionView, ResearchSettings } from '@bcg/core/dashboard/missions';
 import { KIND_LABELS } from '@bcg/core/library/kinds';
+import { strengthLabel } from '@bcg/core/library/strength';
 import type { LibraryCoverage, LibraryRow } from '@bcg/core/library/store';
 import type { FetchStats } from '@bcg/core/research/fetch-log';
 import Link from 'next/link';
@@ -99,6 +100,12 @@ function Results({ query, rows, total, now, empty }: { query: LibraryQuery; rows
                 <p>
                   <span className="badge badge-info">{r.kind.replace('_', ' ')}</span>{' '}
                   <span className={`badge ${r.quoteVerified ? 'badge-ok' : 'badge-muted'}`}>{r.quoteVerified ? 'verified quote' : 'unverified'}</span>
+                  {r.assessment ? (
+                    <>
+                      {' '}
+                      <span className="badge badge-muted" title={r.assessment.why}>{strengthLabel(r.assessment)}</span>
+                    </>
+                  ) : null}
                 </p>
                 <p>
                   <Link href={libraryHref({ ...query, item: r.id })}>

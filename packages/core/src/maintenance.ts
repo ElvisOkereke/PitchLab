@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, notExists, or, sql, type SQL } from 'drizzle-orm';
 import { EXPIRED_PLACEHOLDER, YOUTUBE_CLAIM_NOTE, isYoutubeUrl } from './case/expired';
 import type { Db } from './db/client';
+import { refreshAssessments } from './library/assessment';
 import { pacificDate } from './research/sources/youtube';
 import { cases, claims, knowledgeItems, knowledgeSources, pageFetches, signals } from './db/schema';
 
@@ -204,6 +205,9 @@ export async function runMaintenance(db: Db, now: Date = new Date()): Promise<Ma
       returning key`);
     return (Array.isArray(res) ? res : ((res as { rows?: unknown[] }).rows ?? [])).length;
   });
+
+  // Strength follows the evidence as it changes (new corroboration, age); why, directness and bias are left alone.
+  await step('refresh assessments', { updated: 0 }, () => refreshAssessments(db, now));
 
   return { prunedFetches, prunedQuotaRows, expiredSources, deletedItems, redactedSignals, redactedClaims, redactedCases, errors };
 }

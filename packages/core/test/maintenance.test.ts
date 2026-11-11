@@ -254,6 +254,17 @@ describe('runMaintenance', () => {
     expect(r.redactedSignals).toBe(1);
   });
 
+  it('recomputes the strength of assessed entries without touching why', async () => {
+    const db = await testDb();
+    const id = await item(db, 'web', 'https://a.example/strength', null);
+    await db.update(knowledgeItems).set({ voice: 'vendor', assessment: { directness: 'vendor', bias: 'sells', strength: 5, why: 'kept why', corroboration: 0 } }).where(eq(knowledgeItems.id, id));
+    const r = await runMaintenance(db, NOW);
+    expect(r.errors).toEqual([]);
+    const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, id));
+    // vendor -1, verified quote +1 from 3 = 3
+    expect(row!.assessment).toEqual({ directness: 'vendor', bias: 'sells', strength: 3, why: 'kept why', corroboration: 0 });
+  });
+
   it('is idempotent', async () => {
     const db = await testDb();
     await db.insert(pageFetches).values({ urlDomain: 'a.example', outcome: 'ok', via: 'direct', at: ago(100) });

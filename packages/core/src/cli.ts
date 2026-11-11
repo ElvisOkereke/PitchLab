@@ -42,6 +42,7 @@ import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
+import { runAssessBackfill } from './library/assess-job';
 import { feedsExitCode, runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 import { createScraperStep } from './research/scraper';
@@ -408,6 +409,20 @@ async function feedsRunCommand(): Promise<number> {
     const code = feedsExitCode(r);
     if (code !== 0) console.error('Every feed source failed or was skipped; nothing was added.');
     return code;
+  } finally {
+    await closeDb(db);
+  }
+}
+
+/** `gen library assess`: rates the evidence strength of entries not yet assessed, within --max-usd. Costs model calls. */
+async function libraryAssessCommand(opts: { maxUsd: number }): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const r = await runAssessBackfill({ db, router: buildRouter(env, db), log: out, maxUsd: opts.maxUsd });
+    out(`${r.assessed} entries assessed, $${r.spentUsd.toFixed(2)} spent.`);
+    return 0;
   } finally {
     await closeDb(db);
   }
@@ -892,6 +907,7 @@ const program = buildProgram({
   configGet: configGetCommand,
   worker: workerCommand,
   feedsRun: feedsRunCommand,
+  libraryAssess: libraryAssessCommand,
   findsAdd: findsAddCommand,
   findsList: findsListCommand,
   findsRun: findsRunCommand,

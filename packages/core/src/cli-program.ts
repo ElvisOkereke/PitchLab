@@ -69,6 +69,7 @@ export type CliHandlers = {
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
   feedsRun(): Promise<number>;
+  libraryAssess(opts: { maxUsd: number }): Promise<number>;
   findsAdd(url: string, note: string | undefined): Promise<number>;
   findsList(): Promise<number>;
   findsRun(): Promise<number>;
@@ -111,6 +112,14 @@ function countriesArg(v: string): string[] {
 function budgetArg(v: string): number {
   const n = Number(v);
   if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > 25) throw new CliError(`--budget is a dollar amount from 0.5 to 25, got: ${v}`, 2);
+  return n;
+}
+
+/** --max-usd for the library backfills: a dollar amount from 0.5 to 25 (the global backfill cap is 25). */
+export const BACKFILL_MAX_USD = 25;
+function maxUsdArg(v: string): number {
+  const n = Number(v);
+  if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > BACKFILL_MAX_USD) throw new CliError(`--max-usd is a dollar amount from 0.5 to ${BACKFILL_MAX_USD}, got: ${v}`, 2);
   return n;
 }
 
@@ -205,6 +214,15 @@ export function buildProgram(h: CliHandlers): Command {
     .action(async (action: string) => {
       if (action !== 'run') throw new CliError('Usage: gen feeds run', 2);
       process.exitCode = await h.feedsRun();
+    });
+
+  program.command('library')
+    .description('Library upkeep: "gen library assess" rates how strong each entry evidence is (cheap model calls, stops at --max-usd)')
+    .argument('<action>', '"assess"')
+    .option('--max-usd <usd>', `most to spend, 0.5 to ${BACKFILL_MAX_USD} (default ${BACKFILL_MAX_USD})`, maxUsdArg)
+    .action(async (action: string, opts: { maxUsd?: number }) => {
+      if (action !== 'assess') throw new CliError('Usage: gen library assess [--max-usd N]', 2);
+      process.exitCode = await h.libraryAssess({ maxUsd: opts.maxUsd ?? BACKFILL_MAX_USD });
     });
 
   program.command('finds')

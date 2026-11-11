@@ -162,6 +162,24 @@ describe('LibraryView entry detail', () => {
     expect(lis[5]).toContain('through the scraping service');
   });
 
+  it('shows the strength badge and why as text in the list and the detail (no HTML injection)', () => {
+    const assessment = { directness: 'first_hand' as const, bias: '<img src=x onerror=alert(1)> sells ads', strength: 4 as const, why: '<script>alert(1)</script> The owner writes about their own shop.', corroboration: 2 };
+    const list = render(<LibraryView {...props({ rows: [row({ assessment })] })} />);
+    expect(list.getByTestId('library-results').textContent).toContain('strength 4/5, first-hand');
+    cleanup();
+    const { getByTestId } = render(<LibraryView {...props({ item: { ...item, assessment }, query: { q: '', status: 'active', page: 1, item: ID } })} />);
+    const d = getByTestId('library-detail');
+    expect(d.textContent).toContain('strength 4/5, first-hand');
+    expect(d.textContent).toContain('The owner writes about their own shop.');
+    expect(d.textContent).toContain('<script>alert(1)</script>');
+    expect(d.textContent).toContain('<img src=x onerror=alert(1)> sells ads');
+    expect(d.querySelector('script')).toBeNull();
+    expect(d.querySelector('img')).toBeNull();
+    cleanup();
+    const none = render(<LibraryView {...props({ item: { ...item, assessment: null }, query: { q: '', status: 'active', page: 1, item: ID } })} />);
+    expect(none.getByTestId('library-detail').textContent).not.toContain('strength');
+  });
+
   it('renders trend, rule change and market facts as readable text', () => {
     const at = (kind: LibraryRow['kind'], facts: unknown) => {
       const r = render(<LibraryView {...props({ item: { ...item, kind, facts }, query: { q: '', status: 'active', page: 1, item: ID } })} />);

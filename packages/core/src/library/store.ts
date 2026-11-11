@@ -4,6 +4,7 @@ import type { Db } from '../db/client';
 import { knowledgeItems, knowledgeSources, type FETCH_VIAS } from '../db/schema';
 import type { KnowledgeDraft, KnowledgeVoice } from './kinds';
 import { itemLive, itemQuoteExpired, liveSource } from './live';
+import { computeStrength, parseAssessment, type Assessment } from './strength';
 
 /** Web-safe: drizzle-orm, schema, kinds, live and node:crypto only (server-side). Bound parameters only. */
 
@@ -28,6 +29,8 @@ export type LibraryRow = {
   countries: string[];
   industries: string[];
   voice: KnowledgeVoice | null;
+  /** Evidence strength and why; null until assessed. Always render as text. */
+  assessment?: Assessment | null;
   status: 'active' | 'rejected';
   sourceCount: number;
   newestSourceAt: Date | null;
@@ -76,6 +79,15 @@ export const MEASURED_SOURCE_TYPES: readonly string[] = ['worldbank', 'wikipedia
 
 /** How long YouTube-sourced data may be kept (YouTube developer policy: 30 days, then refresh or delete). */
 export const YOUTUBE_TTL_MS = 30 * 86_400_000;
+
+/** The stored assessment of a draft that carries the model's directness, bias and why; strength is computed here (corroboration starts at 0, maintenance refreshes it). */
+function draftAssessment(d: KnowledgeDraft, now: Date, quoteVerified: boolean, voice: KnowledgeVoice | null): Assessment | null {
+  if (!d.assessment?.why) return null;
+  const strength = computeStrength({
+    voice, quoteVerified, corroboration: 0, fetchedAt: d.source.publishedAt ?? now, sourceTypes: [d.source.sourceType],
+  }, now);
+  return { directness: d.assessment.directness, bias: d.assessment.bias, strength, why: d.assessment.why, corroboration: 0 };
+}
 
 export async function upsertKnowledgeItem(
   db: Db,
@@ -127,6 +139,9 @@ export async function upsertKnowledgeItem(
         updatedAt: new Date(),
         voice: moreIndependent(existing.voice, d.voice ?? null),
       };
+      // An entry with no assessment adopts the incoming one; an existing assessment is never replaced here.
+      const incoming = draftAssessment(d, fetchedAt, existing.quoteVerified || verifiedQuote !== null, moreIndependent(existing.voice, d.voice ?? null));
+      if (incoming) patch.assessment = sql`coalesce(${knowledgeItems.assessment}, ${JSON.stringify(incoming)}::jsonb)` as unknown as Assessment;
       if (!existing.quoteVerified && verifiedQuote) {
         patch.quote = verifiedQuote;
         patch.quoteVerified = true;
@@ -185,6 +200,7 @@ export async function upsertKnowledgeItem(
       kind: d.kind, title: d.title, summary: d.summary, quote: verifiedQuote ?? d.quote ?? null, quoteVerified: verifiedQuote !== null,
       audience: d.audience, countries: d.countries, industries: d.industries, voice: d.voice ?? null,
       facts: d.facts, embedding, contentHash: hash, missionId: ctx.missionId ?? null,
+      assessment: draftAssessment(d, fetchedAt, verifiedQuote !== null, d.voice ?? null),
     }).returning({ id: knowledgeItems.id });
     await addSource(row!.id);
     return { outcome: 'added' as const, itemId: row!.id };
@@ -219,7 +235,7 @@ const liveJoined = (now: Date) => or(isNull(knowledgeSources.expiresAt), gt(know
 const rowShape = (now: Date) => ({
   id: knowledgeItems.id, kind: knowledgeItems.kind, title: knowledgeItems.title, summary: knowledgeItems.summary,
   quote: quoteExpr(now), quoteVerified: quoteVerifiedExpr(now), audience: knowledgeItems.audience,
-  countries: knowledgeItems.countries, industries: knowledgeItems.industries, voice: knowledgeItems.voice,
+  countries: knowledgeItems.countries, industries: knowledgeItems.industries, voice: knowledgeItems.voice, assessment: knowledgeItems.assessment,
   status: knowledgeItems.status, sourceCount: sourceCountExpr(now), newestSourceAt: newestExpr(now), updatedAt: knowledgeItems.updatedAt,
 });
 
@@ -265,7 +281,7 @@ export async function searchLibrary(db: Db, f: LibraryFilter, now: Date = new Da
     ? [asc(cosineDistance(knowledgeItems.embedding, f.queryVector)), desc(knowledgeItems.updatedAt), asc(knowledgeItems.id)]
     : [desc(knowledgeItems.updatedAt), asc(knowledgeItems.id)];
   const rows = await db.select(rowShape(now)).from(knowledgeItems).where(where).orderBy(...order).limit(PAGE_SIZE).offset((page - 1) * PAGE_SIZE);
-  return { rows: rows as LibraryRow[], total: Number(total) };
+  return { rows: rows.map((r) => ({ ...r, assessment: parseAssessment(r.assessment) })) as LibraryRow[], total: Number(total) };
 }
 
 /** An entry with its live sources; null when missing or when all its sources have expired. */
@@ -278,7 +294,7 @@ export async function getLibraryItem(db: Db, id: string, now: Date = new Date())
     quoteVerified: knowledgeSources.quoteVerified, voice: knowledgeSources.voice,
     via: knowledgeSources.via, snapshotAt: knowledgeSources.snapshotAt, expiresAt: knowledgeSources.expiresAt,
   }).from(knowledgeSources).where(and(eq(knowledgeSources.itemId, id), liveJoined(now))).orderBy(asc(knowledgeSources.fetchedAt), asc(knowledgeSources.id));
-  return { ...(row as LibraryRow & { facts: unknown }), sources };
+  return { ...(row as LibraryRow & { facts: unknown }), assessment: parseAssessment(row.assessment), sources };
 }
 
 /** Source types that count as social/community platforms in the coverage view. */

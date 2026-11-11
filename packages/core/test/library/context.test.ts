@@ -213,6 +213,20 @@ describe('renderIdeationContext', () => {
   });
 });
 
+describe('ideation context strength label', () => {
+  it('shows the strength label of an assessed entry on its line, and nothing for an unassessed one', async () => {
+    const db = await testDb();
+    const a = await add(db, 'startup', st('Rated', 'active'), near(0.9, 2));
+    await add(db, 'startup', st('Plain', 'active'), near(0.8, 3));
+    await db.update(knowledgeItems).set({ assessment: { directness: 'first_hand', bias: null, strength: 4, why: 'w', corroboration: 1 } }).where(eq(knowledgeItems.id, a));
+    const c = await ideationContext(db, unit(0), { now: NOW });
+    const r = renderIdeationContext(c);
+    const lines = r.alreadySold.split(/\r?\n/);
+    expect(lines.find((l) => l.includes('Rated'))).toContain('| strength 4/5, first-hand |');
+    expect(lines.find((l) => l.includes('Plain'))).not.toContain('strength');
+  });
+});
+
 describe('ideationContext: seen in the wild (finds)', () => {
   it('shows live find entries by similarity, at most 6, with what, who pays, how it earns and the link, whatever the country', async () => {
     const db = await testDb();

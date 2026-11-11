@@ -1,3 +1,4 @@
+import { strengthLabel } from '@bcg/core/library/strength';
 import type { LibraryRow, SourceRow } from '@bcg/core/library/store';
 import { rejectItemAction, restoreItemAction } from '@/actions/library';
 import { libraryHref, type LibraryQuery } from '@/lib/library-query';
@@ -40,6 +41,15 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
         <span className="badge badge-info">{item.kind.replace('_', ' ')}</span> {item.status === 'rejected' ? <span className="badge badge-bad">rejected</span> : null}
       </p>
       <p>{item.summary}</p>
+      {item.assessment ? (
+        <p data-testid="library-assessment">
+          <span className="badge badge-info">{strengthLabel(item.assessment)}</span>{' '}
+          <span className="muted small">
+            {item.assessment.why}
+            {item.assessment.bias ? ` (bias: ${item.assessment.bias})` : ''}
+          </span>
+        </p>
+      ) : null}
       {item.quote ? (
         <blockquote className="pre">
           {item.quote}{' '}

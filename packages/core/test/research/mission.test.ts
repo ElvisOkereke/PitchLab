@@ -1213,13 +1213,39 @@ describe('runMission: trends, rule changes and markets', () => {
     const extract = router.calls.filter((c) => c.stage === 'library_extract');
     expect(extract).toHaveLength(1);
     expect(extract[0]!.prompt).toContain(FR_QUOTE);
-    expect(extract[0]!.ctx.promptVersion).toBe('library-extract.v3');
+    expect(extract[0]!.ctx.promptVersion).toBe('library-extract.v4');
     const [it] = await db.select().from(knowledgeItems);
     expect(it!.kind).toBe('rule_change');
     expect(it!.quoteVerified).toBe(true);
     expect(it!.facts).toMatchObject({ effectiveDate: '2026-12-01', publishedDate: '2026-05-01', jurisdiction: 'US-federal' });
     const [src] = await db.select().from(knowledgeSources);
     expect(src!.sourceType).toBe('federalregister');
+  });
+
+  it('stores the extracted directness, bias and why as the entry assessment (an unknown directness becomes unknown)', async () => {
+    const db = await testDb();
+    const id = await insertMission(db, { kinds: ['rule_change'], countries: ['US'] });
+    const spy: Spies = { order: [] };
+    const plan = { queries: [{ source: 'federalregister', q: 'overtime pay' }] };
+    const { deps } = sliceBDeps(db, { plan, extract: (s) => ({ ...ruleEntry(s), directness: 'official', bias: null, why: 'A government notice stating the rule itself.' }) }, newCollectors(spy, { federalRegister: async () => [frItem()] }));
+    expect(await runMission(deps, id)).toBe('succeeded');
+    const [it] = await db.select().from(knowledgeItems);
+    // official source +1, verified quote +1, neutral voice 0: 5
+    expect(it!.assessment).toEqual({ directness: 'official', bias: null, strength: 5, why: 'A government notice stating the rule itself.', corroboration: 0 });
+
+    const db2 = await testDb();
+    const id2 = await insertMission(db2, { kinds: ['rule_change'], countries: ['US'] });
+    const r2 = sliceBDeps(db2, { plan, extract: (s) => ({ ...ruleEntry(s), directness: 'gossip', bias: 'sells a fix', why: 'Odd.' }) }, newCollectors(spy, { federalRegister: async () => [frItem()] }));
+    expect(await runMission(r2.deps, id2)).toBe('succeeded');
+    const [it2] = await db2.select().from(knowledgeItems);
+    expect(it2!.assessment).toMatchObject({ directness: 'unknown', bias: 'sells a fix', why: 'Odd.' });
+
+    const db3 = await testDb();
+    const id3 = await insertMission(db3, { kinds: ['rule_change'], countries: ['US'] });
+    const r3 = sliceBDeps(db3, { plan, extract: (s) => ruleEntry(s) }, newCollectors(spy, { federalRegister: async () => [frItem()] }));
+    expect(await runMission(r3.deps, id3)).toBe('succeeded');
+    const [it3] = await db3.select().from(knowledgeItems);
+    expect(it3!.assessment).toBeNull(); // no why from the model: the backfill picks it up later
   });
 
   it("Federal Register hints win over the model's dates; the model's effective date is kept only when the hint has none", async () => {
