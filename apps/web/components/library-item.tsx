@@ -27,13 +27,28 @@ function factValue(v: unknown, key = ''): string {
   if (v === null && NEW_KIND_DATES.has(key)) return 'not stated';
   if (typeof v === 'string') return v;
   if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) return v.join('\n');
+  if (v && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every((x) => x === null || ['string', 'number', 'boolean'].includes(typeof x))) {
+    const lines = Object.entries(v).filter(([, x]) => x !== null && x !== undefined).map(([k, x]) => `${humanize(k)}: ${typeof x === 'boolean' ? (x ? 'yes' : 'no') : String(x)}`);
+    return lines.length > 0 ? lines.join('\n') : 'none';
+  }
   return JSON.stringify(v);
 }
+
+/** The company dossier fields of a startup entry (shown apart from the older facts), in reading order. */
+const DOSSIER_FIELDS = ['whoPays', 'pricingUnit', 'priceRange', 'revenueDrivers', 'acquisition', 'moat', 'useCases', 'whyItWorked', 'whyItDied', 'comps', 'funding', 'traction'] as const;
+const DOSSIER_META = new Set<string>([...DOSSIER_FIELDS, 'dossierAt', 'dossierStatus']);
 
 /** One entry in full: quote, sources, facts as a definition list, and Reject or Restore. All text is escaped. */
 export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: LibraryQuery }) {
   const facts = item.facts && typeof item.facts === 'object' && !Array.isArray(item.facts) ? Object.entries(item.facts as Record<string, unknown>) : [];
   const back = libraryHref(query);
+  const record = item.facts && typeof item.facts === 'object' && !Array.isArray(item.facts) ? (item.facts as Record<string, unknown>) : {};
+  const isStartup = item.kind === 'startup';
+  const dossier = isStartup ? DOSSIER_FIELDS.filter((k) => record[k] !== undefined && record[k] !== null) : [];
+  const dossierStatus = isStartup && typeof record.dossierStatus === 'string' ? record.dossierStatus : null;
+  const dossierAt = isStartup && typeof record.dossierAt === 'string' && !Number.isNaN(Date.parse(record.dossierAt)) ? new Date(record.dossierAt) : null;
+  const shown = isStartup ? facts.filter(([k]) => !DOSSIER_META.has(k)) : facts;
   return (
     <section aria-labelledby="item-title" className="card library-detail" data-testid="library-detail">
       <h2 id="item-title">{item.title}</h2>
@@ -72,11 +87,11 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
           </li>
         ))}
       </ul>
-      {facts.length > 0 ? (
+      {shown.length > 0 ? (
         <>
           <h3>Facts</h3>
           <dl className="facts">
-            {facts.map(([k, v]) => (
+            {shown.map(([k, v]) => (
               <div key={k}>
                 <dt>{humanize(k)}</dt>
                 <dd className="pre">{factValue(v, k)}</dd>
@@ -84,6 +99,29 @@ export function LibraryItem({ item, query }: { item: LibraryItemDetail; query: L
             ))}
           </dl>
         </>
+      ) : null}
+      {dossier.length > 0 || dossierStatus ? (
+        <div data-testid="library-dossier">
+          <h3>Company dossier</h3>
+          <p className="muted small">
+            {dossierStatus === 'unmatched'
+              ? 'No page matched this company, so nothing was added.'
+              : dossierStatus === 'failed'
+                ? 'The last attempt failed; it will be tried again.'
+                : 'Each field was checked against a quote on a fetched page.'}
+            {dossierAt ? ` Last built ${formatDate(dossierAt)}.` : ''}
+          </p>
+          {dossier.length > 0 ? (
+            <dl className="facts">
+              {dossier.map((k) => (
+                <div key={k}>
+                  <dt>{humanize(k)}</dt>
+                  <dd className="pre">{factValue(record[k], k)}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
+        </div>
       ) : null}
       {item.status === 'rejected' ? (
         <form action={restoreItemAction} className="inline-form">

@@ -222,6 +222,33 @@ describe('runWorker feeds', () => {
   });
 });
 
+describe('runWorker dossiers', () => {
+  it('runs dossiers only when idle and after the feeds, never with --once unless set, and never ahead of a queued mission', async () => {
+    const db = await testDb();
+    const order: string[] = [];
+    const executeDossiers = vi.fn(async () => { order.push('dossiers'); });
+    const executeFeeds = vi.fn(async () => { order.push('feeds'); });
+    const executeMission = vi.fn(async () => 'succeeded' as const);
+    const base = { db, intervalMs: 10, signal: never, once: true, log: quietLog, heartbeat: async () => {}, execute: async () => 'succeeded' as const, executeValidation: noValidation, executeMission, executeFeeds, executeDossiers };
+    await runWorker(base);
+    expect(executeDossiers).not.toHaveBeenCalled();
+    await runWorker({ ...base, feedsOnce: true });
+    expect(order).toEqual(['feeds', 'dossiers']);
+    await insertMissionRow(db);
+    await runWorker({ ...base, feedsOnce: true });
+    expect(executeMission).toHaveBeenCalledTimes(1);
+    expect(executeDossiers).toHaveBeenCalledTimes(1);
+  });
+
+  it('a dossiers failure is logged and the worker carries on', async () => {
+    const db = await testDb();
+    const logs: string[] = [];
+    await runWorker({ db, intervalMs: 10, signal: never, once: true, feedsOnce: true, log: (m) => { logs.push(m); }, heartbeat: async () => {}, execute: async () => 'succeeded', executeValidation: noValidation,
+      executeDossiers: async () => { throw new Error('dossiers boom'); } });
+    expect(logs.some((l) => l.includes('dossiers failed') && l.includes('dossiers boom'))).toBe(true);
+  });
+});
+
 describe('runWorker', () => {
   it('executes queued runs oldest first and writes a heartbeat with no secret values', async () => {
     const db = await testDb();

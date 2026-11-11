@@ -4,6 +4,7 @@ import type { MarketSummary } from '@bcg/core/dashboard/markets';
 import type { ResearchSettings } from '@bcg/core/dashboard/missions';
 import { EDITABLE_SETTING_KEYS, type EditableSettingKey, type WorkerStatus } from '@bcg/core/dashboard/settings';
 import type { FeedsStatus } from '@bcg/core/research/feeds/status';
+import type { DossiersStatus } from '@bcg/core/library/dossier-status';
 import type { TelegramStatus } from '@bcg/core/dashboard/telegram';
 import { resetTelegramPairingAction } from '@/actions/settings';
 import { SETTING_FIELDS } from '@/lib/settings-labels';
@@ -27,6 +28,8 @@ export type SettingsData = {
   holdout: string[];
   /** What the last automatic feeds run did (null before the first run). */
   feeds?: FeedsStatus | null;
+  /** What the last company dossier run did (null before the first run). */
+  dossiers?: DossiersStatus | null;
   /** The Telegram bot: paired or not, and the one-time pairing code while unpaired. */
   telegram?: TelegramStatus;
 };
@@ -93,6 +96,23 @@ export function FeedsList({ feeds }: { feeds: FeedsStatus | null }) {
         </ul>
       ) : (
         <p className="muted small">The feeds have not run yet. They run on their own every few hours while the worker is up (or run npm run gen -- feeds run).</p>
+      )}
+    </div>
+  );
+}
+
+/** The company dossiers, as text: the last run's counts and spend. */
+export function DossiersList({ dossiers }: { dossiers: DossiersStatus | null }) {
+  return (
+    <div data-testid="dossiers">
+      <h3>Company dossiers</h3>
+      {dossiers ? (
+        <p className="muted small">
+          last run {formatDateTime(new Date(dossiers.at))}: {dossiers.done} done, {dossiers.unmatched} unmatched, {dossiers.failed} failed, ${dossiers.spentUsd.toFixed(2)} spent
+          {dossiers.warnings.length ? `, notes: ${dossiers.warnings.join('; ')}` : ''}
+        </p>
+      ) : (
+        <p className="muted small">The dossiers have not run yet. They build on their own while the worker is idle (or run npm run gen -- dossiers run).</p>
       )}
     </div>
   );
@@ -167,6 +187,7 @@ export function SettingsView({ data, notice }: { data: SettingsData; notice?: Se
           </li>
         </ul>
         <FeedsList feeds={data.feeds ?? null} />
+        <DossiersList dossiers={data.dossiers ?? null} />
         <p className="muted small">
           {data.worker ? `As reported by the worker at ${formatDateTime(new Date(data.worker.at))}.` : 'Start npm run worker to see which providers it has.'}
         </p>

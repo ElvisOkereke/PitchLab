@@ -254,3 +254,19 @@ describe('SettingsView feeds', () => {
     expect(getByTestId('feed-reddit').textContent).toContain('<img src=x onerror=alert(1)>');
   });
 });
+
+describe('SettingsView dossiers', () => {
+  it('shows the last dossier run in Connections as text, or says none ran', () => {
+    const run = { at: '2026-11-08T12:00:00.000Z', done: 4, unmatched: 1, failed: 2, spentUsd: 0.8, warnings: ['<b>cap</b>'] };
+    const { getByTestId } = render(<SettingsView data={data({ dossiers: run })} />);
+    expect(within(getByTestId('connections')).getByTestId('dossiers')).toBeTruthy();
+    const t = getByTestId('dossiers').textContent!;
+    expect(t).toContain('4 done');
+    expect(t).toContain('1 unmatched');
+    expect(t).toContain('2 failed');
+    expect(getByTestId('dossiers').querySelector('b')).toBeNull();
+    cleanup();
+    const none = render(<SettingsView data={data({ dossiers: null })} />);
+    expect(none.getByTestId('dossiers').textContent).toContain('have not run yet');
+  });
+});

@@ -69,6 +69,7 @@ export type CliHandlers = {
   configGet(key: string | undefined): Promise<number>;
   worker(opts: WorkerCliOpts): Promise<number>;
   feedsRun(): Promise<number>;
+  dossiersRun(opts: { maxUsd?: number; limit?: number }): Promise<number>;
   libraryAssess(opts: { maxUsd: number }): Promise<number>;
   findsAdd(url: string, note: string | undefined): Promise<number>;
   findsList(): Promise<number>;
@@ -120,6 +121,12 @@ export const BACKFILL_MAX_USD = 25;
 function maxUsdArg(v: string): number {
   const n = Number(v);
   if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > BACKFILL_MAX_USD) throw new CliError(`--max-usd is a dollar amount from 0.5 to ${BACKFILL_MAX_USD}, got: ${v}`, 2);
+  return n;
+}
+
+function limitArg(v: string): number {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > 500) throw new CliError(`--limit is a whole number from 1 to 500, got: ${v}`, 2);
   return n;
 }
 
@@ -214,6 +221,16 @@ export function buildProgram(h: CliHandlers): Command {
     .action(async (action: string) => {
       if (action !== 'run') throw new CliError('Usage: gen feeds run', 2);
       process.exitCode = await h.feedsRun();
+    });
+
+  program.command('dossiers')
+    .description('Company dossiers for startup entries: "gen dossiers run" builds the next ones now, within the daily cap (dossiers.dailyUsd) and --max-usd / --limit (costs model calls)')
+    .argument('<action>', '"run"')
+    .option('--max-usd <usd>', `most to spend this run, 0.5 to ${BACKFILL_MAX_USD}`, maxUsdArg)
+    .option('--limit <n>', 'most startups this run, 1 to 500 (default 25)', limitArg)
+    .action(async (action: string, opts: { maxUsd?: number; limit?: number }) => {
+      if (action !== 'run') throw new CliError('Usage: gen dossiers run [--max-usd N] [--limit N]', 2);
+      process.exitCode = await h.dossiersRun({ maxUsd: opts.maxUsd, limit: opts.limit });
     });
 
   program.command('library')

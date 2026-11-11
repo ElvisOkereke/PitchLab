@@ -31,7 +31,7 @@ import { buildRouter } from './llm/router';
 import { buildStageDeps } from './pipeline/deps';
 import { createRun, executeRunWithSetup } from './pipeline/run';
 import { defaultRunConfig, type RunConfig } from './pipeline/types';
-import { fetchPage } from './tools/fetch-page';
+import { fetchPage, type FetchPageOpts } from './tools/fetch-page';
 import { computeChecklistStatus } from './validation/checklist';
 import { markOutreach, outreachCounts } from './validation/outreach';
 import { parseProspectCsv, upsertProspects } from './validation/prospects';
@@ -43,6 +43,12 @@ import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
 import { buildCollectors, runMission } from './research/mission';
 import { runAssessBackfill } from './library/assess-job';
+import { runDueDossierJob, runDossierJob, type DossierJobDeps } from './library/dossier-job';
+import { collectPage } from './research/collect';
+import { createArchiveClient } from './research/archive';
+import { USER_AGENT } from './research/http';
+import { respectRobotsSetting, robotsAllows } from './research/robots';
+import { BANNED_DOMAINS } from './tools/banned-sources';
 import { feedsExitCode, runDueFeedsJob, runFeedsJob, type FeedDeps } from './research/feeds/job';
 import { loadBrowser, openMissionBrowser, sweepStaleProfiles } from './research/browser/render';
 import { createScraperStep } from './research/scraper';
@@ -280,6 +286,15 @@ async function workerCommand(opts: WorkerCliOpts): Promise<number> {
           busy = false;
         }
       },
+      executeDossiers: async () => {
+        busy = true;
+        try {
+          // Stops between startups when a run is queued or the worker is stopping (the run comes first).
+          await runDueDossierJob({ ...(await dossierDeps(db, env)), signal: stop.signal, shouldYield: () => hasQueuedRun(db) });
+        } finally {
+          busy = false;
+        }
+      },
       executeMission: async (missionId) => {
         busy = true;
         // Local Chromium behind the guarded proxy, for this mission only and closed after it (null when not installed):
@@ -392,6 +407,33 @@ function feedDeps(db: Db, env: Env): FeedDeps {
     db, router: buildRouter(env, db), fetchPage, log: out,
     keys: { youtubeApiKey: env.YOUTUBE_API_KEY, blueskyHandle: env.BLUESKY_HANDLE, blueskyAppPassword: env.BLUESKY_APP_PASSWORD },
   };
+}
+
+/** The dossiers' collaborators: the model router and the guarded page collector (robots, SSRF guard, escalation to the archive and scraper). */
+async function dossierDeps(db: Db, env: Env): Promise<DossierJobDeps> {
+  const guarded = (url: string, opts: FetchPageOpts = {}) => fetchPage(url, { ...opts, userAgent: USER_AGENT, blockHosts: [...(opts.blockHosts ?? []), ...BANNED_DOMAINS] });
+  const state = { archiveDisabled: false };
+  const respectRobots = await respectRobotsSetting(db);
+  const archive = createArchiveClient({ fetchPage: guarded });
+  const scraper = createScraperStep({ db, provider: env.SCRAPER_PROVIDER, key: env.SCRAPER_API_KEY, log: out });
+  return {
+    db, router: buildRouter(env, db), log: out,
+    collectPage: (url) => collectPage(url, { db, fetchPage: guarded, robotsAllows: (u) => robotsAllows(u, { fetchPage: guarded }), archive, scraper, respectRobots, log: out, state }),
+  };
+}
+
+/** `gen dossiers run`: builds the next company dossiers now, within the daily cap, --max-usd and --limit. Costs model calls. */
+async function dossiersRunCommand(opts: { maxUsd?: number; limit?: number }): Promise<number> {
+  loadDotEnv();
+  const env = loadEnv();
+  const db = await openDb(env.DATABASE_URL);
+  try {
+    const r = await runDossierJob({ ...(await dossierDeps(db, env)), maxUsd: opts.maxUsd, limit: opts.limit });
+    out(`${r.done} done, ${r.unmatched} unmatched, ${r.failed} failed. Spent ${r.spentUsd.toFixed(2)}.`);
+    return 0;
+  } finally {
+    await closeDb(db);
+  }
 }
 
 /** `gen feeds run`: one feeds run now (not only when due), within the daily cap. Costs model calls. */
@@ -907,6 +949,7 @@ const program = buildProgram({
   configGet: configGetCommand,
   worker: workerCommand,
   feedsRun: feedsRunCommand,
+  dossiersRun: dossiersRunCommand,
   libraryAssess: libraryAssessCommand,
   findsAdd: findsAddCommand,
   findsList: findsListCommand,

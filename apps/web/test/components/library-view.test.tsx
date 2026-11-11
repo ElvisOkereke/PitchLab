@@ -202,6 +202,34 @@ describe('LibraryView entry detail', () => {
     expect(m.text).toContain('visitors: +5% (2023-2024)');
   });
 
+  it('renders startup dossier fields as escaped text, and says when no page matched', () => {
+    const at = (facts: unknown) => {
+      const r = render(<LibraryView {...props({ item: { ...item, kind: 'startup', facts }, query: { q: '', status: 'active', page: 1, item: ID } })} />);
+      const d = r.getByTestId('library-detail');
+      const out = { text: d.textContent!, html: d.innerHTML };
+      cleanup();
+      return out;
+    };
+    const base = { name: 'Acme', whatItDoes: 'invoices', businessModel: 'subscription', outcome: 'active' };
+    const done = at({
+      ...base, whoPays: '<b>Plumbing</b> firms', pricingUnit: 'per seat per month', revenueDrivers: ['subscriptions', 'add-ons'],
+      funding: { stage: 'seed', amount: '4 million dollars', date: '2023-03' }, traction: { customers: 120, hiring: true },
+      comps: ['Rival Co'], dossierAt: '2026-11-01T00:00:00.000Z', dossierStatus: 'done',
+    });
+    expect(done.text).toContain('<b>Plumbing</b> firms');
+    expect(done.html).not.toContain('<b>Plumbing');
+    expect(done.text).toContain('subscriptions');
+    expect(done.text).toContain('add-ons');
+    expect(done.text).toContain('seed');
+    expect(done.text).toContain('4 million dollars');
+    expect(done.text).toContain('customers: 120');
+    expect(done.text).not.toContain('{"stage"');
+    expect(done.text).not.toContain('["subscriptions"');
+    expect(done.text).toContain('Company dossier');
+    const un = at({ ...base, dossierAt: '2026-11-01T00:00:00.000Z', dossierStatus: 'unmatched' });
+    expect(un.text).toContain('No page matched this company');
+  });
+
   it('a rejected entry offers Restore instead', () => {
     const { getByTestId } = render(<LibraryView {...props({ item: { ...item, status: 'rejected' }, query: { q: '', status: 'all', page: 1, item: ID } })} />);
     const d = within(getByTestId('library-detail'));

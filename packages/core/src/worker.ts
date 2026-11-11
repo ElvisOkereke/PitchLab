@@ -97,6 +97,8 @@ export type WorkerOptions = {
   executeMission?: (missionId: string) => Promise<'succeeded' | 'failed'>;
   /** Automatic feeds: called when idle (after runs, validation and missions); the callee decides whether they are due. A throw is logged and ignored. */
   executeFeeds?: () => Promise<void>;
+  /** Company dossiers: called when idle, after the feeds (same gating: not with `once` unless `feedsOnce`); the callee decides whether they are due and yields to queued runs. A throw is logged and ignored. */
+  executeDossiers?: () => Promise<void>;
   /**
    * Finds: called when no run, validation job or mission is waiting. Returns true when it processed at least one find
    * (the loop then checks the queues again before the next). A throw is logged and ignored.
@@ -216,6 +218,20 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
       clearInterval(timer);
     }
   };
+  let nextDossiersCheck = 0;
+  /** Idle-time company dossiers, after the feeds. Checked at most once a minute; the job is slow, so the heartbeat keeps running. */
+  const dossiersIfDue = async () => {
+    if (!o.executeDossiers || (o.once && !o.feedsOnce) || Date.now() < nextDossiersCheck) return;
+    nextDossiersCheck = Date.now() + 60_000;
+    const timer = setInterval(() => void beat(), o.intervalMs);
+    try {
+      await o.executeDossiers();
+    } catch (err) {
+      o.log(`dossiers failed: ${messageOf(err)}`);
+    } finally {
+      clearInterval(timer);
+    }
+  };
   /** Finds when idle; true when it did work. Kept quick to read: the job itself captures one find at a time. */
   const findsWork = async (): Promise<boolean> => {
     if (!o.executeFinds) return false;
@@ -313,6 +329,7 @@ export async function runWorker(o: WorkerOptions): Promise<void> {
         }
       }
       await feedsIfDue();
+      await dossiersIfDue();
       if (o.once) {
         o.log('no queued runs');
         return;
