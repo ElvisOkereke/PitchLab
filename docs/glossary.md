@@ -180,7 +180,7 @@ A short, cheap draft of a business idea: title, buyer, problem, how it earns, it
 How a run ranks its sketches. A different AI family judges them head to head, twice per pair with the order swapped, on which business you would rather build. It learns from examples of cases you kept over cases you killed, but your own verdict on the Board is what counts.
 
 ### Elo
-A rating that rises when a sketch wins a head-to-head match and falls when it loses, starting at 1200. The run page lists the top 12 sketches by Elo. It is a ranking inside one run, not a score out of 5.
+A rating that rises when a sketch wins a head-to-head match and falls when it loses, starting at 1200. The run page lists the sketches that went on, best first, with their Elo. It is a ranking inside one run, not a score out of 5.
 
 ### Diversity cell
 A slot defined by buyer kind (business, prosumer or consumer), edge kind (such as data, workflow or regulation) and business model. The run keeps at most 2 ideas per cell, so the top ideas differ from each other instead of being 12 versions of one.

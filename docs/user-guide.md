@@ -200,7 +200,7 @@ Forgot your password? Run `npm run reset-password` in the repo folder, then rest
 ### Read the tournament
 
 - **What:** On **Runs**, a run made by the new idea engine has a **tournament** line under its stages. Open it to see the
-  top 12 sketches by **Elo** (their rating from head-to-head matches), each one's **diversity cell**, the sketch it was
+  sketches that went on to become ideas (up to 12, best first, with their **Elo**: the rating from head-to-head matches), each one's **diversity cell**, the sketch it was
   improved from (**Parent**) and its improved versions (**Variants**; press a title to jump to that row), how many sketches
   were dropped as repeats, the **unique share** (how many survived the repeat filter) and how many cells the run filled.
   If it says "fell back to v14", the run had no sketches and used the old way of writing ideas.

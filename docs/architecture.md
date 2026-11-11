@@ -110,7 +110,11 @@ flowchart LR
 - Every stage is idempotent per item: a re-run replaces its own rows, and multi-row writes go in one transaction.
 - When a stage outputs nothing (no signals, no ideas, nothing passed the gate), the remaining stages are marked done
   and skipped. An owner idea continues even with no signals, because it always gets a case.
-- **Engine flag:** `runs.config.engine` is `'v1' | 'v2'` and absent reads as v2 (`usesEngineV2`); an `idea` seed always uses v1
+- **Engine flag:** `runs.config.engine` is `'v1' | 'v2'`; `defaultRunConfig` sets `'v2'` for every new run (dashboard, CLI and
+  benchmark passes; `RunConfigSchema` keeps the field, so queueing and the worker's re-validation never drop it) and `gen run
+  --engine v1|v2` overrides it. A config without the field (a run stored before engine v2) is v1 (`usesEngineV2` is
+  `engine === 'v2'`), so resuming an old run keeps its engine. ideate v15 expands at most `ideaCount` sketches, the first in the
+  evolve order. An `idea` seed always uses v1
   and skips sketch, archive, tournament and evolve. Every v2 stage returns `{ ...input, sketchIds, ...extras }` so the
   harvest fields reach ideate unchanged. With 0 sketches left the run ends like an empty ideate. **ideate v15** expands the
   chosen sketches into full ideas and stores `ideas.sketch_id` and `ideas.elo`; if a v2 run has no sketches, ideate falls
@@ -225,8 +229,12 @@ flowchart TD
 
 - **Judge calibration** (`audit/judge-calibration.ts`, `gen audit judge`): the pairs are every decided pair of Board cases
   (one kept, one killed) plus up-versus-down idea ratings; `judge_pairs` stores each pair with a deterministic split by pair
-  hash (60% train, the few-shot pool, 40% test), and an existing pair never changes split. The judge never sees a test pair
-  (a test asserts the pools are disjoint). The report (`output/audit/judge-<date>.md`) gives pairwise accuracy on test,
+  hash (60% train, the few-shot pool, 40% test), and an existing pair never changes split. New Board decisions become pairs on
+  arrival: daily maintenance (an isolated step) and the start of every tournament stage call `syncJudgePairs` (insert-only;
+  each side is the newest 2,000 ideas, and pairs are built and inserted one kept idea at a time, so memory stays bounded).
+  The judge never sees a test pair (a test asserts the pools are disjoint). Calibration picks the few-shot examples exactly as
+  the tournament does (`fewShotPairs` with `FEWSHOT_PAIRS_MAX`), then judges only test pairs sharing no idea with them; the
+  report and the CLI say how many test pairs that left out. The report (`output/audit/judge-<date>.md`) gives pairwise accuracy on test,
   position consistency, accuracy by confidence, a comparison with the reviewer and the cost, and says "too few pairs" below 10.
   Goals (reported, never enforced): accuracy 0.70, consistency 0.80. A summary goes to setting `audit.judge.latest`
   (`{ at, accuracy, consistency, pairs, tooFew }`), which the scorecard reads. The reasons shown to the judge are written once
@@ -236,12 +244,19 @@ flowchart TD
   (other active entries at cosine 0.9 or more from other registrable domains) +1 at 2 or more, +2 at 5 or more; older than 730
   days −1; source type in `OFFICIAL_SOURCE_TYPES` (`federalregister`, `worldbank`, `yc`) +1; clamped to 1-5 and recomputed in every
   maintenance pass. `library-extract.v4` writes directness, bias and why for new entries; `gen library assess` (`library-assess.v1`,
-  batches of 20, stops at `--max-usd`, default 25) backfills the rest.
+  batches of 20, stops at `--max-usd`, default 5) backfills the rest. Corroboration also counts the entry's own live sources on
+  distinct registrable domains beyond the first (merged near-duplicates live inside one entry).
+- **Backfill budgets:** each backfill has its own `--max-usd` hard cap, and together they stay under the $25 backfill total:
+  `gen library assess` defaults to $5 and the dossier backfill is run as `gen dossiers run --max-usd 15`. An explicit `--max-usd`
+  on `gen dossiers run` replaces `dossiers.dailyUsd` for that run only (still a hard cap); without it (and in the worker) the daily
+  cap applies.
 - **Company dossiers** (`library/dossier-job.ts`, worker job `dossiers`, `gen dossiers run`): prompt `dossier.v1` on the
   `library_extract` model stage. Pages (homepage, pricing page, one funding-or-shutdown search, a post-mortem search for dead
   companies) go through `collectPage` with every existing guard. Every field needs a verified quote from a fetched page; founders'
-  names are not stored. A dossier whose pages never name the company is discarded and recorded as `dossierStatus: 'unmatched'` (the
-  entry keeps its old facts). Daily budget: setting `dossiers.dailyUsd` (default 2); the job yields to queued runs. Priority: cited
+  names are not stored. A dossier is discarded and recorded as `dossierStatus: 'unmatched'` (the entry keeps its old facts) unless a
+  fetched page on the company's homepage domain or one of the entry's own source domains names it (a search result naming a
+  same-named company is not enough). A dossier with no verified field is `failed` (with the failure back-off), never `done`. The
+  existing entry summary only loses reported and cued person names ("said Jane Smith"); product names such as "Google Maps" stay. Daily budget: setting `dossiers.dailyUsd` (default 2); the job yields to queued runs. Priority: cited
   startups, then the list in setting `dossiers.priority` (written by evolve), then business model "unknown", then the rest.
   `nearestComps` (used by evolve and the gate's `comps` verdict) returns dossier entries first, then by cosine.
 
@@ -278,9 +293,9 @@ queues passes and finalises them. A snapshot is stored once in `benchmark_passes
 - **Engine v2 rows** (`bench/scorecard.ts`, from stored rows only): `uniqueSketchShare` (mean archive `uniqueShare` per run, target 60%) and
   `cellsFilled` (mean archive `cells`, 8) read the archive stage's output row; `judgeAccuracy` reads setting `audit.judge.latest` (`tooFew` or
   missing is "no data"; target 70%); `trivialKillRate` is the share of gate-evaluated generated ideas the `trivial` check killed (reported, no
-  target); `compsCoverage` is the share of the pass's cases whose newest `comps` verdict lists 2 or more dossier comps (target 80%);
+  target); `compsCoverage` is the share of the pass's cases with a `comps` verdict (v2 cases) whose newest `comps` verdict lists 2 or more dossier comps (target 80%);
   `engineCostPerRun` sums `llm_calls` cost whose prompt version starts `sketch.`, `judge.` or `evolve.` per run (target $8). A v1 pass has no such
-  rows and shows "no data". The Runs page shows each v2 run's tournament (top 12 by Elo, cell, parent and variants, dropped repeats, unique share, cells,
+  rows and shows "no data". The Runs page shows each v2 run's tournament (the sketches that went on: the evolve output's `sketchIds`, else the tournament's, in order; cell, parent and variants, dropped repeats, unique share, cells,
   any v14 fallback); a v1 run has none.
 - **Finalise hook:** the worker calls `finalizeBenchmarkPasses` after each run outcome and on every heartbeat (not after
   validation jobs); `gen resume` calls it too. When every run of a running pass has
@@ -412,8 +427,8 @@ model. The router picks the model, the adapter and the limits.
   `competitors`, `verify`, `prospect`, `outreach`, `landing` on a mid Claude model; `ideate`, `case`, `pack` on the
   largest Claude model; `gate` on a GPT model; `score` on a Gemini model; `embed` on an OpenAI embedding model.
   Override any of them with `MODEL_OVERRIDES` (JSON, stage to model name).
-- **Rules checked at start-up** (`validateModelConfig`): `gate` and `score` must be a different model family from
-  `ideate`, so a model never grades its own ideas. The stages that search the web (`harvest`, `competitors`, `case`,
+- **Rules checked at start-up** (`validateModelConfig`): `gate`, `score`, `review` and `judge` must be a different model family
+  from `ideate`, and `judge` also from `sketch`, so a model never grades its own ideas. The stages that search the web (`harvest`, `competitors`, `case`,
   `prospect`) must be Claude models, because they use Anthropic's server-side web search tool.
 - **Adapters:** Claude models go through the Anthropic Messages API (`LLM_ANTHROPIC_BASE_URL`); every other model goes
   through the OpenAI Chat Completions API (`LLM_OPENAI_BASE_URL`). Both use `LLM_API_KEY`. The Anthropic adapter

@@ -187,7 +187,7 @@ missions** card.
   voice +1, vendor −1, verified quote +1, other independent sites saying the same +1 at 2 or more and +2 at 5 or more,
   older than 2 years −1, official source such as the Federal Register, World Bank or YC +1) and a one-sentence why.
   The Library page shows it as a badge, and ideation and the judge see it next to each entry. `gen library assess`
-  fills it in for existing entries (cheap model, stops at `--max-usd`, default 25).
+  fills it in for existing entries (cheap model, stops at `--max-usd`, default 5).
 - **Company dossiers:** a worker job reads each startup's homepage, pricing page and one funding-or-shutdown search
   (dead companies also get a post-mortem search) and records who pays, the pricing unit and range, revenue drivers,
   acquisition, moat, use cases, why it worked or died, comps, funding and traction, each backed by a verified quote
@@ -231,7 +231,7 @@ follow its progress.
   sectors you tick), `lens` (up to 8 idea patterns you tick), `idea` (your own idea, at least 50 characters; it always
   gets a case and the gate only advises). A gate-killed idea can be re-run with **Re-run as owner idea** on the Board.
 - **Stages, in order:** harvest → sketch → archive → tournament → evolve → ideate → dedupe → screen → gate → case →
-  verify → score (the four middle-left ones are the idea engine; see below). Each stage's output is
+  verify → score (sketch, archive, tournament and evolve are the idea engine; see below). Each stage's output is
   saved, so `gen resume <runId>` restarts a failed run at the failed stage. A stage with nothing left to pass on skips
   the rest.
   - **harvest:** library signals first (up to 15 matching entries, or 7 once the library holds 50 or more eligible
@@ -511,8 +511,8 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen telegram reset` | Forgets the Telegram bot's owner and prints a new pairing code (Settings → Connections has a **Reset pairing** button too). |
 | `gen research "<topic>"` | Queues a research mission that adds to the library (the worker runs it). `--budget` (0.5–25, default 2), `--kinds`, `--countries`, `--audience`. `gen research status` lists recent missions. |
 | `gen audit judge` | Calibrates the tournament judge on held-out pairs of cases you kept versus killed; writes `output/audit/judge-<date>.md` (costs model calls). |
-| `gen dossiers run` | Builds the next company dossiers now, within the daily cap; `--max-usd`, `--limit`. |
-| `gen library assess` | Rates the source strength of every library entry; `--max-usd` (default 25). |
+| `gen dossiers run` | Builds the next company dossiers now, within the daily cap; `--limit`; an explicit `--max-usd` replaces the daily cap for that run (the backfill uses 15). |
+| `gen library assess` | Rates the source strength of every library entry; `--max-usd` (default 5). |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then validation packs, then research missions; when all are empty it captures finds, queues background research if that is on, and runs the feeds when due. `--once --feeds` also runs the feeds in a single pass. |
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |
@@ -536,7 +536,7 @@ LLM spend is **notional**: PitchLab works it out from token counts and a price t
 | One benchmark pass (bench-v2) | about $15–35 (5 runs) |
 | The idea engine (sketch, tournament, evolve) | at most about $8 a run, inside the run's cost |
 | Company dossiers | at most `dossiers.dailyUsd` a day (default $2); about $0.05 each |
-| Source-strength and dossier backfills | at most $25 each, once (`--max-usd`) |
+| Source-strength and dossier backfills | once, each with its own `--max-usd` cap: assess $5 (default), dossiers $15; under $25 together |
 | Automatic feeds | at most `feeds.dailyUsd` a day (default $2), extraction only; the sources themselves are free |
 | One find | one small extraction call (cents); the capture tools are free and run on your computer |
 | Scraping service | free within `fetch.scraperMonthlyPages` (default 900 pages a month, inside the free tiers) |

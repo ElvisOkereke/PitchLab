@@ -22,7 +22,6 @@ A running list of what is waiting on you. Done items are removed as work lands; 
 
 - [ ] After bench-v3 #3 runs (the first pass on the new idea engine), sort its new cases on the **Board**: it is the comparison with bench-v3 #2 and the verdict on the engine. Nothing else is required to start; the engine is on by default.
 - [ ] After each benchmark pass, sort its new cases on the **Board**: keep (move to Validating or Pilot) or kill. Your Board decisions are what PitchLab measures itself against.
-- Claude runs the library assessment backfill (`gen library assess`), the dossier backfill (`gen dossiers run`) and the judge calibration (`gen audit judge`) after the merge, each within its budget (at most $25). Strength badges on Library entries and the judge accuracy row on Progress appear once these have run; nothing for you to do. The judge gets more accurate the more cases you keep or kill on the Board.
 - Claude runs the scale backtest (`gen audit scale --decided`, then `gen audit backtest`) against your Board decisions after each change to the scale rule; nothing for you to do except keep sorting the Board.
 - [ ] Optional: rate ideas on **Runs** (thumbs up or down, plus tags). It covers ideas that never became cases.
 - [ ] Optional: add 2 or 3 example ideas you would want in **Settings** (or `npm run gen -- audit holdout add "..."`). The generator never sees them; they only measure how close it gets.
