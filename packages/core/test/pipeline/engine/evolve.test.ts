@@ -2,7 +2,7 @@ import { and, eq, isNotNull } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import type { Db } from '../../../src/db/client';
 import { knowledgeItems, lenses, llmCalls, runs, signals, sketches, tournamentMatches } from '../../../src/db/schema';
-import { evolve, nearestComps } from '../../../src/pipeline/engine/evolve';
+import { evolve, evolveAttemptedKey, nearestComps } from '../../../src/pipeline/engine/evolve';
 import { EVOLVE_TOP } from '../../../src/pipeline/engine/kinds';
 import { BUSINESS_MODELS } from '../../../src/pipeline/business-models';
 import { defaultRunConfig } from '../../../src/pipeline/types';
@@ -100,11 +100,11 @@ async function startup(db: Db, o: { name: string; vec: number[]; dossier?: boole
   }).returning({ id: knowledgeItems.id });
   return r!.id;
 }
-async function pricing(db: Db, product: string) {
+async function pricing(db: Db, product: string, createdAt?: Date) {
   const [r] = await db.insert(knowledgeItems).values({
     kind: 'pricing', title: `${product} pricing`, summary: 's', audience: 'business', countries: [], industries: [],
     facts: { product, pricePoints: [{ amount: 50, currency: 'USD', unit: 'month' }], buyer: 'landlords', complaints: [] },
-    contentHash: `pr-${product}`,
+    contentHash: `pr-${product}-${createdAt?.getTime() ?? 0}`, ...(createdAt ? { createdAt } : {}),
   }).returning({ id: knowledgeItems.id });
   return r!.id;
 }
@@ -131,6 +131,28 @@ describe('nearestComps', () => {
     const three = await nearestComps(db, unit(0), 3);
     expect(three.map((c) => c.id)).toEqual([near, far, plain]);
   });
+
+  it('prefers the nearest dossier entry globally, even behind many nearer entries without one (Ruling R8)', async () => {
+    const db = await testDb();
+    for (let i = 0; i < 6; i++) await startup(db, { name: `Plain${i}`, vec: mix(1, i * 0.01) });
+    const remote = await startup(db, { name: 'Remote', vec: mix(0.1, 0.99), dossier: true });
+    const one = await nearestComps(db, unit(0), 1);
+    expect(one.map((c) => c.id)).toEqual([remote]);
+    const two = await nearestComps(db, unit(0), 2);
+    expect(two[0]!.id).toBe(remote);
+    expect(two[1]!.name).toBe('Plain0');
+  });
+
+  it('shows the newest pricing entries first (Ruling R10)', async () => {
+    const db = await testDb();
+    await startup(db, { name: 'Rentify', vec: unit(0), dossier: true });
+    const at = (d: number) => new Date(Date.UTC(2026, 0, d));
+    const oldest = await pricing(db, 'Rentify', at(1));
+    const newer = [await pricing(db, 'Rentify', at(2)), await pricing(db, 'Rentify', at(3)), await pricing(db, 'Rentify', at(4))];
+    const [c] = await nearestComps(db, unit(0), 1);
+    expect(c!.pricing.map((p) => p.id)).toEqual([...newer].reverse());
+    expect(c!.pricing.map((p) => p.id)).not.toContain(oldest);
+  });
 });
 
 describe('evolve', () => {
@@ -155,6 +177,11 @@ describe('evolve', () => {
     expect(p0).toContain('S1');
     expect(p0).toContain('S2');
     expect(p0).toContain('quote 0');
+    // Ruling R9: further harvest signals the variant may add, wrapped, not the parent's own.
+    const more = p0.slice(p0.indexOf('<harvest-signals>\n'), p0.indexOf('</harvest-signals>'));
+    expect(more).toContain(t.signalIds[4]);
+    expect(more).toContain('quote 3');
+    expect(more).not.toContain('quote 0');
   });
 
   it('discards a variant that drops a parent signal or cites a signal outside the harvest', async () => {
@@ -263,10 +290,41 @@ describe('evolve', () => {
     expect(await variantsOf(t.db)).toHaveLength(6);
   });
 
+  it('re-run after a crash past the final with a failed call: the parent is not asked again (I1)', async () => {
+    const t = await setup(3);
+    const first = stubRouter(t.parents, { answer: (p) => (p.title === 'S1' ? new Error('model down') : undefined) });
+    const out1 = await evolve(t.deps(first.router), t.run, t.input);
+    const elo1 = await elos(t.db);
+    const second = stubRouter(t.parents);
+    const out2 = await evolve(t.deps(second.router), t.run, t.input);
+    expect(second.evolvePrompts).toHaveLength(0);
+    expect(second.judgePrompts).toHaveLength(0);
+    expect(await elos(t.db)).toEqual(elo1);
+    expect(out2.sketchIds).toEqual(out1.sketchIds);
+    expect(out2.variants).toBe(2);
+  });
+
+  it('re-run after a crash before the final: a failed or discarded call is not asked again', async () => {
+    const t = await setup(3);
+    const first = stubRouter(t.parents, {
+      answer: (p) => (p.title === 'S1' ? new Error('model down') : p.title === 'S2' ? { operator: 'sharpen', sketch: { ...p, title: 'S2.5', signalIds: [] } } : undefined),
+    });
+    await evolve(t.deps(first.router), t.run, t.input);
+    await t.db.delete(tournamentMatches).where(eq(tournamentMatches.runId, RUN_ID));
+    const second = stubRouter(t.parents);
+    const out = await evolve(t.deps(second.router), t.run, t.input);
+    expect(second.evolvePrompts).toHaveLength(0);
+    expect(out.variants).toBe(1);
+    expect(await variantsOf(t.db)).toHaveLength(1);
+  });
+
   it('re-run after a crash between evolve calls reuses stored variants and only asks for the missing ones', async () => {
     const t = await setup(3);
-    const first = stubRouter(t.parents, { answer: (p) => (p.title === 'S2' ? new Error('crash') : undefined) });
-    await evolve(t.deps(first.router), t.run, t.input);
+    await evolve(t.deps(stubRouter(t.parents).router), t.run, t.input);
+    // Rewind to the state of a worker that died after S0 and S1 were asked, before S2 and the final.
+    await t.db.delete(tournamentMatches).where(eq(tournamentMatches.runId, RUN_ID));
+    await t.db.delete(sketches).where(eq(sketches.parentSketchId, t.ids[2]!));
+    await setSetting(t.db, evolveAttemptedKey(RUN_ID), [t.ids[0], t.ids[1]]);
     const second = stubRouter(t.parents);
     const out = await evolve(t.deps(second.router), t.run, t.input);
     expect(second.evolvePrompts.map((p) => titleIn(p, 'sketch'))).toEqual(['S2']);

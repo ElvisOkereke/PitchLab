@@ -1,4 +1,4 @@
-import { and, asc, cosineDistance, eq, inArray, isNotNull, like, or, sql, sum } from 'drizzle-orm';
+import { and, asc, cosineDistance, desc, eq, inArray, isNotNull, like, or, sql, sum } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '../../db/client';
 import { knowledgeItems, lenses, llmCalls, signals, sketches, tournamentMatches } from '../../db/schema';
@@ -20,14 +20,16 @@ import { SketchSchema } from './schema';
 import { normalizeSketch } from './sketch';
 import { runTournament } from './tournament';
 
-/** The comps are the nearest startups with a dossier first, chosen from this many times `n` nearest. */
-const COMP_POOL_FACTOR = 4;
 /** Pricing entries shown per comp, and fetched per call. */
 const PRICING_PER_COMP = 3;
 const PRICING_ROWS_MAX = 50;
 /** `dossiers.priority` keeps at most this many startup ids (the newest). */
 export const DOSSIER_PRIORITY_MAX = 50;
 const EVOLVE_MAX_TOKENS = 4000;
+/** Further harvest signals (not cited by the parent) shown per call, which a variant may add (Ruling R9). */
+const MORE_SIGNALS_MAX = 10;
+/** The run-scoped setting listing the parents whose evolve call was made (answered, failed or discarded): never asked again. */
+export const evolveAttemptedKey = (runId: string) => `evolve.attempted.${runId}`;
 const FIELD_MAX = 240;
 const QUOTE_MAX = 300;
 const EMBED_VERSION = 'embed';
@@ -48,26 +50,30 @@ const factsOf = (v: unknown): Facts => (v && typeof v === 'object' && !Array.isA
 const lowerName = (s: string) => s.trim().toLowerCase();
 
 /**
- * The `n` comps nearest to `vec` (spec §6): active startup entries by cosine, those with a finished dossier first
- * (among the COMP_POOL_FACTOR × `n` nearest, so a far dossier never beats a near entry by much), each with the pricing
- * entries of its products (matched by product name, case-insensitive: the name itself or the name and a plan name).
- * Two bounded queries.
+ * The `n` comps nearest to `vec` (spec §6, Ruling R8): the nearest active startup entries with a finished dossier
+ * (facts.dossierStatus 'done') first, then the nearest other active startups to fill up to `n`, each in cosine order.
+ * Each comp gets the pricing entries of its products (matched by product name, case-insensitive: the name itself or
+ * the name and a plan name), newest first. Three bounded queries.
  */
 export async function nearestComps(db: Db, vec: number[], n = COMPS_PER_SKETCH): Promise<Comp[]> {
   if (n <= 0) return [];
   const d = cosineDistance(knowledgeItems.embedding, vec);
-  const pool = await db.select({ id: knowledgeItems.id, title: knowledgeItems.title, facts: knowledgeItems.facts }).from(knowledgeItems)
+  const nearest = (dossierOnly: boolean) => db.select({ id: knowledgeItems.id, title: knowledgeItems.title, facts: knowledgeItems.facts }).from(knowledgeItems)
     .where(and(
       eq(knowledgeItems.kind, 'startup'), eq(knowledgeItems.status, 'active'), isNotNull(knowledgeItems.embedding),
       sql`${d} <> 'NaN'::float8`,
+      dossierOnly ? sql`${knowledgeItems.facts}->>'dossierStatus' = 'done'` : undefined,
     ))
-    .orderBy(asc(d), asc(knowledgeItems.id)).limit(n * COMP_POOL_FACTOR);
-  const ranked = pool.map((r) => {
+    .orderBy(asc(d), asc(knowledgeItems.id)).limit(n);
+  const [withDossier, any] = [await nearest(true), await nearest(false)];
+  const seen = new Set<string>();
+  const comps: Comp[] = [];
+  for (const r of [...withDossier, ...any]) {
+    if (comps.length >= n || seen.has(r.id)) continue;
+    seen.add(r.id);
     const facts = factsOf(r.facts);
-    return { id: r.id, name: str(facts.name).trim() || r.title, facts, dossier: facts.dossierStatus === 'done', pricing: [] as Comp['pricing'] };
-  });
-  // Stable: within each group the cosine order stays.
-  const comps = [...ranked.filter((c) => c.dossier), ...ranked.filter((c) => !c.dossier)].slice(0, n);
+    comps.push({ id: r.id, name: str(facts.name).trim() || r.title, facts, dossier: facts.dossierStatus === 'done', pricing: [] });
+  }
 
   const names = [...new Set(comps.map((c) => lowerName(c.name)).filter(Boolean))];
   if (names.length === 0) return comps;
@@ -77,7 +83,8 @@ export async function nearestComps(db: Db, vec: number[], n = COMPS_PER_SKETCH):
       eq(knowledgeItems.kind, 'pricing'), eq(knowledgeItems.status, 'active'),
       or(...names.map((name) => sql`(${product} = ${name} or starts_with(${product}, ${`${name} `}))`)),
     ))
-    .orderBy(asc(knowledgeItems.createdAt), asc(knowledgeItems.id)).limit(PRICING_ROWS_MAX);
+    // Newest first (Ruling R10): current prices.
+    .orderBy(desc(knowledgeItems.createdAt), asc(knowledgeItems.id)).limit(PRICING_ROWS_MAX);
   // The longest matching name wins ("Rent Pro" pricing goes to "Rent Pro", not "Rent").
   const byLength = [...comps].sort((a, b) => lowerName(b.name).length - lowerName(a.name).length);
   for (const r of rows) {
@@ -171,7 +178,8 @@ export type EvolveOutput = {
  *
  * Idempotent (Ruling R7): the final phase starts from the main tournament's ratings in the input (variants at their
  * parent's), never from stored elo, so a re-run replays the stored final matches to the same ratings without paying
- * again; variants already stored for a parent are reused, so only missing ones are asked for. Over the engine budget
+ * again. Each parent is asked at most once per run (setting `evolve.attempted.<runId>`): a stored variant is reused,
+ * a failed or discarded one is not asked again, and once a final match exists no call is made. Over the engine budget
  * (ENGINE_USD_MAX) on its first attempt, the stage passes the main top on unchanged. The input is passed on (R1).
  */
 export async function evolve(
@@ -200,11 +208,18 @@ export async function evolve(
   for (const v of stored) if (topIds.includes(v.parentSketchId!) && !variantOf.has(v.parentSketchId!)) variantOf.set(v.parentSketchId!, v);
   const stale = stored.filter((v) => variantOf.get(v.parentSketchId!)?.id !== v.id).map((v) => v.id);
 
-  // The budget is decided on the first attempt: once variants or final matches exist, a re-run finishes the stage.
+  const attemptedRaw = await getSetting(db, evolveAttemptedKey(run.id));
+  const attempted = new Set(Array.isArray(attemptedRaw) ? attemptedRaw.filter((x): x is string => typeof x === 'string') : []);
+  const markAttempted = async (id: string) => {
+    attempted.add(id);
+    await setSetting(db, evolveAttemptedKey(run.id), [...attempted]);
+  };
+
+  // The budget is decided on the first attempt: once a call, a variant or a final match exists, a re-run finishes the stage.
   const [finalMatch] = await db.select({ id: tournamentMatches.id }).from(tournamentMatches)
     .where(and(eq(tournamentMatches.runId, run.id), eq(tournamentMatches.phase, 'final'))).limit(1);
   const spentBefore = await engineSpend(db, run.id);
-  if (stored.length === 0 && !finalMatch && spentBefore >= ENGINE_USD_MAX) {
+  if (stored.length === 0 && attempted.size === 0 && !finalMatch && spentBefore >= ENGINE_USD_MAX) {
     log(`evolve: engine budget reached ($${spentBefore.toFixed(2)} of $${ENGINE_USD_MAX}); no variants, the main top ${ids.length} go on`);
     return { ...input, sketchIds: ids, signalIds, variants: 0 };
   }
@@ -221,9 +236,11 @@ export async function evolve(
   await queueDossiers(db, [...new Set(top.flatMap((p) => comps.get(p.id)!.map((c) => c.id)))]);
 
   const harvest = new Map([...signalIds, ...parents.flatMap((p) => p.signalIds)].map((id) => [id.toLowerCase(), id]));
-  const missing = top.filter((p) => !variantOf.has(p.id));
+  // Ruling R7: a parent is asked once per run. Once the final has started its set is fixed: only stored variants play.
+  const missing = finalMatch ? [] : top.filter((p) => !variantOf.has(p.id) && !attempted.has(p.id));
   if (missing.length) {
-    const sigIds = [...new Set(missing.flatMap((p) => p.signalIds))];
+    const moreFor = new Map(missing.map((p) => [p.id, signalIds.filter((id) => !p.signalIds.includes(id)).slice(0, MORE_SIGNALS_MAX)]));
+    const sigIds = [...new Set(missing.flatMap((p) => [...p.signalIds, ...moreFor.get(p.id)!]))];
     const sigRows = sigIds.length
       ? await db.select({ id: signals.id, voice: signals.voice, kind: signals.kind, quote: signals.quote }).from(signals).where(inArray(signals.id, sigIds))
       : [];
@@ -235,19 +252,24 @@ export async function evolve(
     const prompt = loadPrompt('evolve');
     const ctx: CallCtx = { runId: run.id, promptVersion: prompt.version };
 
-    for (const p of missing) {
+    const renderSignal = (id: string) => {
+      const s = sigById.get(id);
+      return s ? [`- id: ${s.id}\n  voice: ${s.voice ?? 'untagged'}\n  kind: ${s.kind === 'opportunity' ? 'opportunity' : 'pain'}\n  quote: ${capField(s.quote, QUOTE_MAX)}`] : [];
+    };
+
+    /** One parent's call; returns normally when the call was answered (variant stored or discarded) or failed. */
+    const attempt = async (p: ParentRow): Promise<void> => {
       const cs = comps.get(p.id)!;
       const others = parents.filter((o) => o.id !== p.id);
-      const shownSignals = p.signalIds.flatMap((id) => {
-        const s = sigById.get(id);
-        return s ? [`- id: ${s.id}\n  voice: ${s.voice ?? 'untagged'}\n  kind: ${s.kind === 'opportunity' ? 'opportunity' : 'pain'}\n  quote: ${capField(s.quote, QUOTE_MAX)}`] : [];
-      });
+      const shownSignals = p.signalIds.flatMap(renderSignal);
+      const moreSignals = moreFor.get(p.id)!.flatMap(renderSignal);
       let answer: z.infer<typeof EvolveSchema>;
       try {
         answer = await router.structured('ideate', {
           prompt: prompt.render({
             sketch: wrapUntrusted('sketch', renderSketch(p)),
             signals: wrapUntrusted('signals', shownSignals.length ? shownSignals.join('\n') : '(none)'),
+            moreSignals: wrapUntrusted('harvest-signals', moreSignals.length ? moreSignals.join('\n') : '(none)'),
             comps: wrapUntrusted('comps', renderComps(cs)),
             otherSketches: wrapUntrusted('other-sketches', others.length
               ? others.map((o) => `- ${capField(o.title, FIELD_MAX)} (buyer: ${capField(o.buyer, 120)}; signal ids: ${o.signalIds.join(', ')})`).join('\n')
@@ -261,7 +283,7 @@ export async function evolve(
       } catch (err) {
         // The message only; a validation error's issues can quote the model's answer.
         log(`evolve: call for sketch ${p.id} failed (${errorMessage(err)}); the parent plays alone`);
-        continue;
+        return;
       }
 
       const v = answer.sketch;
@@ -269,11 +291,11 @@ export async function evolve(
       const citedSet = new Set(cited);
       if (cited.some((id) => id === undefined)) {
         log(`evolve: variant of sketch ${p.id} discarded (cites a signal outside the harvest)`);
-        continue;
+        return;
       }
       if (!p.signalIds.every((id) => citedSet.has(id))) {
         log(`evolve: variant of sketch ${p.id} discarded (drops a parent signal)`);
-        continue;
+        return;
       }
       const allowedLibrary = new Set([
         ...parents.flatMap((o) => o.libraryItemIds),
@@ -299,6 +321,12 @@ export async function evolve(
         operator: answer.operator,
       }).returning();
       variantOf.set(p.id, inserted!);
+    };
+
+    for (const p of missing) {
+      await attempt(p);
+      // After the variant is stored: a crash in between leaves a stored variant, which a re-run reuses.
+      await markAttempted(p.id);
     }
   }
 
