@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { Db } from '../db/client';
 import { knowledgeItems, knowledgeSources, llmCalls } from '../db/schema';
 import { capField, stripInvisible, wrapUntrusted } from '../llm/untrusted';
+import { scrubPersonal } from '../research/privacy';
 import { loadPrompt } from '../llm/prompts';
 import type { ModelRouter } from '../llm/types';
 import { strengthInput } from './assessment';
@@ -87,12 +88,12 @@ export async function runAssessBackfill(deps: AssessDeps): Promise<{ assessed: n
     const seen = new Set<number>();
     for (const e of out.entries) {
       const item = batch[e.n - 1];
-      const why = capField(stripInvisible(e.why ?? ''), 400);
+      const why = capField(scrubPersonal(stripInvisible(e.why ?? '')), 400);
       if (!item || seen.has(e.n) || !why) continue;
       seen.add(e.n);
       const input = await strengthInput(db, item.id, now);
       if (!input) continue;
-      const bias = capField(stripInvisible(e.bias ?? ''), 160);
+      const bias = capField(scrubPersonal(stripInvisible(e.bias ?? '')), 160);
       const a: Assessment = {
         directness: normalizeDirectness(e.directness), bias: bias || null, strength: computeStrength(input, now), why, corroboration: input.corroboration,
       };

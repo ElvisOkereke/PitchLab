@@ -21,7 +21,7 @@ async function add(db: Db, o: { why?: string } = {}) {
 }
 
 /** Answers every "Entry N:" in the prompt; each call costs `cost`; `directness` is what the model says. */
-function router(db: Db, o: { cost?: number; directness?: string; fail?: boolean } = {}) {
+function router(db: Db, o: { cost?: number; directness?: string; fail?: boolean; why?: string; bias?: string } = {}) {
   const calls: { ctx: CallCtx; prompt: string }[] = [];
   const r: ModelRouter & { calls: typeof calls } = {
     calls,
@@ -35,7 +35,7 @@ function router(db: Db, o: { cost?: number; directness?: string; fail?: boolean 
       if (o.fail) throw new Error('model down');
       expect(stage).toBe('library_extract');
       const ns = [...req.prompt.matchAll(/Entry (\d+):/g)].map((m) => Number(m[1]));
-      return req.schema.parse({ entries: ns.map((k) => ({ n: k, directness: o.directness ?? 'first_hand', bias: k % 2 ? 'sells a fix' : null, why: `why ${k}` })) }) as never;
+      return req.schema.parse({ entries: ns.map((k) => ({ n: k, directness: o.directness ?? 'first_hand', bias: o.bias ?? (k % 2 ? 'sells a fix' : null), why: o.why ?? `why ${k}` })) }) as never;
     },
   };
   return r;
@@ -78,6 +78,19 @@ describe('runAssessBackfill', () => {
     await runAssessBackfill({ db, router: router(db, { directness: 'totally made up' }), log: () => {}, maxUsd: 25 });
     const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, a.id));
     expect(row!.assessment).toMatchObject({ directness: 'unknown' });
+  });
+
+  it('scrubs emails, handles and profile links from the model why and bias before storing', async () => {
+    const db = await testDb();
+    const a = await add(db);
+    const rt = router(db, { why: 'Written by jane.doe@example.com, see @janedoe and https://www.linkedin.com/in/janedoe for context.', bias: 'u/someuser sells ads, mail bob@corp.example' });
+    await runAssessBackfill({ db, router: rt, log: () => {}, maxUsd: 25 });
+    const [row] = await db.select().from(knowledgeItems).where(eq(knowledgeItems.id, a.id));
+    const stored = row!.assessment as { why: string; bias: string };
+    const all = `${stored.why} ${stored.bias}`;
+    for (const leak of ['jane.doe@example.com', 'bob@corp.example', '@janedoe', 'linkedin.com/in/janedoe', 'someuser']) expect(all).not.toContain(leak);
+    expect(stored.why).toContain('[email removed]');
+    expect(stored.why).toContain('[user]');
   });
 
   it('wraps entry text as untrusted and gives up after repeated model failures', async () => {
