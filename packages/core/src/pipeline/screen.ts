@@ -5,10 +5,11 @@ import type { Db } from '../db/client';
 import { cases, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
 import { capField, wrapUntrusted } from '../llm/untrusted';
-import { ScaleResultSchema, currentScale, upsideScore, userPaysNothing, valueMultiple, type Barriers } from './business-models';
+import { getMinBuyers } from '../validation/settings';
+import { ScaleEstimateSchema, ScaleResultSchema, currentScale, upsideScore, userPaysNothing, valueMultiple, type Barriers } from './business-models';
 import { cosine } from './dedupe';
 import { evaluateEvidence, type EvidenceFailure } from './evidence';
-import { demandLibraryEntries } from './gate';
+import { buyerFloorVerdict, demandLibraryEntries } from './gate';
 import { MAX_PER_BUSINESS_MODEL } from './engine/kinds';
 import { hasEdgeLine, ideaBlock } from './idea-text';
 import { usesEngineV2, type RunConfig, type StageDeps } from './types';
@@ -155,6 +156,8 @@ type Scored = {
    * the independent complaint units and why it failed, for the log.
    */
   evidence: { pass: boolean; units: number; failure: EvidenceFailure | null };
+  /** The gate's buyer floor on the idea's scale estimate (buyerFloorVerdict): an idea that fails it would be killed. */
+  buyers: { pass: boolean; text: string };
 };
 const isConsumer = (s: { audience: string | null }) => s.audience === 'consumer' || s.audience === 'both';
 /** Rank order: higher total first; within equal totals the higher tournament Elo (none last), then the original order. */
@@ -191,6 +194,8 @@ async function skipReason(
       : 'no demand source';
     return `${s.evidence.units} independent sources and ${why}, the gate needs ${minSignals} (or 1 complaint plus a demand source)`;
   }
+  // Likewise the buyer floor: a population with no source, or under the floor, is killed at the gate.
+  if (!s.buyers.pass) return `buyer floor: ${s.buyers.text}`;
   if (s.businessModel && (perModel.get(s.businessModel) ?? 0) >= MAX_PER_BUSINESS_MODEL) {
     return `${MAX_PER_BUSINESS_MODEL} ideas with business model ${s.businessModel} already advanced`;
   }
@@ -264,13 +269,25 @@ export async function screen(
       return e?.kind === 'market' ? [e] : [];
     });
 
+  // The gate's buyer floor, applied before the gate like the evidence rule (generated ideas only).
+  const minBuyers = generated.length ? await getMinBuyers(db) : null;
+  const buyersOf = (idea: typeof ideas.$inferSelect) => {
+    const est = ScaleEstimateSchema.safeParse(idea.scaleEstimate);
+    return buyerFloorVerdict(est.success ? est.data : null, minBuyers!);
+  };
+
   const prompt = loadPrompt('screen');
   // Engine v2: the reviewer's totals rank the ideas (judge fallback); a failed review batch leaves an idea at band 0.
-  const reviewTotalOf = usesEngineV2(run.config) && generated.length
+  // With no more generated ideas than advanceCount the ranking cannot change who advances, so there is no review.
+  const review = usesEngineV2(run.config) && generated.length > run.config.advanceCount;
+  if (usesEngineV2(run.config) && generated.length && !review) {
+    log(`screen: ${generated.length} generated ideas for ${run.config.advanceCount} places, so no review (all may advance)`);
+  }
+  const reviewTotalOf = review
     ? await reviewRunIdeas({ db, router, log }, run.id, generated.map((i) => i.id))
     : new Map<string, number>();
   const allReviewTotals = generated.map((i) => reviewTotalOf.get(i.id) ?? null);
-  if (usesEngineV2(run.config) && reviewTotalOf.size < generated.length) {
+  if (review && reviewTotalOf.size < generated.length) {
     log(`screen: ${generated.length - reviewTotalOf.size} of ${generated.length} ideas ranked without a review`);
   }
   const scored: Scored[] = [];
@@ -327,7 +344,7 @@ export async function screen(
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
     scored.push({
       id: idea.id, title: idea.title, total, index, elo: idea.elo ?? null, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience,
-      evidence: evidenceOf(idea),
+      evidence: evidenceOf(idea), buyers: buyersOf(idea),
     });
   }
   if (generated.length) {
@@ -335,11 +352,15 @@ export async function screen(
     if (paysNothing) log(`screen: ${paysNothing} of ${generated.length} ideas are ads or affiliate, where the user pays nothing (moneyCase set to ${USER_PAYS_NOTHING_BAND})`);
     const thin = scored.filter((s) => !s.evidence.pass).length;
     log(`screen: ${thin} of ${generated.length} candidates have too little evidence for the gate (fewer than ${run.config.minSignals} independent sources and no demand source) and cannot advance`);
+    const belowFloor = scored.filter((s) => !s.buyers.pass).length;
+    log(`screen: ${belowFloor} of ${generated.length} candidates fail the buyer floor (no sourced population, or under ${minBuyers!.businesses.toLocaleString('en-US')} businesses or ${minBuyers!.individuals.toLocaleString('en-US')} individuals) and cannot advance`);
   }
 
   // Top advanceCount by score, in rank order, skipping (-> screened_out) a candidate when
   //   (0) it fails the gate's evidence rule (evaluateEvidence: fewer than minSignals operator/neutral complaint sources
   //       on distinct registrable domains, and no demand source alongside at least 1 such signal), or
+  //  (0b) it fails the gate's buyer floor (buyerFloorVerdict: no scale estimate, no population source, or a population
+  //       under gate.minBuyers for its unit), or
   //   (a) MAX_PER_BUSINESS_MODEL generated ideas with its business model already advanced (a null model is never capped),
   //   (b) it is a near-twin (cosine > 0.8, embeddings from dedupe) of an idea already advanced in this run, or
   //   (c) it is close (cosine >= 0.82) to an idea from any run that already has a case (a regenerated copy), or

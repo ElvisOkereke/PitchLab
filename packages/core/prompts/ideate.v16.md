@@ -95,6 +95,8 @@ Realistic paying buyers. Count the people or businesses who would actually pay, 
 
 Consumer ideas only when the buyer pool is at least 1M individuals with a cited source.
 
+The gate kills an idea whose buyer pool (`scaleEstimate.population`) has no source or is under the floor: 20,000 businesses, or 1,000,000 individuals. `population.source` must be the id of a <markets> entry shown above or the exact url of a signal from this run. Public statistics that are not shown here may inform the basis, but they are not a source, and the idea is then killed.
+
 Anti-goals. Do NOT produce:
 - Generic output: "AI chatbot for X", "AI marketing service", or thin SaaS-for-a-vertical with no insight.
 - An idea with no real edge: the same thing incumbents sell, with a new label.

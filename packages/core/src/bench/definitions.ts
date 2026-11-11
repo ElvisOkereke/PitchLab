@@ -63,7 +63,7 @@ export type MetricId =
   | 'demandEvidence' | 'customerReturn' | 'margin' | 'wastedEntrants' | 'easyStartHardCopy' | 'ownerVerdict' | 'ownerLikes' | 'ownerKeeps'
   | 'medianEdge' | 'medianScale' | 'nicheShare' | 'reviewerAgreement' | 'costPerCase'
   | 'uniqueSketchShare' | 'cellsFilled' | 'judgeAccuracy' | 'trivialKillRate' | 'compsCoverage' | 'engineCostPerRun'
-  | 'consumerOnlyShare' | 'topSectorShare' | 'upperTierShare' | 'buyerFloorPass';
+  | 'consumerOnlyShare' | 'topSectorShare' | 'upperTierShare' | 'buyerFloorPass' | 'buyerFloorKillShare';
 
 export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string; phase?: 2 | 3 }[] = [
   { id: 'repetition', label: 'Repetition', target: 'below 0.55' },
@@ -95,4 +95,5 @@ export const METRIC_DEFS: readonly { id: MetricId; label: string; target: string
   { id: 'topSectorShare', label: 'Top sector share', target: 'at most 15%' },
   { id: 'upperTierShare', label: 'Enterprise and mid-market share', target: 'at least 40%' },
   { id: 'buyerFloorPass', label: 'Buyer floor pass', target: '100% of gate-passed ideas' },
+  { id: 'buyerFloorKillShare', label: 'Buyer floor kill share', target: 'reported, no target' },
 ];

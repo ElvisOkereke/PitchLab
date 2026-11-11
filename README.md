@@ -244,11 +244,12 @@ follow its progress.
     text.
   - **How ideas are made now (engine v2).** Instead of writing 12 full ideas straight from the signals, a run
     sketches wide, filters repeats, ranks the sketches head to head, improves the best, and only then writes full ideas:
-    - **sketch** (prompt `sketch.v1`, model stage `sketch`, default `claude-sonnet-5-5`): one call per lens writes a
+    - **sketch** (prompt `sketch.v2`, model stage `sketch`, default `claude-sonnet-5-5`; v1 kept): one call per lens writes a
       long list of 20 titles, marks the near-duplicate or timid ones, and keeps 12 to 15 sketches, each pushed to be
       different and bolder. Each sketch is at most 600 characters, cites at least 1 harvest signal, and states why it is
       **not trivial** (the engineering, data or industry work a person or one prompt cannot do). The model sees an
       "avoid" list of up to 60 nearest earlier titles plus every title already sketched this run. About 90 sketches a run.
+      Each sketch ends its problem with a "buyer pool" line whose source hint is a shown market entry or a signal url.
     - **archive** (code only): embeds the sketches and drops those at cosine 0.85 or more to an earlier sketch or idea,
       0.75 or more to a gate-killed idea or a case you killed, or 0.85 or more to another sketch this run. Survivors are
       filed into **diversity cells** (buyer kind × edge kind × business model). The unique share and the cells filled
@@ -269,8 +270,10 @@ follow its progress.
     - **cost:** sketch, tournament and evolve together aim at $8 a run or less (logged; the benchmark reports it).
     - **Engine flag:** the run config's `engine` is `v2` unless set to `v1`; an idea seed always uses v1 (one idea,
       nothing to sketch). If a v2 run ends up with no sketches, ideate falls back to v14 and says so on the run page.
-  - **ideate** (prompt v15 on engine v2, which expands the chosen sketches into full ideas under the rules below and stores
-    the sketch id and Elo; v14 on engine v1; the rules are unchanged): open and sector seeds sample at most **6 lenses**, at least **2 ambition** lenses and no forced consumer quota (consumer lenses compete by weight; `money-leak`, `silent-failure`, `review-gap` and `platform-shockwave` are drawn at half weight, the ambition lenses and the new `industry-shift` at 1.5); lens seeds use exactly
+  - **ideate** (prompt v16 on engine v2, which expands the chosen sketches into full ideas under the rules below and stores
+    the sketch id and Elo; v14 on engine v1; v16 is v15 plus the consumer rule and the buyer floor rule: the gate kills an
+    idea whose population has no source or is under 20,000 businesses or 1,000,000 individuals, and the source must be a
+    shown market entry or a signal url from the run): open and sector seeds sample at most **6 lenses**, at least **2 ambition** lenses and no forced consumer quota (consumer lenses compete by weight; `money-leak`, `silent-failure`, `review-gap` and `platform-shockwave` are drawn at half weight, the ambition lenses and the new `industry-shift` at 1.5); lens seeds use exactly
     the lenses chosen. Each lens sees the signals, the run's focus (sectors, and consumer
     segments for open seeds) and library context: startups **already selling** nearby (up to 15), **lessons** from dead
     startups (up to 8) and **pricing** entries (up to 15), what is **changing** (up to 10 trends and rule changes, rule
@@ -302,9 +305,12 @@ follow its progress.
     as 2 on each (upside 3). The top ideas advance, skipping any that has
     too little evidence for the gate (the gate's own evidence rule, applied early), a third idea with the same business
     model (cap of 2 per model), a near-twin of an advancing idea, a copy of an idea that has a case, or one close to a
-    past gate kill. If no consumer idea advanced, the best eligible one replaces the lowest business entrant. On
+    past gate kill. It also skips any that would fail the gate's **buyer floor** (no estimate, no source for the
+    population, or under the floor), so the places go to ideas that can pass; the log counts them. If no consumer idea
+    advanced, the best eligible one replaces the lowest business entrant. On
     engine v2 the screen also runs the idea reviewer (`idea-review.v2`) on the run's ideas and adds a review band to
-    the total (top quartile +3, second +2, third +1); the tournament Elo is only a tiebreak. The 2026-11-11 judge
+    the total (top quartile +3, second +2, third +1); the tournament Elo is only a tiebreak. With no more generated
+    ideas than places, there is no review (every eligible idea advances anyway). The 2026-11-11 judge
     calibration scored four judge variants 0.41-0.49 against the reviewer's 0.72 on the same 79 Board pairs.
   - **gate** (prompt v7): competitor research, then a different model judges six checks, harshly: **generic**
     (established competitors or library startups already provide the function and the idea has no concrete, checkable
@@ -316,7 +322,7 @@ follow its progress.
     distinct domains (up to 2 threads per community site; vendor and untagged sources never count), or 1 operator or
     neutral complaint plus 1 demand source. A code check, **scale**, fails a generated idea whose revenue ceiling is
     under $1M a year (setting `gate.minRevenueCeiling`); it passes with a note when there is no estimate or the price is
-    unknown or 0 (a free product), and only advises for your own ideas. A code check, **buyers**, fails a generated idea whose buyer pool is under the floor: at least 20,000 businesses or 1,000,000 individuals, with a sourced population (settings `gate.minBuyers.businesses` and `gate.minBuyers.individuals`); with no source it fails, and for your own ideas it only advises. Any failure kills a generated idea. The new
+    unknown or 0 (a free product), and only advises for your own ideas. A code check, **buyers**, fails a generated idea whose buyer pool is under the floor: at least 20,000 businesses or 1,000,000 individuals, with a sourced population (settings `gate.minBuyers.businesses` and `gate.minBuyers.individuals`); with no source it fails, and for your own ideas it only advises (one with no estimate passes with a note). Sourced buyer counts come from `gen library seed-markets`. Any failure kills a generated idea. The new
     **trivial** check (model) kills a generated idea that a person with a spreadsheet, or one prompt to a frontier model
     given the data, would mostly deliver; it names the hard part or its absence, and only advises for your own ideas.
     **Comps** is a code verdict that never kills: it lists the idea's nearest library startups (dossier entries first)
@@ -380,7 +386,7 @@ follow its progress.
   keeps (50% or more of the cases you decided on the Board), cost per case (tracked). The engine rows: unique sketch
   share (60% or more), diversity cells filled (8 or more per run), judge accuracy (70% or more at the latest
   calibration), trivial kill rate (reported), comps coverage (80% or more of cases with 2 or more dossier comps) and
-  engine cost per run ($8 or less); runs from before the engine show "no data" for these. The diversity rows: top sector share (15% or less; each idea counts toward its run's focus sectors), enterprise and mid-market share (40% or more), and buyer floor pass (100% of gate-passed ideas passed the `buyers` check); these rows and consumer-only share show "no data" for passes run on a market other than `broad`. Example runs and cases are always left out.
+  engine cost per run ($8 or less); runs from before the engine show "no data" for these. The diversity rows: top sector share (15% or less; each idea counts toward its run's focus sectors), enterprise and mid-market share (40% or more), buyer floor pass (100% of gate-passed ideas passed the `buyers` check, by construction, since the gate kills the rest) and buyer floor kill share (reported, no target: the share of generated ideas reaching the gate that failed the floor); these rows and consumer-only share show "no data" for passes run on a market other than `broad`. On `broad` passes the consumer share row notes that consumer-only share is the consumer goal there. Example runs and cases are always left out.
 - **Benchmark passes:** **Run benchmark** on the Progress page (or `gen bench run`) queues the runs of the current
   benchmark, **bench-v3**: six runs (two open, two sector pairs in logistics, construction, healthcare and education,
   one pair of ambition lenses, one consumer and new-capability lens pair); about $30–50. **bench-v1** and **bench-v2**
@@ -514,6 +520,7 @@ Everything the dashboard queues can also be run directly. Use `npm run gen -- <c
 | `gen audit judge` | Calibrates the tournament judge on held-out pairs of cases you kept versus killed; writes `output/audit/judge-<date>.md` (costs model calls). |
 | `gen dossiers run` | Builds the next company dossiers now, within the daily cap; `--limit`; an explicit `--max-usd` replaces the daily cap for that run (the backfill uses 15). |
 | `gen library assess` | Rates the source strength of every library entry; `--max-usd` (default 5). |
+| `gen library seed-markets` | Queues one `market` research mission (Canada and US) per sector of `--market` (default `broad`: 36 sectors) plus 3 individual-population missions (households, adults 18+, employed workers), so ideas have sourced buyer counts for the buyer floor. `--budget-usd` per mission (0.5–25, default 0.5; about $19.50 for `broad`), `--dry-run` lists them. Skips topics already queued, running or done; the worker runs them. |
 | `gen runs` | Lists recent runs with status, stage, cost and cases. |
 | `gen worker` | What `npm run worker` runs: executes queued runs, then validation packs, then research missions; when all are empty it captures finds, queues background research if that is on, and runs the feeds when due. `--once --feeds` also runs the feeds in a single pass. |
 | `gen bench baseline` | Freezes today's idea-quality scorecard over your finished runs as the baseline to compare against. `--force` adds another; `--dry-run` prints it without saving. |

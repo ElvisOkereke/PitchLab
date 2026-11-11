@@ -141,6 +141,9 @@ export function buyerFloorVerdict(
   return { pass, text: `${head}: ${pass ? 'at least the floor' : 'under the floor'}` };
 }
 
+/** The buyers verdict text of an owner idea with no readable scale estimate: a pass, never a flag. */
+export const OWNER_NO_ESTIMATE = 'no estimate (owner idea; advisory)';
+
 /** The comps code rule's version, stored on the comps verdict. */
 export const COMPS_RULE_VERSION = 'comps-rule.v1';
 const COMP_NAME_MAX = 120;
@@ -291,9 +294,13 @@ Why not trivial (the idea's own unverified claim): ${capField(why, WHY_NOT_TRIVI
       ideaId: idea.id, check: 'scale', pass: scale.pass, reasoning: scale.reasoning,
       sources: [], model: 'rule', promptVersion: SCALE_RULE_VERSION,
     });
-    // The buyers code rule (no model): a sourced population at the floor; kills generated ideas only (advisory for owner ideas).
+    // The buyers code rule (no model): a sourced population at the floor; kills generated ideas only (advisory for owner
+    // ideas). An owner idea with no readable estimate passes with a note, as scaleVerdict passes an older idea: the owner
+    // case gets no "Buyer floor" flag for an estimate it was never asked for.
     const estimate = ScaleEstimateSchema.safeParse(idea.scaleEstimate);
-    const buyers = buyerFloorVerdict(estimate.success ? estimate.data : null, minBuyers);
+    const buyers = idea.origin === 'owner' && !estimate.success
+      ? { pass: true, text: OWNER_NO_ESTIMATE }
+      : buyerFloorVerdict(estimate.success ? estimate.data : null, minBuyers);
     results.set('buyers', buyers.pass);
     values.push({
       ideaId: idea.id, check: 'buyers', pass: buyers.pass, reasoning: buyers.text,

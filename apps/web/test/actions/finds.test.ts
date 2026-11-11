@@ -127,4 +127,14 @@ describe('startRunFromFindsAction', () => {
     expect(r).toEqual({ error: 'No captured finds yet. Wait for the worker to capture your links.' });
     expect(await snapshotDb(state.db)).toEqual(before);
   });
+
+  it('returns a clear action error when the market is missing (migrations not run), writing no run', async () => {
+    const { markets } = await import('@bcg/core/db/schema');
+    const { results } = await addFinds(state.db, [{ url: 'https://example.com/a', source: 'paste' }]);
+    await state.db.update(finds).set({ status: 'done' }).where(eq(finds.id, results[0]!.id!));
+    await state.db.delete(markets).where(eq(markets.id, 'broad'));
+    const r = await startRunFromFindsAction({}, new FormData());
+    expect(r).toEqual({ error: 'The market for new runs is missing. Run the database migrations, then try again.' });
+    expect(await state.db.select().from(runs)).toHaveLength(0);
+  });
 });

@@ -11,6 +11,7 @@ import { barrierScore, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand,
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { eq } from 'drizzle-orm';
 import { ideas, knowledgeItems, signals, type SignalVoice } from '../../src/db/schema';
+import { setSetting } from '../../src/validation/settings';
 import { FLOOR_ESTIMATE, getIdea, insertCase, insertIdea as insertBareIdea, insertRun, testDb, unit } from '../helpers/db';
 import { fakeRouter } from '../helpers/fake-router';
 
@@ -30,9 +31,16 @@ async function sigs(db: TestDb, list: { voice: SignalVoice | null; domain?: stri
 }
 /** Evidence that meets the gate's rule at the default minSignals 3: three operator signals on distinct domains. */
 const enough = (db: TestDb) => sigs(db, [{ voice: 'operator' }, { voice: 'operator' }, { voice: 'operator' }]);
-/** Like the shared helper, but an idea gets enough evidence unless the test passes its own signalIds. */
+/**
+ * Like the shared helper, but an idea gets enough evidence unless the test passes its own signalIds, and clears the buyer
+ * floor (FLOOR_ESTIMATE) unless the test passes its own scaleEstimate or scaleResult.
+ */
 const insertIdea: typeof insertBareIdea = async (db, runId, overrides = {}) =>
-  insertBareIdea(db, runId, { ...(overrides.signalIds ? {} : { signalIds: await enough(db) }), ...overrides });
+  insertBareIdea(db, runId, {
+    ...(overrides.signalIds ? {} : { signalIds: await enough(db) }),
+    ...('scaleEstimate' in overrides || 'scaleResult' in overrides ? {} : { scaleEstimate: FLOOR_ESTIMATE }),
+    ...overrides,
+  });
 
 const scores = (v: number, opts: { novelty?: number } = {}) =>
   Object.fromEntries(CRITERIA.map((c) => [c, { value: c === 'novelty' && opts.novelty !== undefined ? opts.novelty : v, note: 'n' }]));
@@ -373,6 +381,37 @@ describe('screen', () => {
       expect((await getIdea(db, thin.id)).status).toBe('screened_out');
     });
 
+    it('skips a candidate that fails the buyer floor (no estimate, no source, under the floor), logs it and the count', async () => {
+      const db = await testDb();
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+      const pop = (count: number, source?: string) => ({ ...FLOOR_ESTIMATE, population: { count, basis: 'b', ...(source === undefined ? {} : { source }) } });
+      const none = await insertIdea(db, run.id, { title: 'No estimate', scaleEstimate: null });
+      const unsourced = await insertIdea(db, run.id, { title: 'Unsourced', scaleEstimate: pop(500_000) as never });
+      const small = await insertIdea(db, run.id, { title: 'Small', scaleEstimate: pop(5_000, 'https://stats.example/x') as never });
+      const ok = await insertIdea(db, run.id, { title: 'Ok' });
+      const ok2 = await insertIdea(db, run.id, { title: 'Ok2' });
+      const logs: string[] = [];
+      const router = fakeRouter({ structured: { screen: [scores(5), scores(5), scores(5), scores(3), scores(2)] } });
+      const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [none, unsourced, small, ok, ok2].map((i) => i.id) });
+      expect(out.ideaIds).toEqual([ok.id, ok2.id]);
+      for (const i of [none, unsourced, small]) expect((await getIdea(db, i.id)).status).toBe('screened_out');
+      expect(logs.some((l) => l.includes('"No estimate"') && l.includes('buyer floor: no estimate'))).toBe(true);
+      expect(logs.some((l) => l.includes('"Unsourced"') && l.includes('buyer floor') && l.includes('no source'))).toBe(true);
+      expect(logs.some((l) => l.includes('"Small"') && l.includes('buyer floor') && l.includes('under the floor'))).toBe(true);
+      expect(logs).toContain('screen: 3 of 5 candidates fail the buyer floor (no sourced population, or under 20,000 businesses or 1,000,000 individuals) and cannot advance');
+    });
+
+    it('the buyer floor uses the settings and never filters owner ideas', async () => {
+      const db = await testDb();
+      await setSetting(db, 'gate.minBuyers.businesses', 200_000);
+      const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', advanceCount: 1 }));
+      const owner = await insertIdea(db, run.id, { origin: 'owner', scaleEstimate: null });
+      const below = await insertIdea(db, run.id, { title: 'Below' }); // FLOOR_ESTIMATE: 100,000 businesses
+      const out = await screen(deps(db, fakeRouter({ structured: { screen: [scores(3)] } })), run, { ideaIds: [owner.id, below.id] });
+      expect(out.ideaIds).toEqual([owner.id]);
+      expect((await getIdea(db, below.id)).status).toBe('screened_out');
+    });
+
     it('uses the run minSignals and never filters owner ideas', async () => {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'idea', advanceCount: 1, minSignals: 1 }));
@@ -430,8 +469,9 @@ describe('screen', () => {
       const p = (await getIdea(db, poor.id)).screenScores as Record<string, { value: number }>;
       const r = (await getIdea(db, rich.id)).screenScores as Record<string, { value: number }>;
       expect([p.moneyCase!.value, p.barrier!.value, r.moneyCase!.value, r.barrier!.value]).toEqual([1, 1, 5, 5]);
-      expect((await getIdea(db, poor.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 1, barrier: 1, upside: 2 }));
-      expect((await getIdea(db, rich.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 5, barrier: 5, upside: 2 }));
+      // Scale comes from the floor estimate and the price (computed; pinned in the screen.v6 tests).
+      expect((await getIdea(db, poor.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 1, barrier: 1, upside: 2, scale: p.scale!.value }));
+      expect((await getIdea(db, rich.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 5, barrier: 5, upside: 2, scale: r.scale!.value }));
       expect(screenCalls(router)[0]!.prompt).toMatch(/Money case \(computed[^\n]*\): 1 of 5/);
       expect(screenCalls(router)[1]!.prompt).toMatch(/Money case \(computed[^\n]*\): 5 of 5/);
       expect(screenCalls(router)[1]!.prompt).toMatch(/Barrier \(computed[^\n]*\): 5 of 5/);
@@ -569,7 +609,7 @@ describe('screen', () => {
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
       const weak = await insertIdea(db, run.id, { title: 'Weak', edge: EDGE, scale: SCALE });
       const strong = await insertIdea(db, run.id, { title: 'Strong', edge: EDGE, scale: SCALE });
-      // A scale in the answer is stripped: scale is computed (no estimate here, so 2).
+      // A scale in the answer is stripped: scale is computed (an estimate with no price here, so 2).
       const router = fakeRouter({ structured: { screen: [withEdgeScale(3, 1, 5), withEdgeScale(3, 5, 5)] } });
       const out = await screen(deps(db, router), run, { ideaIds: [weak.id, strong.id] });
       expect(out.ideaIds).toEqual([strong.id]);
@@ -585,7 +625,7 @@ describe('screen', () => {
       expect(edge).toMatch(/5: a large advantage over a named option that a buyer could check/);
       expect(prompt).not.toMatch(/^- scale:/m);
       expect(prompt).not.toMatch(/Edge \(computed/);
-      expect(prompt).toMatch(/Scale \(computed[^\n]*no scale estimate[^\n]*\): 2 of 5/);
+      expect(prompt).toMatch(/Scale \(computed[^\n]*the price is unknown[^\n]*\): 2 of 5/);
       expect(prompt).toMatch(/Return only these criteria: pain, roi, evidence, speed, autonomy, novelty, reach, edge\./);
     });
 
@@ -600,11 +640,12 @@ describe('screen', () => {
     it('Review Focus 5: an old idea without edge, estimate or value scores edge 2, scale 2 and upside 3 (computed) and still screens', async () => {
       const db = await testDb();
       const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
-      const old = await insertIdea(db, run.id, { title: 'Old', edge: null, scale: null });
+      const old = await insertIdea(db, run.id, { title: 'Old', edge: null, scale: null, scaleEstimate: null });
       // A stray edge, scale or upside in the answer cannot override the computed scores.
       const router = fakeRouter({ structured: { screen: [{ ...withEdgeScale(4, 5, 5), upside: { value: 5, note: 'u' } }] } });
       const out = await screen(deps(db, router), run, { ideaIds: [old.id] });
-      expect(out.ideaIds).toEqual([old.id]);
+      // Scored, but with no estimate it cannot clear the buyer floor, so it does not advance.
+      expect(out.ideaIds).toEqual([]);
       const row = await getIdea(db, old.id);
       expect(row.screenScores).toMatchObject({ edge: { value: 2 }, scale: { value: 2 }, upside: { value: 3 } });
       expect(row.screenTotal).toBeCloseTo(total6(scores(4)));
@@ -662,8 +703,11 @@ describe('screen', () => {
       const time = await insertIdea(db, run.id, { title: 'Time', scaleResult: result(3, 2_000_000), valueToUser: value('time') });
       const risk = await insertIdea(db, run.id, { title: 'Risk', scaleResult: result(4, 9_000_000), valueToUser: value('risk') });
       const router = fakeRouter({ structured: { screen: [scores(3), scores(3), scores(3), scores(3)] } });
-      const out = await screen(deps(db, router), run, { ideaIds: [small.id, time.id, risk.id, big.id] });
-      expect(out.ideaIds).toEqual([big.id, risk.id, time.id, small.id]);
+      await screen(deps(db, router), run, { ideaIds: [small.id, time.id, risk.id, big.id] });
+      // A stored result with no estimate cannot clear the buyer floor, so none advances; the totals still rank them.
+      const totals = await Promise.all([big, risk, time, small].map(async (i) => (await getIdea(db, i.id)).screenTotal!));
+      expect([...totals].sort((a, b) => b - a)).toEqual(totals);
+      expect(new Set(totals).size).toBe(4);
       const got = async (id: string) => (await getIdea(db, id)).screenScores as Record<string, { value: number; note: string }>;
       expect([(await got(big.id)).scale!.value, (await got(big.id)).upside!.value]).toEqual([5, 5]);
       expect([(await got(small.id)).scale!.value, (await got(small.id)).upside!.value]).toEqual([1, 2]);
@@ -884,14 +928,38 @@ describe('engine v2 screen ranks by review band', () => {
   it('a provider error is also survived, and a non-provider error rejects', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
-    const a = await insertIdea(db, run.id);
+    const [a, b] = [await insertIdea(db, run.id), await insertIdea(db, run.id)];
     const down = reviewRouter([scores(3)], () => 12);
-    down.structured = (async (stage: string) => { if (stage === 'review') throw new Anthropic.APIError(529, { type: 'error' }, 'overloaded', undefined); return scores(3); }) as typeof down.structured;
-    const out = await screen(deps(db, down), run, { ideaIds: [a.id] });
+    let reviewCalls = 0;
+    down.structured = (async (stage: string) => {
+      if (stage === 'review') { reviewCalls++; throw new Anthropic.APIError(529, { type: 'error' }, 'overloaded', undefined); }
+      return scores(3);
+    }) as typeof down.structured;
+    const out = await screen(deps(db, down), run, { ideaIds: [a.id, b.id] });
+    expect(reviewCalls).toBeGreaterThan(0);
     expect(out.ideaIds).toEqual([a.id]);
     const bug = reviewRouter([scores(3)], () => 12);
-    bug.structured = (async () => { throw new Error('insert into "llm_calls" failed'); }) as typeof bug.structured;
-    await expect(screen(deps(db, bug), run, { ideaIds: [a.id] })).rejects.toThrow('llm_calls');
+    bug.structured = (async (stage: string) => { if (stage === 'review') throw new Error('insert into "llm_calls" failed'); return scores(3); }) as typeof bug.structured;
+    await expect(screen(deps(db, bug), run, { ideaIds: [a.id, b.id] })).rejects.toThrow('llm_calls');
+  });
+
+  it('skips the review when there are no more generated ideas than advanceCount (all may advance)', async () => {
+    const db = await testDb();
+    const logs: string[] = [];
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+    const [a, b] = [await insertIdea(db, run.id), await insertIdea(db, run.id)];
+    const router = reviewRouter([scores(3), scores(4)], () => 12);
+    const out = await screen(deps(db, router, (m: string) => logs.push(m)), run, { ideaIds: [a.id, b.id] });
+    expect(router.reviewPrompts).toHaveLength(0);
+    expect(out.ideaIds).toEqual([b.id, a.id]);
+    expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo(total6(scores(4)));
+    expect(logs).toContain('screen: 2 generated ideas for 2 places, so no review (all may advance)');
+    expect(logs.some((l) => l.includes('ranked without a review'))).toBe(false);
+    // One more idea than places: the review runs.
+    const c = await insertIdea(db, run.id);
+    const more = reviewRouter([scores(3), scores(4), scores(2)], () => 12);
+    await screen(deps(db, more), run, { ideaIds: [a.id, b.id, c.id] });
+    expect(more.reviewPrompts).toHaveLength(1);
   });
 
   it('a v1 screen makes no review call and keeps its plain total', async () => {

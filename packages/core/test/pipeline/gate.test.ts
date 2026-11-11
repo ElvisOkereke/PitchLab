@@ -1029,12 +1029,27 @@ describe('gate buyer floor (buyers): a sourced population at the floor, in code'
     expect(verdict.pass).toBe(true);
   });
 
-  it('is advisory for owner ideas: stored as a fail, never kills', async () => {
-    const { out, idea, verdict } = await floored('owner', null);
+  it('is advisory for owner ideas: an unsourced population is stored as a fail, never kills', async () => {
+    const { out, idea, verdict } = await floored('owner', est('businesses', 500_000));
     expect(out.passed).toEqual([idea.id]);
     expect(out.advisory[0]!.failedChecks).toContain('buyers');
     expect(idea.status).toBe('advanced');
     expect(verdict.pass).toBe(false);
+  });
+
+  it('an owner idea with no estimate passes with a note: no flag, no advisory', async () => {
+    const { out, idea, verdict } = await floored('owner', null);
+    expect(out).toEqual({ passed: [idea.id], advisory: [] });
+    expect(idea.status).toBe('advanced');
+    expect(verdict).toMatchObject({ pass: true, reasoning: 'no estimate (owner idea; advisory)', model: 'rule' });
+  });
+
+  it('a generated idea with no estimate still fails the floor and is killed', async () => {
+    const { out, idea, verdict } = await floored('generated', null);
+    expect(out.passed).toEqual([]);
+    expect(idea.status).toBe('gated_out');
+    expect(verdict.pass).toBe(false);
+    expect(verdict.reasoning).toMatch(/^no estimate: the buyer pool is unknown/);
   });
 
   it('the settings override changes the floor; bad values fall back to the default', async () => {

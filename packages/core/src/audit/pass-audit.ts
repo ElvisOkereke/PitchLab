@@ -17,9 +17,9 @@ const NICHE_MIN = 4;
 const SMALL_SCALE_MAX = 2;
 
 /** Gate checks whose kills are intended filtering, not a lopsided gate (see the scorecard's wasted entrants). */
-const INTENDED_KILL_CHECKS = new Set(['scale']);
-const GATE_CHECK_LABELS: Record<string, string> = { scale: 'revenue ceiling' };
-/** A gate check's name as the owner reads it ("revenue ceiling" for scale; the others read as they are). */
+const INTENDED_KILL_CHECKS = new Set(['scale', 'buyers']);
+const GATE_CHECK_LABELS: Record<string, string> = { scale: 'revenue ceiling', buyers: 'buyer floor' };
+/** A gate check's name as the owner reads it ("revenue ceiling" for scale, "buyer floor" for buyers; the others read as they are). */
 export const gateCheckLabel = (check: string) => GATE_CHECK_LABELS[check] ?? check;
 
 export type PassAudit = {

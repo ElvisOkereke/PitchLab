@@ -24,7 +24,10 @@ export {
 
 const VALUE_KINDS = ValueToUserSchema.shape.kind.options;
 
-/** The run's generated ideas should be at least this share consumer (audience `consumer` or `both`)… */
+/**
+ * The consumer quota, retired by the diversity spec (consumer ideas compete on the buyer floor instead): 0, so the mix
+ * never asks for consumer ideas and a re-ask is only for business models or the count. The run should also…
+ */
 export const MIN_CONSUMER_SHARE = 0;
 /** …and use at least this many distinct business models (or as many as the run asks ideas for, if fewer). */
 export const MIN_MODELS = 4;
@@ -366,8 +369,9 @@ async function replaceRunIdeas(db: Db, runId: string, values: IdeaInsert[]): Pro
 
 /**
  * The lens for the one mix re-ask: a consumer lens the run already used; otherwise (never for lens seeds, which keep
- * exactly their lenses) a seeded active consumer lens from the pool; otherwise the run's first lens. Open and sector
- * runs always include the available consumer lenses, so the pool step is a fallback.
+ * exactly their lenses) a seeded active consumer lens from the pool; otherwise the run's first lens. With
+ * MIN_CONSUMER_SHARE 0 a mix gap is a business-model gap only, and consumer lenses compete for run slots by weight (no
+ * forced one), so the run may have none and the pool step is a real path.
  */
 export function pickReaskLens<L extends { id: string; active: boolean; audience: string }>(
   chosen: L[], all: L[], cfg: Pick<RunConfig, 'seedType' | 'lensIds'>, rng: () => number,

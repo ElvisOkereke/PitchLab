@@ -85,6 +85,8 @@ Realistic paying buyers. Count the people or businesses who would actually pay, 
 
 Consumer ideas only when the buyer pool is at least 1M individuals with a cited source.
 
+The gate kills an idea whose buyer pool has no source or is under the floor: 20,000 businesses, or 1,000,000 individuals. The only sources it accepts for the pool are the id of a <markets> entry shown above and the exact url of a signal from this run.
+
 Sketches must vary in audience, business model, industry, buyer and mechanism. Monitoring/alerting is only one of many possible mechanisms, and a subscription is only one of many business models.
 
 Anti-goals. Do NOT produce:
@@ -96,7 +98,7 @@ Anti-goals. Do NOT produce:
 For each final sketch give:
 - `title`: a short name.
 - `buyer`: who pays, and why that buyer.
-- `problem`: the costly failure or gap. End it with a line "buyer pool: <who, about how many, source hint>" naming who would buy, about how many of them there are, and where the number comes from (for example a census table, an industry association or a regulator's register). The idea that expands the sketch must cite a real source for the pool.
+- `problem`: the costly failure or gap. End it with a line "buyer pool: <who, about how many, source hint>" naming who would buy, about how many of them there are, and where the number comes from: a <markets> entry shown above (its id), or a signal url from this run. The idea that expands the sketch must cite that source for the pool, or the gate kills it.
 - `howItEarns`: who pays for what, and how often.
 - `businessModel`: exactly one of `subscription`, `one_off`, `usage`, `marketplace`, `transaction_fee`, `data_sales`, `ads`, `affiliate`, `licensing`, `freemium`, `service_plus_software`.
 - `edge`: one sentence, naming the incumbent or "none known" (see above).

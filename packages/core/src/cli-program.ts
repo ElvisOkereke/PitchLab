@@ -1,5 +1,6 @@
 import { Argument, Command, Option } from 'commander';
 import { KNOWLEDGE_KINDS } from './library/kinds';
+import { SEED_MARKETS_DEFAULT_USD } from './library/seed-markets';
 import type { RunConfig } from './pipeline/types';
 import { pilotSiteDomain } from './validation/prospects';
 
@@ -73,6 +74,7 @@ export type CliHandlers = {
   feedsRun(): Promise<number>;
   dossiersRun(opts: { maxUsd?: number; limit?: number }): Promise<number>;
   libraryAssess(opts: { maxUsd: number }): Promise<number>;
+  librarySeedMarkets(opts: LibrarySeedMarketsOpts): Promise<number>;
   findsAdd(url: string, note: string | undefined): Promise<number>;
   findsList(): Promise<number>;
   findsRun(): Promise<number>;
@@ -91,6 +93,7 @@ export type CliHandlers = {
   auditHoldoutClear(): Promise<number>;
 };
 
+export type LibrarySeedMarketsOpts = { market: string; budgetUsd: number; dryRun: boolean };
 export type AuditReviewOpts = { last?: boolean; dryRun?: boolean };
 export type AuditJudgeOpts = { limit?: number; prompt?: string; model?: string; fewshot?: number; context?: 'idea' | 'case'; since?: string; label?: string };
 export type AuditScaleOpts = { last?: boolean; decided?: boolean; dryRun?: boolean };
@@ -118,6 +121,13 @@ function budgetArg(v: string): number {
   const n = Number(v);
   if (v.trim() === '' || !Number.isFinite(n) || n < 0.5 || n > 25) throw new CliError(`--budget is a dollar amount from 0.5 to 25, got: ${v}`, 2);
   return n;
+}
+function budgetUsdArg(v: string): number {
+  try {
+    return budgetArg(v);
+  } catch {
+    throw new CliError(`--budget-usd is a dollar amount from 0.5 to 25, got: ${v}`, 2);
+  }
 }
 
 /** --max-usd for the library backfills: a dollar amount from 0.5 to 25 (the global backfill cap is 25). */
@@ -244,12 +254,22 @@ export function buildProgram(h: CliHandlers): Command {
     });
 
   program.command('library')
-    .description('Library upkeep: "gen library assess" rates how strong each entry evidence is (cheap model calls, stops at --max-usd)')
-    .argument('<action>', '"assess"')
-    .option('--max-usd <usd>', `most to spend, 0.5 to ${BACKFILL_MAX_USD} (default ${ASSESS_DEFAULT_USD})`, maxUsdArg)
-    .action(async (action: string, opts: { maxUsd?: number }) => {
-      if (action !== 'assess') throw new CliError('Usage: gen library assess [--max-usd N]', 2);
-      process.exitCode = await h.libraryAssess({ maxUsd: opts.maxUsd ?? ASSESS_DEFAULT_USD });
+    .description('Library upkeep: "gen library assess" rates how strong each entry evidence is (cheap model calls, stops at --max-usd); "gen library seed-markets" queues one market research mission per sector, plus individual populations, so ideas can cite a sourced buyer count (start `gen worker` to run them)')
+    .argument('<action>', '"assess" or "seed-markets"')
+    .option('--max-usd <usd>', `assess: most to spend, 0.5 to ${BACKFILL_MAX_USD} (default ${ASSESS_DEFAULT_USD})`, maxUsdArg)
+    .option('--market <id>', 'seed-markets: the market whose sectors to research (default broad)')
+    .option('--budget-usd <usd>', `seed-markets: budget of each mission, 0.5 to 25 (default ${SEED_MARKETS_DEFAULT_USD})`, budgetUsdArg)
+    .option('--dry-run', 'seed-markets: list what would be queued, queue nothing')
+    .action(async (action: string, opts: { maxUsd?: number; market?: string; budgetUsd?: number; dryRun?: boolean }) => {
+      const usage = 'Usage: gen library assess [--max-usd N] | gen library seed-markets [--market broad] [--budget-usd N] [--dry-run]';
+      const seedOnly = opts.market !== undefined || opts.budgetUsd !== undefined || opts.dryRun !== undefined;
+      if (action === 'assess' && !seedOnly) {
+        process.exitCode = await h.libraryAssess({ maxUsd: opts.maxUsd ?? ASSESS_DEFAULT_USD });
+      } else if (action === 'seed-markets' && opts.maxUsd === undefined) {
+        process.exitCode = await h.librarySeedMarkets({ market: opts.market ?? 'broad', budgetUsd: opts.budgetUsd ?? SEED_MARKETS_DEFAULT_USD, dryRun: opts.dryRun ?? false });
+      } else {
+        throw new CliError(usage, 2);
+      }
     });
 
   program.command('finds')

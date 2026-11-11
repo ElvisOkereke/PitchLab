@@ -188,9 +188,10 @@ type Data = {
   /**
    * Diversity rows (runs on the broad market only): each generated idea spreads one unit over its run's focus sectors
    * (the harvest stage's sectors for open seeds, the config's for sector seeds; runs with none are left out), plus the
-   * newest `buyers` verdict of each gate-passed (not gated_out) generated idea.
+   * newest `buyers` verdict of each gate-passed (not gated_out) generated idea (`floor`), and of each generated idea that
+   * reached the gate, killed or not (`floorKill`: how many, and how many failed the floor).
    */
-  diversity: { sectored: number; top: number; upper: number; floor: { total: number; pass: number } };
+  diversity: { sectored: number; top: number; upper: number; floor: { total: number; pass: number }; floorKill: { total: number; failed: number } };
   modelCounts: number[];
   gut: number[];
   likes: { rated: number; liked: number; tags: { tag: string; n: number }[] };
@@ -206,7 +207,7 @@ type Data = {
 };
 
 const emptyData = (): Data => ({
-  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, audienceBroad: { total: 0, consumerOnly: 0 }, diversity: { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
+  ideaCount: 0, within: [], history: [], buyerCounts: [], cited: { total: 0, yes: 0 }, demand: { total: 0, yes: 0 }, caseRows: [], audience: { total: 0, consumer: 0 }, audienceBroad: { total: 0, consumerOnly: 0 }, diversity: { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 }, floorKill: { total: 0, failed: 0 } }, modelCounts: [], gut: [], likes: { rated: 0, liked: 0, tags: [] },
   review: { n: 0, medianEdge: null, medianScale: null, niche: 0, rated: 0, agree: 0 }, entrants: { total: 0, wasted: 0 }, cost: 0,
   engine: { uniqueShares: [], cells: [], judge: null, trivial: { total: 0, killed: 0 }, comps: { withVerdict: 0, covered: 0 }, runCosts: [] },
 });
@@ -414,16 +415,16 @@ async function gather(db: Db, set: string[], simMax: number, notes: string[]): P
 
 /** The diversity figures for the broad-market runs (see Data.diversity). */
 async function gatherDiversity(db: Db, broadRuns: { id: string; config: { sectors?: string[] } }[], generatedBroad: SQL | undefined): Promise<Data['diversity']> {
-  const out: Data['diversity'] = { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 } };
+  const out: Data['diversity'] = { sectored: 0, top: 0, upper: 0, floor: { total: 0, pass: 0 }, floorKill: { total: 0, failed: 0 } };
   if (broadRuns.length === 0) return out;
   const ids = broadRuns.map((r) => r.id);
   const [stageRows, ideaRows, floorRows] = await Promise.all([
     db.select({ runId: runStages.runId, sectors: sql<unknown>`${runStages.output} -> 'sectors'` }).from(runStages).where(and(inArray(runStages.runId, ids), eq(runStages.stage, 'harvest'))),
     db.select({ runId: ideas.runId, n: count() }).from(ideas).where(generatedBroad).groupBy(ideas.runId),
-    db.selectDistinctOn([gateVerdicts.ideaId], { pass: gateVerdicts.pass })
+    db.selectDistinctOn([gateVerdicts.ideaId], { pass: gateVerdicts.pass, status: ideas.status })
       .from(gateVerdicts)
       .innerJoin(ideas, eq(ideas.id, gateVerdicts.ideaId))
-      .where(and(generatedBroad, ne(ideas.status, 'gated_out'), eq(gateVerdicts.check, 'buyers')))
+      .where(and(generatedBroad, eq(gateVerdicts.check, 'buyers')))
       .orderBy(gateVerdicts.ideaId, desc(gateVerdicts.createdAt), desc(gateVerdicts.id)),
   ]);
   const stored = new Map(stageRows.map((s) => [s.runId, Array.isArray(s.sectors) ? s.sectors.filter((x): x is string => typeof x === 'string') : []]));
@@ -440,7 +441,9 @@ async function gatherDiversity(db: Db, broadRuns: { id: string; config: { sector
     }
   }
   out.top = Math.max(0, ...weights.values());
-  out.floor = { total: floorRows.length, pass: floorRows.filter((f) => f.pass).length };
+  const gatePassed = floorRows.filter((f) => f.status !== 'gated_out');
+  out.floor = { total: gatePassed.length, pass: gatePassed.filter((f) => f.pass).length };
+  out.floorKill = { total: floorRows.length, failed: floorRows.filter((f) => !f.pass).length };
   return out;
 }
 
@@ -496,7 +499,9 @@ function buildMetrics(d: Data): MetricResult[] {
     topSectorShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.top, dv.sectored, (v) => roundShare(v) <= TOP_SECTOR_TARGET),
     upperTierShare: dv.sectored === 0 ? noData(NO_SECTORS) : fraction(dv.upper, dv.sectored, (v) => roundShare(v) >= UPPER_TIER_TARGET),
     buyerFloorPass: dv.floor.total === 0 ? noData('No gate-passed generated idea from a run on the broad market has a buyers verdict (earlier passes have no data).')
-      : share(dv.floor.pass, dv.floor.total, (v) => v === 1),
+      : { ...share(dv.floor.pass, dv.floor.total, (v) => v === 1), note: '100% by construction: the gate kills a generated idea that fails the floor. Buyer floor kill share shows how many it killed.' },
+    buyerFloorKillShare: dv.floorKill.total === 0 ? noData('No generated idea from a run on the broad market reached the gate with a buyers verdict (earlier passes have no data).')
+      : measured(dv.floorKill.failed / dv.floorKill.total, `${pctText(dv.floorKill.failed, dv.floorKill.total, () => true)} (${dv.floorKill.failed} of ${dv.floorKill.total})`, null),
     repetition: d.within.length === 0 ? noData(NEED_EMBEDDINGS) : (() => {
       const v = mean(d.within);
       return measured(v, v.toFixed(2), v < REPETITION_TARGET);
@@ -512,7 +517,11 @@ function buildMetrics(d: Data): MetricResult[] {
     demandEvidence: d.demand.total === 0 ? noData('No generated idea in this set records which library entries it used.')
       : share(d.demand.yes, d.demand.total, (v) => v >= DEMAND_EVIDENCE_TARGET),
     consumerShare: d.audience.total === 0 ? noData('No generated idea in this set has an audience.')
-      : share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
+      : {
+        ...share(d.audience.consumer, d.audience.total, (v) => v >= CONSUMER_SHARE_TARGET),
+        // Broad-market passes: the consumer quota is retired; the consumer goal there is the consumer-only cap.
+        ...(d.audienceBroad.total > 0 ? { note: 'Kept for comparison with earlier passes. On the broad market the consumer quota is retired: see Consumer-only share (at most 20%).' } : {}),
+      },
     consumerOnlyShare: d.audienceBroad.total === 0 ? noData('No generated idea from a run on the broad market has an audience (earlier passes have no data).')
       : { ...share(d.audienceBroad.consumerOnly, d.audienceBroad.total, (v) => v <= CONSUMER_ONLY_TARGET), note: 'Ideas with audience both are not counted as consumer here.' },
     modelVariety: d.modelCounts.length === 0 ? noData('No run in this set has ideas with a business model.') : (() => {

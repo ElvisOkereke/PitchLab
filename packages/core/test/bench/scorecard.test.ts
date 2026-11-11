@@ -36,7 +36,7 @@ const signal = async (db: Db, voice: 'operator' | 'neutral' | 'vendor' | null) =
   return row!.id;
 };
 
-const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase', 'uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun', 'topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare'];
+const MEASURED: MetricId[] = ['repetition', 'nearDuplicates', 'buyerVariety', 'consumerShare', 'modelVariety', 'realNeed', 'demandEvidence', 'customerReturn', 'margin', 'wastedEntrants', 'easyStartHardCopy', 'ownerVerdict', 'ownerLikes', 'ownerKeeps', 'medianEdge', 'medianScale', 'nicheShare', 'reviewerAgreement', 'costPerCase', 'uniqueSketchShare', 'cellsFilled', 'judgeAccuracy', 'trivialKillRate', 'compsCoverage', 'engineCostPerRun', 'topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare', 'buyerFloorKillShare'];
 
 describe('computeScorecard: similarity', () => {
   it('repetition and near-duplicates use generated ideas with embeddings only', async () => {
@@ -390,6 +390,16 @@ const richCase = async (db: Db, runId: string, buyer: Record<string, unknown>, i
   insertCase(db, (await insertIdea(db, runId, ideaOver)).id, { sections: { numbers: { results: { buyer, unit: { grossMarginPct: 70 } } } } as unknown as CaseSections });
 
 describe('computeScorecard: consumer, model and barrier metrics', () => {
+  it('consumerShare notes on a broad pass that the consumer goal there is consumerOnlyShare; no note on earlier markets', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    await insertIdea(db, r, { audience: 'consumer' });
+    expect(metric(await computeScorecard(db, [r]), 'consumerShare').note).toMatch(/Consumer-only share/);
+    const old = (await insertRun(db, defaultRunConfig({ seedType: 'open', marketId: 'ca-us' }))).id;
+    await insertIdea(db, old, { audience: 'consumer' });
+    expect(metric(await computeScorecard(db, [old]), 'consumerShare').note).toBeUndefined();
+  });
+
   it('consumerShare is unchanged: consumer or both over ideas with an audience, all markets; meets at 30%', async () => {
     const db = await testDb();
     const r = await newRun(db);
@@ -748,7 +758,7 @@ describe('computeScorecard: engine v2 rows', () => {
 });
 
 describe('computeScorecard: diversity rows', () => {
-  const ROWS: MetricId[] = ['topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare'];
+  const ROWS: MetricId[] = ['topSectorShare', 'upperTierShare', 'buyerFloorPass', 'consumerOnlyShare', 'buyerFloorKillShare'];
   const harvest = (db: Db, runId: string, sectors: string[]) =>
     db.insert(runStages).values({ runId, stage: 'harvest', status: 'done', output: { signalIds: [], sectors } });
   const verdict = (ideaId: string, check: 'buyers' | 'scale', pass: boolean) =>
@@ -805,7 +815,28 @@ describe('computeScorecard: diversity rows', () => {
     ]);
     expect(metric(await computeScorecard(db, [r]), 'buyerFloorPass')).toMatchObject({ status: 'measured', value: 0.5, display: '50% (1 of 2)', meets: false });
     await db.update(gateVerdicts).set({ pass: true }).where(eq(gateVerdicts.ideaId, bad.id));
-    expect(metric(await computeScorecard(db, [r]), 'buyerFloorPass')).toMatchObject({ value: 1, meets: true });
+    const passRow = metric(await computeScorecard(db, [r]), 'buyerFloorPass');
+    expect(passRow).toMatchObject({ value: 1, meets: true });
+    expect(passRow.note).toMatch(/100% by construction/);
+  });
+
+  it('buyerFloorKillShare is the share of generated ideas that reached the gate whose newest buyers verdict failed; no target', async () => {
+    const db = await testDb();
+    const r = await newRun(db);
+    const ok = await insertIdea(db, r, { status: 'advanced' });
+    const killed = await insertIdea(db, r, { status: 'gated_out' });
+    const killedOther = await insertIdea(db, r, { status: 'gated_out' }); // killed on another check, floor passed
+    const ownerFail = await insertIdea(db, r, { status: 'advanced', origin: 'owner' }); // owner: not generated
+    const noVerdict = await insertIdea(db, r, { status: 'advanced' });
+    await db.insert(gateVerdicts).values([
+      verdict(ok.id, 'buyers', true), verdict(killed.id, 'buyers', false), verdict(killedOther.id, 'buyers', true),
+      verdict(ownerFail.id, 'buyers', false), verdict(noVerdict.id, 'scale', true),
+    ]);
+    const m = metric(await computeScorecard(db, [r]), 'buyerFloorKillShare');
+    expect(m).toMatchObject({ status: 'measured', value: 1 / 3, display: '33% (1 of 3)', meets: null });
+    // The newest verdict counts: a re-gated idea that now passes is no longer a floor kill.
+    await db.insert(gateVerdicts).values({ ...verdict(killed.id, 'buyers', true), createdAt: new Date(Date.now() + 60_000) });
+    expect(metric(await computeScorecard(db, [r]), 'buyerFloorKillShare')).toMatchObject({ value: 0, display: '0% (0 of 3)' });
   });
 
   it('all three are no_data for earlier-market passes or passes without buyers verdicts', async () => {

@@ -35,9 +35,9 @@ const MISSION_LOCK_KEY = 0x6263_7133; // "bcq3"
 type MissionOrigin = 'owner' | 'background';
 export type QueueMissionResult = { ok: true; id: string } | { ok: false; reason: 'too_many_queued' };
 
-async function insertMission(tx: Db, raw: MissionInput, origin: MissionOrigin): Promise<QueueMissionResult> {
+async function insertMission(tx: Db, raw: MissionInput, origin: MissionOrigin, cap: boolean): Promise<QueueMissionResult> {
   const input = MissionInputSchema.parse(raw);
-  if (origin === 'owner') {
+  if (origin === 'owner' && cap) {
     // The cap is for owner missions; background has its own one-at-a-time rule.
     const [queued] = await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(researchMissions)
       .where(and(eq(researchMissions.status, 'queued'), eq(researchMissions.origin, 'owner')));
@@ -55,11 +55,16 @@ async function insertMission(tx: Db, raw: MissionInput, origin: MissionOrigin): 
   return { ok: true, id: row!.id };
 }
 
-/** Queues a mission for `gen worker`. Refuses when MAX_QUEUED_MISSIONS are already waiting. */
-export async function queueMission(db: Db, input: MissionInput, origin: MissionOrigin = 'owner'): Promise<QueueMissionResult> {
+/**
+ * Queues a mission for `gen worker`. Refuses when MAX_QUEUED_MISSIONS owner missions are already waiting, unless
+ * `cap` is false (a deliberate batch from the CLI, such as `gen library seed-markets`, which prints its total budget).
+ */
+export async function queueMission(
+  db: Db, input: MissionInput, origin: MissionOrigin = 'owner', opts: { cap?: boolean } = {},
+): Promise<QueueMissionResult> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${MISSION_LOCK_KEY})`);
-    return insertMission(tx as unknown as Db, input, origin);
+    return insertMission(tx as unknown as Db, input, origin, opts.cap ?? true);
   });
 }
 
@@ -210,7 +215,7 @@ export async function maybeQueueBackgroundMission(db: Db, now: Date): Promise<'q
       input = { topic: bt.topic, audience: bt.audience, countries: bt.countries, kinds: [...ALL_KINDS, extra], budgetUsd: BACKGROUND_BUDGET_USD };
       usedList = true;
     }
-    const result = await insertMission(tx, input, 'background');
+    const result = await insertMission(tx, input, 'background', true);
     if (!result.ok) return 'busy';
     await setSetting(tx, PICK_COUNT_KEY, pickNo + 1);
     if (usedList) await setSetting(tx, TOPIC_INDEX_KEY, topicIdx + 1);

@@ -216,6 +216,19 @@ describe('computePassAudit', () => {
       expect(gateCheckLabel('generic')).toBe('generic');
     });
 
+    it('buyer floor kills are intended filtering too: counted in gateKills, never the one-check flag; labelled "buyer floor"', async () => {
+      const db = await testDb();
+      const { passId, runIds } = await newPass(db);
+      for (let i = 0; i < 10; i++) {
+        const idea = await insertIdea(db, runIds[0]!, { status: 'gated_out' });
+        await db.insert(gateVerdicts).values({ ideaId: idea.id, check: i < 9 ? 'buyers' : 'generic', pass: false, reasoning: 'r', model: 'rule', promptVersion: 'buyers-rule.v1' });
+      }
+      const audit = await computePassAudit(db, passId);
+      expect(audit.gateKills).toEqual({ buyers: 9, generic: 1 });
+      expect(audit.flags).toEqual([]);
+      expect(gateCheckLabel('buyers')).toBe('buyer floor');
+    });
+
     it('a flagged comps verdict (advisory, gate.v7) is never counted as a kill reason', async () => {
       const db = await testDb();
       const { passId, runIds } = await newPass(db);

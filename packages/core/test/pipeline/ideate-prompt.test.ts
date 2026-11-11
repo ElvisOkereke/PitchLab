@@ -337,4 +337,19 @@ describe('ideate.v16 and sketch.v2: the consumer rule', () => {
     expect(loadPrompt('sketch').version).toBe('sketch.v2');
     expect(loadPrompt('sketch', 1).version).toBe('sketch.v1');
   });
+
+  it('both state the buyer floor the gate kills on and the sources it accepts for the pool', () => {
+    const v16 = lines('ideate.v16.md').join('\n');
+    const sketch = lines('sketch.v2.md').join('\n');
+    for (const text of [v16, sketch]) {
+      expect(text).toMatch(/The gate kills an idea whose buyer pool[^\n]*has no source or is under the floor: 20,000 businesses, or 1,000,000 individuals\./);
+      expect(text).toMatch(/<markets> entry shown above[^\n]*url of a signal from this run/);
+    }
+    expect(v16).toMatch(/`population\.source` must be the id of a <markets> entry shown above or the exact url of a signal from this run/);
+    expect(v16).toMatch(/Public statistics that are not shown here may inform the basis, but they are not a source/);
+    // sketch.v2's buyer pool hint points to a <markets> entry, not a census table.
+    const pool = lines('sketch.v2.md').find((l) => l.includes('buyer pool: <who, about how many, source hint>'))!;
+    expect(pool).toMatch(/a <markets> entry shown above \(its id\), or a signal url from this run/);
+    expect(pool).not.toMatch(/census/);
+  });
 });

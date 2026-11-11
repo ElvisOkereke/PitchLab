@@ -1,6 +1,6 @@
 'use server';
 
-import { queueRun } from '@bcg/core/dashboard/runs';
+import { MissingMarketError, queueRun } from '@bcg/core/dashboard/runs';
 import { addFinds, deleteFind, FIND_BATCH_MAX, normalizeFindUrl, retryFind } from '@bcg/core/finds/store';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
@@ -75,6 +75,7 @@ const RUN_REFUSAL: Record<string, string> = {
   too_many_queued: '3 runs are already queued. Wait for the worker.',
   no_finds: 'No captured finds yet. Wait for the worker to capture your links.',
 };
+const MISSING_MARKET = 'The market for new runs is missing. Run the database migrations, then try again.';
 
 /**
  * "Start a run from these finds": queues a finds run over the 10 most recent captured finds (fixed when queued), with
@@ -82,7 +83,13 @@ const RUN_REFUSAL: Record<string, string> = {
  */
 export async function startRunFromFindsAction(_prev: FormState, _fd: FormData): Promise<FormState> {
   await requireOwnerAction();
-  const r = await queueRun(getDb(), { seedType: 'finds', ideaCount: 12, advanceCount: 3 });
+  let r: Awaited<ReturnType<typeof queueRun>>;
+  try {
+    r = await queueRun(getDb(), { seedType: 'finds', ideaCount: 12, advanceCount: 3 });
+  } catch (e) {
+    if (e instanceof MissingMarketError) return { error: MISSING_MARKET };
+    throw e;
+  }
   if (!r.ok) return { error: RUN_REFUSAL[r.reason] ?? 'The run could not be queued. Refresh and try again.' };
   const n = r.findIds?.length ?? 0;
   revalidatePath('/runs');

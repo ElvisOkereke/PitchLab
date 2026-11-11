@@ -4,7 +4,7 @@ import { and, count, desc, eq, gte, inArray, isNull, like, or, sum } from 'drizz
 import { caseToMarkdown } from './case/export-markdown';
 import {
   CliError, KNOWN_CONFIG_KEYS, buildProgram, positiveInt, resumeRefusal,
-  type AuditJudgeOpts, type AuditReviewOpts, type AuditScaleOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
+  type AuditJudgeOpts, type AuditReviewOpts, type AuditScaleOpts, type LibrarySeedMarketsOpts, type MarkType, type ResearchCliOpts, type RunOpts, type ValidateCliOpts, type WorkerCliOpts,
 } from './cli-program';
 import { estimateScale } from './audit/scale-estimate';
 import { runJudgeAudit } from './audit/judge-calibration';
@@ -22,7 +22,7 @@ import {
   BENCH_REFUSAL, finalizeBenchmarkPasses, listBenchmarkPasses, previewBaseline, queueBenchmarkPass, recomputePass, saveBaseline, type PassRow,
 } from './bench/passes';
 import { WORKER_STATUS_KEY } from './dashboard/settings';
-import { hasQueuedRun } from './dashboard/runs';
+import { hasQueuedRun, MissingMarketError } from './dashboard/runs';
 import { createDb, type Db } from './db/client';
 import { runMigrations } from './db/migrate';
 import { cases, claims, dataCalls, ideas, lenses, llmCalls, runs, scores, settings } from './db/schema';
@@ -42,6 +42,7 @@ import { getMinRevenueCeiling, getSetting, setSetting } from './validation/setti
 import { runMaintenanceQuietly } from './maintenance';
 import { resolveModels, runWorker, workerStatus } from './worker';
 import { listMissions, MissionInputSchema, queueMission } from './dashboard/missions';
+import { seedMarketMissions } from './library/seed-markets';
 import { buildCollectors, runMission } from './research/mission';
 import { runAssessBackfill } from './library/assess-job';
 import { runDueDossierJob, runDossierJob, type DossierJobDeps } from './library/dossier-job';
@@ -469,6 +470,27 @@ async function libraryAssessCommand(opts: { maxUsd: number }): Promise<number> {
   } finally {
     await closeDb(db);
   }
+}
+
+/** `gen library seed-markets`: queues the market research missions for sourced buyer counts (no model calls here). */
+async function librarySeedMarketsCommand(opts: LibrarySeedMarketsOpts): Promise<number> {
+  return withDb(async (db) => {
+    let r: Awaited<ReturnType<typeof seedMarketMissions>>;
+    try {
+      r = await seedMarketMissions(db, { marketId: opts.market, budgetUsd: opts.budgetUsd, dryRun: opts.dryRun });
+    } catch (err) {
+      if (err instanceof MissingMarketError) {
+        console.error(err.message);
+        return 1;
+      }
+      throw err;
+    }
+    for (const q of r.queued) out(`${opts.dryRun ? 'would queue' : 'queued'}: ${q.topic}`);
+    const verb = opts.dryRun ? 'Would queue' : 'Queued';
+    out(`${verb} ${r.queued.length} market research missions ($${opts.budgetUsd.toFixed(2)} each, $${r.totalUsd.toFixed(2)} total budget); skipped ${r.skipped.length} already queued, running or done.`);
+    if (!opts.dryRun && r.queued.length) out('Start `gen worker` to run them.');
+    return 0;
+  });
 }
 
 /** `gen research <topic>`: queues a mission for the worker. */
@@ -971,6 +993,7 @@ const program = buildProgram({
   feedsRun: feedsRunCommand,
   dossiersRun: dossiersRunCommand,
   libraryAssess: libraryAssessCommand,
+  librarySeedMarkets: librarySeedMarketsCommand,
   findsAdd: findsAddCommand,
   findsList: findsListCommand,
   findsRun: findsRunCommand,
