@@ -175,7 +175,7 @@ describe('runTournament', () => {
 
 describe('tournament stage', () => {
   it('returns the top 12 by Elo with the input passed on and the judge spend', async () => {
-    const t = await setup(20);
+    const t = await setup(20, { cell: (i) => `c${i % 10}` }); // 10 cells: the caps leave room for 12
     await t.db.insert(llmCalls).values({
       runId: RUN_ID, stage: 'judge', provider: 'openai', model: 'gpt-6-sol', inputTokens: 1, outputTokens: 1, searchRequests: 0,
       costUsd: '0.25', latencyMs: 1, promptVersion: 'judge.v1', ok: true,
@@ -188,10 +188,10 @@ describe('tournament stage', () => {
   });
 
   it('all calls failing still returns 12 by cell order with a warning, and does not fail', async () => {
-    const t = await setup(20, { cell: (i) => `c${Math.floor(i / 4)}`, model: (i) => `m${i % 10}` });
+    const t = await setup(20, { cell: (i) => `c${Math.floor(i / 3)}`, model: (i) => `m${i % 10}` });
     const out = await tournament(t.deps(stubJudge({ fail: true }).router), t.run, { sketchIds: t.ids, signalIds: [] });
     const idx = out.sketchIds.map((id) => t.ids.indexOf(id));
-    expect(idx).toEqual([0, 4, 8, 12, 16, 1, 5, 9, 13, 17, 2, 6]);
+    expect(idx).toEqual([0, 3, 6, 9, 12, 15, 18, 1, 4, 7, 10, 13]);
     expect(t.logs.some((l) => /warning/i.test(l) && /every judge call failed/.test(l))).toBe(true);
   });
 
@@ -214,6 +214,13 @@ describe('tournament stage', () => {
     await tournament(t.deps(stubJudge().router), t.run, { sketchIds: t.ids.slice(0, 2), signalIds: [] });
     const ms = await t.db.select().from(tournamentMatches).where(and(eq(tournamentMatches.runId, RUN_ID), eq(tournamentMatches.phase, 'main')));
     expect(ms).toHaveLength(1);
+  });
+
+  it('logs when the hard caps leave fewer than 12', async () => {
+    const t = await setup(20, { cell: (i) => `c${i % 5}`, model: (i) => `m${i % 3}` });
+    const out = await tournament(t.deps(stubJudge().router), t.run, { sketchIds: t.ids, signalIds: [] });
+    expect(out.sketchIds).toHaveLength(6);
+    expect(t.logs.some((l) => /caps left 6 of 12/.test(l))).toBe(true);
   });
 
   it('with no sketches returns an empty list without calls', async () => {

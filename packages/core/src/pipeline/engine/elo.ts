@@ -127,27 +127,20 @@ export type RankRow = { id: string; elo: number | null; cell: string | null; bus
 
 /**
  * The first `n` of `ordered` with at most MAX_PER_CELL per cell and MAX_PER_BUSINESS_MODEL per business model (no cell
- * or model is not capped). When the caps leave fewer than `n`, the skipped ones fill up in order: a narrow run still
- * sends on everything it has.
+ * or model is not capped). The caps are hard (spec §4, the screen rule moved earlier): with more than `n` sketches the
+ * result can be shorter than `n`. Only a narrow run, with `n` or fewer sketches in all, sends on everything it has.
  */
 function pickCapped(ordered: RankRow[], n: number): string[] {
+  if (ordered.length <= n) return ordered.map((r) => r.id);
   const out: string[] = [];
-  const skipped: string[] = [];
   const perCell = new Map<string, number>();
   const perModel = new Map<string, number>();
   for (const r of ordered) {
     if (out.length >= n) break;
-    if ((r.cell && (perCell.get(r.cell) ?? 0) >= MAX_PER_CELL) || (r.businessModel && (perModel.get(r.businessModel) ?? 0) >= MAX_PER_BUSINESS_MODEL)) {
-      skipped.push(r.id);
-      continue;
-    }
+    if ((r.cell && (perCell.get(r.cell) ?? 0) >= MAX_PER_CELL) || (r.businessModel && (perModel.get(r.businessModel) ?? 0) >= MAX_PER_BUSINESS_MODEL)) continue;
     out.push(r.id);
     if (r.cell) perCell.set(r.cell, (perCell.get(r.cell) ?? 0) + 1);
     if (r.businessModel) perModel.set(r.businessModel, (perModel.get(r.businessModel) ?? 0) + 1);
-  }
-  for (const id of skipped) {
-    if (out.length >= n) break;
-    out.push(id);
   }
   return out;
 }

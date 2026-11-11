@@ -11,7 +11,7 @@ import { seededRandom } from '../seed-context';
 import type { RunConfig, StageDeps } from '../types';
 import { byeKey, combine, pairKey, swissPairs, topByCell, topByElo, update, type MatchResult, type Verdict } from './elo';
 import { judgePair, type JudgeResult, type JudgeSketch } from './judge';
-import { ELO_START, JUDGE_CALLS_MAX, SWISS_ROUNDS } from './kinds';
+import { ELO_START, JUDGE_CALLS_MAX, MAX_PER_BUSINESS_MODEL, MAX_PER_CELL, SWISS_ROUNDS, TOP_SKETCHES } from './kinds';
 import type { FewShot } from './schema';
 
 export { topByCell, topByElo } from './elo';
@@ -180,7 +180,7 @@ export async function runTournament(
 }
 
 export type TournamentOutput = {
-  /** The top TOP_SKETCHES by Elo, under the cell and business model caps. */
+  /** The top TOP_SKETCHES by Elo under the hard cell and business model caps (fewer when the caps bind; all with 12 or fewer). */
   sketchIds: string[];
   signalIds: string[];
   matches: number;
@@ -216,6 +216,8 @@ export async function tournament(
     .where(and(eq(tournamentMatches.runId, run.id), eq(tournamentMatches.phase, 'main')));
   const allFailed = ms.length > 0 && ms.every((m) => m.ab === 'error' && m.ba === 'error');
   const top = allFailed ? topByCell(rows) : topByElo(rows);
+  const want = Math.min(TOP_SKETCHES, rows.length);
+  if (top.length < want) log(`tournament: caps left ${top.length} of ${want} (at most ${MAX_PER_CELL} per cell and ${MAX_PER_BUSINESS_MODEL} per business model)`);
   if (allFailed) log(`tournament: warning: every judge call failed (${ms.length} matches); the top ${top.length} are picked by diversity cell in sketch order`);
 
   const [spend] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)

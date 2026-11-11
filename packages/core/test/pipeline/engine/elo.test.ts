@@ -149,9 +149,24 @@ describe('topByElo', () => {
     expect(topByElo(rows, 3)).toEqual(['top', 'early', 'late']);
   });
 
-  it('fills from capped sketches when the caps leave fewer than n', () => {
+  it('with n or fewer sketches, ranks and sends on all of them (caps do not apply)', () => {
     const rows = [rank('a', 1300, 'c', 'm', 0), rank('b', 1250, 'c', 'm', 1), rank('c', 1200, 'c', 'm', 2)];
     expect(topByElo(rows, 12)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('with more than n sketches the caps are hard, even if fewer than n are left', () => {
+    // 20 sketches over 3 business models and 5 cells, best Elo first.
+    const rows = Array.from({ length: 20 }, (_, i) => rank(`s${i}`, 1400 - i, `c${i % 5}`, `m${i % 3}`, i));
+    const top = topByElo(rows, 12);
+    expect(top).toEqual(['s0', 's1', 's2', 's3', 's4', 's5']);
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const count = (key: 'cell' | 'businessModel') => {
+      const m = new Map<string, number>();
+      for (const id of top) m.set(byId.get(id)![key]!, (m.get(byId.get(id)![key]!) ?? 0) + 1);
+      return Math.max(...m.values());
+    };
+    expect(count('businessModel')).toBeLessThanOrEqual(2);
+    expect(count('cell')).toBeLessThanOrEqual(2);
   });
 
   it('defaults to TOP_SKETCHES', () => {
@@ -162,7 +177,12 @@ describe('topByElo', () => {
 
 describe('topByCell', () => {
   it('takes one per cell in sketch order, round after round, under the caps', () => {
+    const rows = Array.from({ length: 20 }, (_, i) => rank(`s${i}`, 1200, `c${Math.floor(i / 3)}`, `m${i % 10}`, i));
+    expect(topByCell(rows, 12)).toEqual(['s0', 's3', 's6', 's9', 's12', 's15', 's18', 's1', 's4', 's7', 's10', 's13']);
+  });
+
+  it('keeps the caps hard with more than n sketches (5 cells of 4: at most 10)', () => {
     const rows = Array.from({ length: 20 }, (_, i) => rank(`s${i}`, 1200, `c${Math.floor(i / 4)}`, `m${i % 10}`, i));
-    expect(topByCell(rows, 12)).toEqual(['s0', 's4', 's8', 's12', 's16', 's1', 's5', 's9', 's13', 's17', 's2', 's6']);
+    expect(topByCell(rows, 12)).toEqual(['s0', 's4', 's8', 's12', 's16', 's1', 's5', 's9', 's13', 's17']);
   });
 });
