@@ -10,6 +10,7 @@ import { combine } from '../pipeline/engine/elo';
 import { judgePair, judgePromptVersion, parseJudgePromptVersion } from '../pipeline/engine/judge';
 import { getSetting, setSetting } from '../validation/settings';
 import { FEWSHOT_PAIRS_MAX } from '../pipeline/engine/kinds';
+import { reviewTotals } from './review';
 import { fewShotPairsWithIds, ideaView, syncJudgePairs } from './judge-pairs';
 
 /** Judge goals (spec §5): reported, never enforced. */
@@ -85,16 +86,6 @@ async function judgeSpendUsd(db: Db): Promise<number> {
   const [row] = await db.select({ total: sum(llmCalls.costUsd) }).from(llmCalls)
     .where(and(isNull(llmCalls.runId), like(llmCalls.promptVersion, 'judge.%')));
   return Number(row?.total ?? 0);
-}
-
-/** The newest review total (scale + edge + novelty + niche) of each of the given ideas. */
-async function reviewTotals(db: Db, ideaIds: string[]): Promise<Map<string, number>> {
-  if (ideaIds.length === 0) return new Map();
-  const rows = await db.select().from(ideaReviews).where(inArray(ideaReviews.ideaId, ideaIds))
-    .orderBy(desc(ideaReviews.createdAt), desc(ideaReviews.id));
-  const out = new Map<string, number>();
-  for (const r of rows) if (!out.has(r.ideaId)) out.set(r.ideaId, r.scale + r.edge + r.novelty + r.niche);
-  return out;
 }
 
 /**

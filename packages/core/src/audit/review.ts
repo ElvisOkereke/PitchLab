@@ -90,6 +90,110 @@ export function estimateReviewUsd(model: string, prompts: string[], ideaCount: n
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
+type ReviewIdea = Pick<typeof ideas.$inferSelect, 'id' | 'title' | 'oneLiner' | 'buyer' | 'problem' | 'solution' | 'knownIncumbents' | 'functionalGap' | 'edge' | 'scale' | 'scaleEstimate' | 'scaleResult'>;
+const reviewIdeaColumns = {
+  id: ideas.id, title: ideas.title, oneLiner: ideas.oneLiner, buyer: ideas.buyer, problem: ideas.problem, solution: ideas.solution,
+  knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap, edge: ideas.edge, scale: ideas.scale,
+  scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
+};
+const renderBatch = (prompt: ReturnType<typeof loadPrompt>, batch: ReviewIdea[]) => prompt.render({
+  ideas: wrapUntrusted('ideas', batch.map((idea) => `Id: ${idea.id}\n${ideaBlock(idea)}`).join('\n\n')),
+  count: String(batch.length),
+});
+
+/**
+ * One review call and its storage, shared by the benchmark-pass review and the per-run review: valid entries (known
+ * id, not repeated, scores 1-5) are stored; `failed` is true when the output stayed invalid after the router's re-asks
+ * (any other error is thrown).
+ */
+async function reviewBatch(
+  deps: ReviewDeps, promptVersion: string, model: string, prompt: string, batch: ReviewIdea[], runId: string | null,
+): Promise<{ failed: boolean; stored: number; invalid: number }> {
+  const { db, router } = deps;
+  let entries: Entry[];
+  try {
+    const out = await router.structured('review', {
+      prompt, schema: ReviewOutputSchema, schemaName: 'idea_reviews', maxTokens: REVIEW_MAX_TOKENS,
+    }, { runId, promptVersion });
+    entries = out.reviews;
+  } catch (err) {
+    if (!(err instanceof StructuredOutputError)) throw err;
+    return { failed: true, stored: 0, invalid: 0 };
+  }
+  const wanted = new Set(batch.map((b) => b.id));
+  const rows: (typeof ideaReviews.$inferInsert)[] = [];
+  let invalid = 0;
+  for (const e of entries) {
+    const ok = wanted.has(e.ideaId) && inRange(e.scale) && inRange(e.edge) && inRange(e.novelty) && inRange(e.niche);
+    if (!ok) {
+      invalid += 1;
+      continue;
+    }
+    wanted.delete(e.ideaId); // a repeat of an id already taken is invalid
+    rows.push({
+      ideaId: e.ideaId, scale: e.scale, edge: e.edge, novelty: e.novelty, niche: e.niche,
+      reasons: {
+        scale: capField(e.reasons.scale, REASON_MAX), edge: capField(e.reasons.edge, REASON_MAX),
+        novelty: capField(e.reasons.novelty, REASON_MAX), niche: capField(e.reasons.niche, REASON_MAX),
+        ...(e.reasons.upside ? { upside: capField(e.reasons.upside, REASON_MAX) } : {}),
+      },
+      model, promptVersion,
+    });
+  }
+  const stored = rows.length === 0 ? [] : await db.insert(ideaReviews).values(rows)
+    .onConflictDoNothing({ target: [ideaReviews.ideaId, ideaReviews.promptVersion] })
+    .returning({ id: ideaReviews.id });
+  return { failed: false, stored: stored.length, invalid };
+}
+
+/** The review score total: scale + edge + novelty + niche. Calibration and the screen both rank by it. */
+export const reviewTotal = (r: Pick<typeof ideaReviews.$inferSelect, 'scale' | 'edge' | 'novelty' | 'niche'>): number => r.scale + r.edge + r.novelty + r.niche;
+
+/** The newest review total of each of the given ideas (any prompt version); ideas with no review are absent. */
+export async function reviewTotals(db: Db, ideaIds: string[]): Promise<Map<string, number>> {
+  if (ideaIds.length === 0) return new Map();
+  const rows = await db.select().from(ideaReviews).where(inArray(ideaReviews.ideaId, ideaIds))
+    .orderBy(desc(ideaReviews.createdAt), desc(ideaReviews.id));
+  const out = new Map<string, number>();
+  for (const r of rows) if (!out.has(r.ideaId)) out.set(r.ideaId, reviewTotal(r));
+  return out;
+}
+
+/**
+ * Reviews the given ideas of one run that have no review yet (same prompt, schema and storage as reviewPassIdeas, 10 per
+ * call on the `review` stage, logged under `runId`) and returns each idea's newest review total. A failed batch (invalid
+ * output or any model error) leaves its ideas out of the map and is logged once; this never throws for a model failure.
+ */
+export async function reviewRunIdeas(deps: ReviewDeps, runId: string, ideaIds: string[]): Promise<Map<string, number>> {
+  const { db, router, log } = deps;
+  if (ideaIds.length === 0) return new Map();
+  const prompt = loadPrompt('idea-review');
+  const todo = await db.select(reviewIdeaColumns).from(ideas)
+    .where(and(
+      inArray(ideas.id, ideaIds),
+      notExists(db.select({ one: ideaReviews.id }).from(ideaReviews)
+        .where(and(eq(ideaReviews.ideaId, ideas.id), eq(ideaReviews.promptVersion, prompt.version)))),
+    ))
+    .orderBy(asc(ideas.createdAt), asc(ideas.id));
+  if (todo.length > 0) {
+    const model = router.modelFor('review');
+    let failedBatches = 0;
+    let lastError = '';
+    for (let i = 0; i < todo.length; i += REVIEW_BATCH_SIZE) {
+      const batch = todo.slice(i, i + REVIEW_BATCH_SIZE);
+      try {
+        const res = await reviewBatch(deps, prompt.version, model, renderBatch(prompt, batch), batch, runId);
+        if (res.failed) { failedBatches += 1; lastError = 'the output stayed invalid'; }
+      } catch (err) {
+        failedBatches += 1;
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    if (failedBatches > 0) log(`review: ${plural(failedBatches, 'batch')} failed (${lastError}); those ideas rank without a review.`);
+  }
+  return reviewTotals(db, ideaIds);
+}
+
 /**
  * Reviews the pass's generated ideas that have no review under the current prompt version, 10 per call on the
  * `review` stage. Valid reviews are stored as each batch returns; unknown ids, repeats, out-of-range scores and ideas
@@ -112,11 +216,7 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
   }
   const model = router.modelFor('review');
 
-  const todo = pass.runIds.length === 0 ? [] : await db.select({
-    id: ideas.id, title: ideas.title, oneLiner: ideas.oneLiner, buyer: ideas.buyer, problem: ideas.problem, solution: ideas.solution,
-    knownIncumbents: ideas.knownIncumbents, functionalGap: ideas.functionalGap, edge: ideas.edge, scale: ideas.scale,
-    scaleEstimate: ideas.scaleEstimate, scaleResult: ideas.scaleResult,
-  })
+  const todo = pass.runIds.length === 0 ? [] : await db.select(reviewIdeaColumns)
     .from(ideas)
     .innerJoin(runs, eq(runs.id, ideas.runId))
     .where(and(
@@ -135,10 +235,7 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
 
   const batches: (typeof todo)[] = [];
   for (let i = 0; i < todo.length; i += REVIEW_BATCH_SIZE) batches.push(todo.slice(i, i + REVIEW_BATCH_SIZE));
-  const prompts = batches.map((batch) => prompt.render({
-    ideas: wrapUntrusted('ideas', batch.map((idea) => `Id: ${idea.id}\n${ideaBlock(idea)}`).join('\n\n')),
-    count: String(batch.length),
-  }));
+  const prompts = batches.map((batch) => renderBatch(prompt, batch));
   const estimatedUsd = estimateReviewUsd(model, prompts, todo.length);
   log(`${plural(todo.length, 'idea')} to review in ${plural(batches.length, 'call')} on ${model}, estimated $${estimatedUsd.toFixed(2)}.`);
   if (opts.dryRun || todo.length === 0) return { reviewed: 0, skipped: 0, estimatedUsd, spentUsd: 0, stoppedForBudget: false };
@@ -159,43 +256,16 @@ export async function reviewPassIdeas(deps: ReviewDeps, passId: string, opts: { 
         break;
       }
     }
-    let entries: Entry[];
-    try {
-      const out = await router.structured('review', {
-        prompt: prompts[i]!, schema: ReviewOutputSchema, schemaName: 'idea_reviews', maxTokens: REVIEW_MAX_TOKENS,
-      }, { runId: null, promptVersion: prompt.version });
-      entries = out.reviews;
-    } catch (err) {
-      if (!(err instanceof StructuredOutputError)) throw err;
+    const res = await reviewBatch(deps, prompt.version, model, prompts[i]!, batch, null);
+    if (res.failed) {
       log(`Call ${i + 1} of ${batches.length}: the output stayed invalid, so its ${plural(batch.length, 'idea')} were skipped.`);
       skipped += batch.length;
       continue;
     }
-
-    const wanted = new Set(batch.map((b) => b.id));
-    const rows: (typeof ideaReviews.$inferInsert)[] = [];
-    for (const e of entries) {
-      const ok = wanted.has(e.ideaId) && inRange(e.scale) && inRange(e.edge) && inRange(e.novelty) && inRange(e.niche);
-      if (!ok) {
-        invalid += 1;
-        continue;
-      }
-      wanted.delete(e.ideaId); // a repeat of an id already taken is invalid
-      rows.push({
-        ideaId: e.ideaId, scale: e.scale, edge: e.edge, novelty: e.novelty, niche: e.niche,
-        reasons: {
-          scale: capField(e.reasons.scale, REASON_MAX), edge: capField(e.reasons.edge, REASON_MAX),
-          novelty: capField(e.reasons.novelty, REASON_MAX), niche: capField(e.reasons.niche, REASON_MAX),
-          ...(e.reasons.upside ? { upside: capField(e.reasons.upside, REASON_MAX) } : {}),
-        },
-        model, promptVersion: prompt.version,
-      });
-    }
-    const stored = rows.length === 0 ? [] : await db.insert(ideaReviews).values(rows)
-      .onConflictDoNothing({ target: [ideaReviews.ideaId, ideaReviews.promptVersion] })
-      .returning({ id: ideaReviews.id });
-    reviewed += stored.length;
-    skipped += batch.length - stored.length;
+    invalid += res.invalid;
+    const stored = res.stored;
+    reviewed += stored;
+    skipped += batch.length - stored;
   }
   if (!stoppedForBudget) spentUsd = (await reviewSpendUsd(db)) - spentBefore;
   if (invalid > 0) log(`Dropped ${plural(invalid, 'invalid review')} (unknown or repeated ids, or scores outside 1–5).`);

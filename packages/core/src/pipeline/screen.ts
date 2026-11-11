@@ -1,5 +1,6 @@
 import { and, cosineDistance, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { AiScoresSchema, CRITERIA, type AiScores } from '../case/schema';
+import { reviewRunIdeas } from '../audit/review';
 import type { Db } from '../db/client';
 import { cases, ideas, signals } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
@@ -10,7 +11,7 @@ import { evaluateEvidence, type EvidenceFailure } from './evidence';
 import { demandLibraryEntries } from './gate';
 import { MAX_PER_BUSINESS_MODEL } from './engine/kinds';
 import { hasEdgeLine, ideaBlock } from './idea-text';
-import type { RunConfig, StageDeps } from './types';
+import { usesEngineV2, type RunConfig, type StageDeps } from './types';
 
 const MAX_WINNER_SIMILARITY = 0.8;
 /** At most this many generated ideas per business model reach the gate in one run (a null model is not capped). */
@@ -31,17 +32,17 @@ export function moneyBand(multiple: number | null): number {
 }
 
 /**
- * Engine v2 (spec §11): the tournament Elo as a band added to the screen total, so the judge and the screen agree on
- * order unless the code bands strongly disagree. `elo`'s rank among the non-null `allElos` (how many are strictly
- * higher, so ties share the better band): the top quartile (rank under a quarter of them) is 2, the second quartile 1,
- * the rest 0. A null Elo (engine v1, owner ideas) is 0.
+ * Engine v2 (judge fallback): the reviewer's score total (scale + edge + novelty + niche) as a band added to the screen
+ * total. `total`'s rank among the non-null `allTotals` (how many are strictly higher, so ties share the better band): the
+ * top quartile (share under a quarter) is 3, the second quartile 2, the third 1, the rest 0. A null total (no review,
+ * engine v1, owner ideas) is 0. The tournament Elo no longer adds to the total; it only breaks ties (see screen).
  */
-export function eloBand(elo: number | null | undefined, allElos: readonly (number | null | undefined)[]): 0 | 1 | 2 {
-  if (typeof elo !== 'number' || !Number.isFinite(elo)) return 0;
-  const known = allElos.filter((e): e is number => typeof e === 'number' && Number.isFinite(e));
+export function reviewBand(total: number | null | undefined, allTotals: readonly (number | null | undefined)[]): 0 | 1 | 2 | 3 {
+  if (typeof total !== 'number' || !Number.isFinite(total)) return 0;
+  const known = allTotals.filter((t): t is number => typeof t === 'number' && Number.isFinite(t));
   if (known.length === 0) return 0;
-  const share = known.filter((e) => e > elo).length / known.length;
-  return share < 0.25 ? 2 : share < 0.5 ? 1 : 0;
+  const share = known.filter((t) => t > total).length / known.length;
+  return share < 0.25 ? 3 : share < 0.5 ? 2 : share < 0.75 ? 1 : 0;
 }
 
 /** The neutral money case band for those models: no multiple to reward or punish. */
@@ -147,7 +148,7 @@ export function upsideOf(valueToUser: unknown): Score & { from: string } {
 }
 
 type Scored = {
-  id: string; title: string; total: number; index: number; embedding: number[] | null;
+  id: string; title: string; total: number; index: number; elo: number | null; embedding: number[] | null;
   businessModel: string | null; audience: string | null;
   /**
    * The gate's evidence rule on the idea's cited signals and stored library ids (evaluateEvidence): whether it passes,
@@ -156,6 +157,8 @@ type Scored = {
   evidence: { pass: boolean; units: number; failure: EvidenceFailure | null };
 };
 const isConsumer = (s: { audience: string | null }) => s.audience === 'consumer' || s.audience === 'both';
+/** Rank order: higher total first; within equal totals the higher tournament Elo (none last), then the original order. */
+const byRank = (a: Scored, b: Scored) => b.total - a.total || (b.elo ?? -Infinity) - (a.elo ?? -Infinity) || a.index - b.index;
 
 /** The most similar other idea (by embedding) matching `extra`, or null; NaN similarities are ignored. */
 async function closest(db: Db, s: Scored & { embedding: number[] }, extra: 'has_case' | 'gated_out'): Promise<{ id: string; sim: number } | null> {
@@ -257,7 +260,11 @@ export async function screen(
     });
 
   const prompt = loadPrompt('screen');
-  const allElos = generated.map((i) => i.elo);
+  // Engine v2: the reviewer's totals rank the ideas (judge fallback); a failed review batch leaves an idea at band 0.
+  const reviewTotalOf = usesEngineV2(run.config) && generated.length
+    ? await reviewRunIdeas({ db, router, log }, run.id, generated.map((i) => i.id))
+    : new Map<string, number>();
+  const allReviewTotals = generated.map((i) => reviewTotalOf.get(i.id) ?? null);
   const scored: Scored[] = [];
   let noMultiple = 0;
   let paysNothing = 0;
@@ -305,13 +312,13 @@ export async function screen(
       scale: { value: scale.value, note: scale.note },
       upside: { value: upside.value, note: upside.note },
     };
-    // Engine v2: the tournament Elo band (top quartile +2, second +1) among this run's generated ideas; 0 without an Elo.
-    const band = eloBand(idea.elo, allElos);
+    // Engine v2: the review band (top quartile +3 ... third +1) among this run's generated ideas; 0 without a review.
+    const band = reviewBand(reviewTotalOf.get(idea.id), allReviewTotals);
     const total = weightedScreenTotal(scores) + band;
-    log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}${band ? ` (Elo band +${band})` : ''}`);
+    log(`screen: "${capField(idea.title, 120)}" total ${total.toFixed(2)}${band ? ` (review band +${band})` : ''}`);
     await db.update(ideas).set({ screenScores: scores, screenTotal: total }).where(eq(ideas.id, idea.id));
     scored.push({
-      id: idea.id, title: idea.title, total, index, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience,
+      id: idea.id, title: idea.title, total, index, elo: idea.elo ?? null, embedding: idea.embedding, businessModel: idea.businessModel, audience: idea.audience,
       evidence: evidenceOf(idea),
     });
   }
@@ -330,7 +337,7 @@ export async function screen(
   //   (c) it is close (cosine >= 0.82) to an idea from any run that already has a case (a regenerated copy), or
   //   (d) it is close (cosine >= 0.75) to an idea from any run (this one included) that the gate already killed.
   // An idea without an embedding is never skipped for similarity. Owner ideas are never skipped and use no slot.
-  scored.sort((a, b) => b.total - a.total || a.index - b.index);
+  scored.sort(byRank);
   const ownerVecs = owner.flatMap((i) => (i.embedding ? [i.embedding] : []));
   const tally = (list: Scored[]) => {
     const m = new Map<string, number>();
@@ -363,7 +370,7 @@ export async function screen(
       for (const c of losers.filter(isConsumer)) {
         if (await skipReason(db, c, tally(rest), vecsOf(rest), run.config.minSignals)) continue;
         log(`screen: "${capField(c.title, 120)}" replaces "${capField(victim.title, 120)}" to keep a consumer entrant`);
-        winners = [...rest, c].sort((a, b) => b.total - a.total || a.index - b.index);
+        winners = [...rest, c].sort(byRank);
         losers.splice(losers.indexOf(c), 1, victim);
         break;
       }

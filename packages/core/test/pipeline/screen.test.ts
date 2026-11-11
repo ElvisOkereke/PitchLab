@@ -6,7 +6,7 @@ import { loadPrompt } from '../../src/llm/prompts';
 import { StructuredOutputError } from '../../src/llm/router';
 import { gate } from '../../src/pipeline/gate';
 import * as screenModule from '../../src/pipeline/screen';
-import { barrierScore, eloBand, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand, screen, weightedScreenTotal } from '../../src/pipeline/screen';
+import { barrierScore, MAX_KILLED_SIMILARITY, MAX_PER_BUSINESS_MODEL, moneyBand, reviewBand, screen, weightedScreenTotal } from '../../src/pipeline/screen';
 import { defaultRunConfig, type StageDeps } from '../../src/pipeline/types';
 import { eq } from 'drizzle-orm';
 import { ideas, knowledgeItems, signals, type SignalVoice } from '../../src/db/schema';
@@ -69,6 +69,8 @@ const total6 = (m: unknown, extra: Extra = {}) => {
 /** The ideate.v12 edge and scale, valid for ideaBlock. */
 const EDGE = { kind: 'cost', claim: 'Half the price of Cass per invoice line', versus: 'Cass audit service', whyNow: 'PDF extraction got cheap' };
 const SCALE = { buyers: '60,000 US freight brokers', basis: 'FMCSA broker registrations' };
+/** The screen-stage calls (a v2 screen also makes review calls first). */
+const screenCalls = (r: { calls: { stage: string; prompt: string }[] }) => r.calls.filter((c) => c.stage === 'screen');
 const deps = (db: unknown, router: unknown) => ({ db, router, log: () => {} }) as unknown as StageDeps;
 /** A unit vector whose cosine with unit(axis) is exactly `sim` (the rest goes on an otherwise unused axis). */
 const atSimilarity = (sim: number, axis = 0, spare = 5) => {
@@ -188,7 +190,7 @@ describe('screen', () => {
     const idea = await insertIdea(db, run.id, { title: 'Line one\nLine two', problem: 'p'.repeat(5000) });
     const router = fakeRouter({ structured: { screen: [scores(3)] } });
     await screen(deps(db, router), run, { ideaIds: [idea.id] });
-    const prompt = router.calls[0]!.prompt;
+    const prompt = screenCalls(router)[0]!.prompt;
     expect(prompt).toContain('Title: Line one Line two\n');
     expect(prompt).toContain('p'.repeat(2000));
     expect(prompt).not.toContain('p'.repeat(2001));
@@ -316,7 +318,7 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [] } });
       const out = await screen(deps(db, router), run, { ideaIds: [owner.id] });
       expect(out.ideaIds).toEqual([owner.id]);
-      expect(router.calls).toHaveLength(0);
+      expect(screenCalls(router)).toHaveLength(0);
       expect((await getIdea(db, owner.id)).status).toBe('advanced');
     });
   });
@@ -372,7 +374,7 @@ describe('screen', () => {
     const g2 = await insertIdea(db, run.id);
     const router = fakeRouter({ structured: { screen: [scores(2), scores(4)] } });
     const out = await screen(deps(db, router), run, { ideaIds: [owner.id, g1.id, g2.id] });
-    expect(router.calls).toHaveLength(2);
+    expect(screenCalls(router)).toHaveLength(2);
     expect(out.ideaIds).toEqual([owner.id, g2.id]);
     expect((await getIdea(db, owner.id)).status).toBe('advanced');
     expect((await getIdea(db, g1.id)).status).toBe('screened_out');
@@ -413,9 +415,9 @@ describe('screen', () => {
       expect([p.moneyCase!.value, p.barrier!.value, r.moneyCase!.value, r.barrier!.value]).toEqual([1, 1, 5, 5]);
       expect((await getIdea(db, poor.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 1, barrier: 1, upside: 2 }));
       expect((await getIdea(db, rich.id)).screenTotal).toBeCloseTo(total6(scores(4), { moneyCase: 5, barrier: 5, upside: 2 }));
-      expect(router.calls[0]!.prompt).toMatch(/Money case \(computed[^\n]*\): 1 of 5/);
-      expect(router.calls[1]!.prompt).toMatch(/Money case \(computed[^\n]*\): 5 of 5/);
-      expect(router.calls[1]!.prompt).toMatch(/Barrier \(computed[^\n]*\): 5 of 5/);
+      expect(screenCalls(router)[0]!.prompt).toMatch(/Money case \(computed[^\n]*\): 1 of 5/);
+      expect(screenCalls(router)[1]!.prompt).toMatch(/Money case \(computed[^\n]*\): 5 of 5/);
+      expect(screenCalls(router)[1]!.prompt).toMatch(/Barrier \(computed[^\n]*\): 5 of 5/);
     });
 
     it('ads and affiliate ideas: the user pays nothing, so no multiple and the neutral band 3 (not the ad revenue per user)', async () => {
@@ -433,7 +435,7 @@ describe('screen', () => {
         expect(sc.moneyCase).toEqual({ value: 3, note: 'no value multiple: user pays nothing (ad/affiliate funded)' });
       }
       expect(((await getIdea(db, data.id)).screenScores as Record<string, { value: number }>).moneyCase!.value).toBe(5);
-      expect(router.calls[0]!.prompt).toMatch(/Money case \(computed[^\n]*user pays nothing[^\n]*\): 3 of 5/);
+      expect(screenCalls(router)[0]!.prompt).toMatch(/Money case \(computed[^\n]*user pays nothing[^\n]*\): 3 of 5/);
       expect(logs.some((l) => l.includes('0 of 3') && l.includes('no value multiple'))).toBe(true);
       expect(logs.some((l) => l.includes('2 of 3') && l.includes('user pays nothing'))).toBe(true);
     });
@@ -557,7 +559,7 @@ describe('screen', () => {
       const row = await getIdea(db, strong.id);
       expect(row.screenScores).toMatchObject({ edge: { value: 5, note: 'e' }, scale: { value: 2 } });
       expect(row.screenTotal).toBeCloseTo(total6(withEdgeScale(3, 5, 5)));
-      const prompt = router.calls[0]!.prompt;
+      const prompt = screenCalls(router)[0]!.prompt;
       expect(prompt).toContain("Edge (the idea's own unverified claim): cost: Half the price of Cass per invoice line");
       const edge = prompt.split('\n').find((l) => l.startsWith('- edge:'))!;
       expect(edge).toMatch(/1: no edge, or the only edge is "uses AI"/);
@@ -589,7 +591,7 @@ describe('screen', () => {
       const row = await getIdea(db, old.id);
       expect(row.screenScores).toMatchObject({ edge: { value: 2 }, scale: { value: 2 }, upside: { value: 3 } });
       expect(row.screenTotal).toBeCloseTo(total6(scores(4)));
-      const prompt = router.calls[0]!.prompt;
+      const prompt = screenCalls(router)[0]!.prompt;
       expect(prompt).not.toMatch(/^- edge:/m);
       expect(prompt).not.toMatch(/^- scale:/m);
       expect(prompt).not.toMatch(/^- upside:/m);
@@ -606,7 +608,7 @@ describe('screen', () => {
       const router = fakeRouter({ structured: { screen: [{ ...scores(3), scale: { value: 4, note: 's' } }] } });
       await screen(deps(db, router), run, { ideaIds: [bad.id] });
       expect((await getIdea(db, bad.id)).screenScores).toMatchObject({ edge: { value: 2 }, scale: { value: 2 } });
-      expect(router.calls[0]!.prompt).toMatch(/Edge \(computed[^\n]*\): 2 of 5/);
+      expect(screenCalls(router)[0]!.prompt).toMatch(/Edge \(computed[^\n]*\): 2 of 5/);
     });
   });
 
@@ -653,7 +655,7 @@ describe('screen', () => {
       expect((await got(big.id)).scale!.note).toContain('$40,000,000');
       expect((await got(big.id)).upside!.note).toContain('earn');
       expect((await getIdea(db, big.id)).screenTotal).toBeCloseTo(total6(scores(3), { scale: 5, upside: 5 }));
-      const bigPrompt = router.calls[3]!.prompt;
+      const bigPrompt = screenCalls(router)[3]!.prompt;
       expect(bigPrompt).toMatch(/Scale \(computed[^\n]*revenue ceiling \$40,000,000[^\n]*\): 5 of 5/);
       expect(bigPrompt).toMatch(/Upside \(computed[^\n]*earn[^\n]*\): 5 of 5/);
       expect(bigPrompt).not.toMatch(/^- scale:/m);
@@ -755,44 +757,125 @@ describe('screen', () => {
   });
 });
 
-// ---- engine v2 (spec §11): the tournament Elo joins the screen total as a band ----
-describe('screen Elo band', () => {
-  it('eloBand: top quartile 2, second quartile 1, else 0; a null Elo (v1) gives 0', () => {
-    const twelve = Array.from({ length: 12 }, (_, i) => 1400 - 10 * i);
-    expect(twelve.map((e) => eloBand(e, twelve))).toEqual([2, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
-    const four = [1300, 1250, 1200, 1100];
-    expect(four.map((e) => eloBand(e, four))).toEqual([2, 1, 0, 0]);
-    expect(eloBand(1200, [1200])).toBe(2);
-    // Ties share the better band.
-    expect([1300, 1300, 1200, 1100].map((e, _i, all) => eloBand(e, all))).toEqual([2, 2, 0, 0]);
-    expect(eloBand(null, four)).toBe(0);
-    expect(eloBand(1200, [])).toBe(0);
-    // Null Elos among the others are ignored.
-    expect(eloBand(1250, [1250, null, 1200, null])).toBe(2);
+// ---- engine v2: the reviewer's score total ranks the screen (judge fallback); the tournament Elo only breaks ties ----
+const reasons = { scale: 's', edge: 'e', novelty: 'n', niche: 'c' };
+const idsIn = (prompt: string) => [...prompt.matchAll(/^Id: ([0-9a-f-]{36})$/gm)].map((m) => m[1]!);
+/** A router for screen scores (a queue) and review calls: `total(id)` gives an idea's review total (4 criteria, 1-5 each), null leaves it out. */
+function reviewRouter(screenScores: unknown[], total: (id: string) => number | null, failReview = false) {
+  const base = fakeRouter({ structured: { screen: screenScores } });
+  const reviewPrompts: string[] = [];
+  return Object.assign(Object.create(base) as typeof base, {
+    reviewPrompts,
+    async structured(stage: string, req: { prompt: string; schema: { parse: (v: unknown) => unknown } }, meta: unknown) {
+      if (stage !== 'review') return (base.structured as (...a: unknown[]) => unknown)(stage, req, meta);
+      reviewPrompts.push(req.prompt);
+      if (failReview) throw new StructuredOutputError('review: still invalid', 'bad');
+      const reviews = idsIn(req.prompt).flatMap((ideaId) => {
+        const t = total(ideaId);
+        if (t === null) return [];
+        const [base, rem] = [Math.floor(t / 4), t % 4];
+        const [scale, edge, novelty, niche] = [0, 1, 2, 3].map((k) => base + (k < rem ? 1 : 0));
+        return [{ ideaId, scale, edge, novelty, niche, reasons }];
+      });
+      return req.schema.parse({ reviews });
+    },
+  }) as unknown as typeof base & { reviewPrompts: string[] };
+}
+
+describe('reviewBand', () => {
+  it('top quartile 3, second 2, third 1, else 0; a null total gives 0; ties share the better band', () => {
+    const twelve = Array.from({ length: 12 }, (_, i) => 20 - i);
+    expect(twelve.map((t) => reviewBand(t, twelve))).toEqual([3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0]);
+    expect(reviewBand(null, twelve)).toBe(0);
+    expect(reviewBand(10, [])).toBe(0);
+    expect(reviewBand(10, [10, null, 8, null])).toBe(3);
+    expect([16, 16, 12, 8].map((t, _i, all) => reviewBand(t, all))).toEqual([3, 3, 1, 0]);
+  });
+});
+
+describe('engine v2 screen ranks by review band', () => {
+  it('calls review once per batch of 10, for the unreviewed ideas only', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+    const made = [];
+    for (let i = 0; i < 12; i++) made.push(await insertIdea(db, run.id, { title: `I${i}` }));
+    const router = reviewRouter(made.map(() => scores(3)), () => 12);
+    await screen(deps(db, router), run, { ideaIds: made.map((m) => m.id) });
+    expect(router.reviewPrompts).toHaveLength(2);
+    expect(idsIn(router.reviewPrompts[0]!)).toHaveLength(10);
+    expect(idsIn(router.reviewPrompts[1]!)).toHaveLength(2);
   });
 
-  it('adds the band to a generated idea\'s total, which can change the screen order', async () => {
+  it('a resumed screen does not re-review ideas that already have reviews', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+    const [a, b] = [await insertIdea(db, run.id), await insertIdea(db, run.id)];
+    const first = reviewRouter([scores(3), scores(3)], () => 12);
+    await screen(deps(db, first), run, { ideaIds: [a.id, b.id] });
+    expect(first.reviewPrompts).toHaveLength(1);
+    const again = reviewRouter([scores(3), scores(3)], () => 12);
+    await screen(deps(db, again), run, { ideaIds: [a.id, b.id] });
+    expect(again.reviewPrompts).toHaveLength(0);
+    const c = await insertIdea(db, run.id);
+    const third = reviewRouter([scores(3), scores(3), scores(3)], () => 12);
+    await screen(deps(db, third), run, { ideaIds: [a.id, b.id, c.id] });
+    expect(third.reviewPrompts).toHaveLength(1);
+    expect(idsIn(third.reviewPrompts[0]!)).toEqual([c.id]);
+  });
+
+  it('a high-review idea outranks a high-Elo idea with an otherwise equal total, and Elo is not added', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+    const eloTop = await insertIdea(db, run.id, { title: 'Elo top', elo: 1400 });
+    const reviewTop = await insertIdea(db, run.id, { title: 'Review top', elo: 1000 });
+    const router = reviewRouter([scores(3), scores(3)], (id) => (id === reviewTop.id ? 18 : 8));
+    const out = await screen(deps(db, router), run, { ideaIds: [eloTop.id, reviewTop.id] });
+    expect(out.ideaIds).toEqual([reviewTop.id]);
+    // Two ideas: the reviewed 18 is in the top half (band 3), the 8 is in the bottom half (band 1).
+    expect((await getIdea(db, reviewTop.id)).screenTotal).toBeCloseTo(total6(scores(3)) + 3);
+    expect((await getIdea(db, eloTop.id)).screenTotal).toBeCloseTo(total6(scores(3)) + 1);
+  });
+
+  it('Elo breaks ties between equal totals', async () => {
     const db = await testDb();
     const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
     const low = await insertIdea(db, run.id, { title: 'Low Elo', elo: 1100 });
-    const mid = await insertIdea(db, run.id, { title: 'Mid Elo', elo: 1200 });
-    const mid2 = await insertIdea(db, run.id, { title: 'Mid2 Elo', elo: 1250 });
-    const top = await insertIdea(db, run.id, { title: 'Top Elo', elo: 1300 });
-    // The low-Elo idea scores best with the model (5 against 4), but the top Elo band (+2) outranks it.
-    const router = fakeRouter({ structured: { screen: [scores(5), scores(3), scores(3), scores(4)] } });
-    const out = await screen(deps(db, router), run, { ideaIds: [low.id, mid.id, mid2.id, top.id] });
-    expect(out.ideaIds).toEqual([top.id]);
-    expect((await getIdea(db, top.id)).screenTotal).toBeCloseTo(total6(scores(4)) + 2);
-    expect((await getIdea(db, mid2.id)).screenTotal).toBeCloseTo(total6(scores(3)) + 1);
-    expect((await getIdea(db, low.id)).screenTotal).toBeCloseTo(total6(scores(5)));
-    expect((await getIdea(db, low.id)).status).toBe('screened_out');
+    const high = await insertIdea(db, run.id, { title: 'High Elo', elo: 1300 });
+    const router = reviewRouter([scores(3), scores(3)], () => 12);
+    const out = await screen(deps(db, router), run, { ideaIds: [low.id, high.id] });
+    expect(out.ideaIds).toEqual([high.id]);
+    expect((await getIdea(db, high.id)).screenTotal).toBeCloseTo(total6(scores(3)) + 3);
+    expect((await getIdea(db, low.id)).screenTotal).toBeCloseTo(total6(scores(3)) + 3);
   });
 
-  it('v1 ideas (no Elo) keep their plain total', async () => {
+  it('a review failure leaves the band at 0 and the screen still advances ideas', async () => {
     const db = await testDb();
-    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 2 }));
+    const logs: string[] = [];
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
     const [a, b] = [await insertIdea(db, run.id), await insertIdea(db, run.id)];
-    const out = await screen(deps(db, fakeRouter({ structured: { screen: [scores(3), scores(4)] } })), run, { ideaIds: [a.id, b.id] });
+    const router = reviewRouter([scores(3), scores(4)], () => 12, true);
+    const out = await screen({ db, router, log: (m: string) => logs.push(m) } as unknown as StageDeps, run, { ideaIds: [a.id, b.id] });
+    expect(out.ideaIds).toEqual([b.id]);
+    expect((await getIdea(db, b.id)).screenTotal).toBeCloseTo(total6(scores(4)));
+    expect(logs.filter((l) => l.startsWith('review:'))).toHaveLength(1);
+  });
+
+  it('a model error other than invalid output is also survived', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, defaultRunConfig({ seedType: 'open', advanceCount: 1 }));
+    const a = await insertIdea(db, run.id);
+    const router = fakeRouter({ structured: { screen: [scores(3)] } }); // no scripted review: the fake throws a plain Error
+    const out = await screen(deps(db, router), run, { ideaIds: [a.id] });
+    expect(out.ideaIds).toEqual([a.id]);
+  });
+
+  it('a v1 screen makes no review call and keeps its plain total', async () => {
+    const db = await testDb();
+    const run = await insertRun(db, { ...defaultRunConfig({ seedType: 'open', advanceCount: 2 }), engine: 'v1' });
+    const [a, b] = [await insertIdea(db, run.id, { elo: 1300 }), await insertIdea(db, run.id, { elo: 1100 })];
+    const router = reviewRouter([scores(3), scores(4)], () => 20);
+    const out = await screen(deps(db, router), run, { ideaIds: [a.id, b.id] });
+    expect(router.reviewPrompts).toHaveLength(0);
     expect(out.ideaIds).toEqual([b.id, a.id]);
     expect((await getIdea(db, a.id)).screenTotal).toBeCloseTo(total6(scores(3)));
   });
