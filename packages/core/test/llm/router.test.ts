@@ -298,3 +298,22 @@ describe('judge model setting', () => {
     expect(() => buildRouter(loadEnv(base), db, { judge: 'claude-opus-5-5' })).toThrow(/judge/);
   });
 });
+
+describe('judge model setting diagnostics', () => {
+  it('effectiveModel reports the setting model, and a bad setting is logged once', async () => {
+    const { setSetting } = await import('../../src/validation/settings');
+    const db = await testDb();
+    const a = scriptedAdapter([{ text: 'x' }, { text: 'x' }]);
+    const warn: string[] = [];
+    const r = createRouter({ adapters: { anthropic: a, openai: a }, db, models: DEFAULT_MODELS, maxConcurrency: 1, judgeFromSettings: true, warn: (m) => warn.push(m) });
+    expect(await r.effectiveModel!('judge')).toBe(DEFAULT_MODELS.judge);
+    await setSetting(db, 'judge.model', 'gemini-3.1-pro');
+    expect(await r.effectiveModel!('judge')).toBe('gemini-3.1-pro');
+    await setSetting(db, 'judge.model', 'claude-opus-5-5');
+    await r.text('judge', { prompt: 'p' }, ctx);
+    await r.text('judge', { prompt: 'p' }, ctx);
+    expect(a.requests[0].model).toBe(DEFAULT_MODELS.judge);
+    expect(warn).toHaveLength(1);
+    expect(warn[0]).toMatch(/judge\.model/);
+  });
+});

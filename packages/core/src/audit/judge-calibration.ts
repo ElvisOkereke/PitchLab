@@ -4,6 +4,7 @@ import { and, asc, count, desc, eq, gte, inArray, isNull, like, notInArray, sum 
 import type { Db } from '../db/client';
 import { cases, ideaReviews, ideas, judgePairs, llmCalls } from '../db/schema';
 import { loadPrompt } from '../llm/prompts';
+import type { JudgeSketch } from '../pipeline/engine/judge';
 import type { ModelRouter } from '../llm/types';
 import { combine } from '../pipeline/engine/elo';
 import { judgePair, judgePromptVersion, parseJudgePromptVersion } from '../pipeline/engine/judge';
@@ -32,6 +33,8 @@ export type JudgeReport = {
   examples: number;
   /** Test pairs left out because they share an idea with an example (the judge could recognise it). */
   excludedPairs: number;
+  /** Pairs judged without case text because only one of the two ideas has a case (`--context case`). */
+  contextDropped?: number;
   /** The variant this run measured. */
   settings: JudgeVariantSettings;
   /** True when the settings equal the live configuration, so the run updates `audit.judge.latest`. */
@@ -115,10 +118,10 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
   const context = deps.context ?? 'idea';
   const prompt = loadPrompt('judge', promptNo);
   const settings: JudgeVariantSettings = {
-    prompt: prompt.version, model: deps.model ?? router.modelFor('judge'), fewshot: fewshotN, context,
+    prompt: prompt.version, model: deps.model ?? (await router.effectiveModel?.('judge')) ?? router.modelFor('judge'), fewshot: fewshotN, context,
     since: deps.since ? deps.since.toISOString() : null, label: deps.label?.trim() || null,
   };
-  const live = promptNo === livePromptNo && deps.model === undefined && fewshotN === FEWSHOT_PAIRS_MAX && context === 'idea' && !deps.since;
+  const live = promptNo === livePromptNo && deps.model === undefined && fewshotN === FEWSHOT_PAIRS_MAX && context === 'idea' && !deps.since && !deps.label?.trim();
   const isTest = deps.since ? and(eq(judgePairs.split, 'test'), gte(judgePairs.createdAt, deps.since)) : eq(judgePairs.split, 'test');
   const [{ n: testTotal } = { n: 0 }] = await db.select({ n: count() }).from(judgePairs).where(isTest);
   // The examples first, exactly as the tournament picks them (train split only), so calibration measures the same judge.
@@ -142,7 +145,9 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
       if (t) caseTexts.set(c.id, t);
     }
   }
-  const views = new Map(rows.map((r) => [r.id, { ...ideaView(r), ...(caseTexts.has(r.id) ? { caseText: caseTexts.get(r.id) } : {}) }]));
+  const views = new Map(rows.map((r) => [r.id, ideaView(r)]));
+  let contextDropped = 0;
+  let callsOk = 0;
   const ctx = { runId: null, promptVersion: prompt.version };
 
   const byConf: Record<1 | 2 | 3, { n: number; right: number }> = { 1: { n: 0, right: 0 }, 2: { n: 0, right: 0 }, 3: { n: 0, right: 0 } };
@@ -153,9 +158,18 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     const kept = views.get(p.keptIdeaId);
     const killed = views.get(p.killedIdeaId);
     if (!kept || !killed) continue;
+    // Case text goes on both sides or neither: a case on one side only would tell the judge which idea the owner engaged with.
+    let shownKept: JudgeSketch = kept;
+    let shownKilled: JudgeSketch = killed;
+    if (context === 'case') {
+      const kt = caseTexts.get(p.keptIdeaId);
+      const xt = caseTexts.get(p.killedIdeaId);
+      if (kt && xt) { shownKept = { ...kept, caseText: kt }; shownKilled = { ...killed, caseText: xt }; } else if (kt || xt) contextDropped++;
+    }
     const jd = { router, ctx, fewShot, promptVersion: promptNo };
     // `ab` shows the kept idea first ('a' is the kept idea); `ba` shows the killed idea first.
-    const [ab, ba] = await Promise.all([judgePair(kept, killed, jd), judgePair(killed, kept, jd)]);
+    const [ab, ba] = await Promise.all([judgePair(shownKept, shownKilled, jd), judgePair(shownKilled, shownKept, jd)]);
+    callsOk += (ab.verdict === 'error' ? 0 : 1) + (ba.verdict === 'error' ? 0 : 1);
     const result = combine(ab.verdict, ba.verdict);
     const consistent = result !== 'draw';
     judged++;
@@ -166,6 +180,10 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     byConf[conf].n++;
     if (result === 'a') byConf[conf].right++;
     if (failed) log(`judge: pair ${p.pairHash.slice(0, 8)} had a failed call: ${ab.error ?? ba.error ?? ''}`);
+  }
+
+  if (judged > 0 && callsOk === 0) {
+    throw new Error('Every judge call failed, so there is no accuracy to report (check the judge model and API key). Nothing was stored.');
   }
 
   const totals = await reviewTotals(db, ideaIds);
@@ -190,12 +208,13 @@ export async function calibrateJudge(deps: CalibrateDeps): Promise<JudgeReport> 
     tooFew: judged < JUDGE_MIN_PAIRS,
     examples: fewShot.length,
     excludedPairs,
+    contextDropped,
     settings,
     live,
   };
   const at = new Date().toISOString();
   if (live) {
-    await setSetting(db, SETTING_KEY, { at, accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs, tooFew: report.tooFew });
+    await setSetting(db, SETTING_KEY, { at, model: settings.model, promptVersion: settings.prompt, accuracy: report.accuracy, consistency: report.consistency, pairs: report.pairs, tooFew: report.tooFew });
   } else {
     // A variant never touches the live summary the scorecard reads.
     const prev = await getSetting(db, VARIANTS_KEY);
@@ -221,6 +240,7 @@ export function renderJudgeReport(r: JudgeReport, date: string): string {
   lines.push(...settingsLines(r), '');
   lines.push(`Judged ${r.pairs} held-out Board pair(s), each twice with the order swapped. Cost $${r.spentUsd.toFixed(4)}.`, '');
   lines.push(`The judge saw ${r.examples} few-shot example(s), picked as the tournament picks them. ${r.excludedPairs} held-out pair(s) share an idea with an example and were left out.`, '');
+  if (r.contextDropped) lines.push(`Case context: ${r.contextDropped} pair(s) had case text on only one side, so they were judged without it (it would reveal which idea you engaged with).`, '');
   if (r.tooFew) lines.push(`**Too few pairs:** ${r.pairs} is under ${JUDGE_MIN_PAIRS}, so these numbers are noise. Keep or kill more cases, then run it again.`, '');
   lines.push('## Goals', '');
   lines.push(`- Accuracy (the kept idea wins): ${goal(r.accuracy, JUDGE_ACCURACY_GOAL)}`);
@@ -236,11 +256,12 @@ export function renderJudgeReport(r: JudgeReport, date: string): string {
 }
 
 /** Writes the report to `<dir>/judge-<date>.md` and returns the path. */
-export function writeJudgeReport(r: JudgeReport, dir: string, date: string): string {
+export function writeJudgeReport(r: JudgeReport, dir: string, date: string, now: Date = new Date()): string {
   mkdirSync(dir, { recursive: true });
   // A variant gets its own file (label slug) so same-day variants do not overwrite the live report or each other.
   const slug = r.live ? '' : `-${(r.settings.label ?? 'variant').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'variant'}`;
-  const path = join(dir, `judge-${date}${slug}.md`);
+  const hms = now.toISOString().slice(11, 19).replace(/:/g, '');
+  const path = join(dir, `judge-${date}${slug ? `${slug}-${hms}` : ''}.md`);
   writeFileSync(path, renderJudgeReport(r, date), 'utf8');
   return path;
 }
@@ -253,6 +274,7 @@ export async function runJudgeAudit(
   const path = writeJudgeReport(report, deps.dir, deps.date);
   if (report.tooFew) deps.out(`Too few pairs: ${report.pairs} held-out pair(s) is under ${JUDGE_MIN_PAIRS}, so the numbers are noise.`);
   if (report.excludedPairs) deps.out(`Left out ${report.excludedPairs} held-out pair(s) that share an idea with the ${report.examples} few-shot example(s).`);
+  if (report.contextDropped) deps.out(`${report.contextDropped} pair(s) had case text on only one side and were judged without it.`);
   deps.out(`Judged ${report.pairs} pair(s): accuracy ${f2(report.accuracy)} (goal ${f2(JUDGE_ACCURACY_GOAL)}), position consistency ${f2(report.consistency)} (goal ${f2(JUDGE_CONSISTENCY_GOAL)}), cost $${report.spentUsd.toFixed(4)}.`);
   deps.out(`Written to ${path}`);
   return { report, path };

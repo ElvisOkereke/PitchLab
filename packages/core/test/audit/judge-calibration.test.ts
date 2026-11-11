@@ -107,8 +107,11 @@ describe('calibrateJudge', () => {
   it('an erroring judge counts as a miss and an inconsistency; no pairs gives zeros', async () => {
     const { db } = await board(3, 4);
     await allTest(db);
-    const rep = await calibrateJudge({ db, router: scripted(() => 'throw'), log: () => {} });
-    expect(rep).toMatchObject({ pairs: 12, accuracy: 0, consistency: 0 });
+    await expect(calibrateJudge({ db, router: scripted(() => 'throw'), log: () => {} })).rejects.toThrow(/every judge call failed/i);
+    // A partly failing judge still reports: failed pairs count as misses and inconsistencies.
+    const mixed = await calibrateJudge({ db, router: scripted((a) => (a === 'X0' ? 'throw' : { winner: a.startsWith('K') ? 'A' : 'B' })), log: () => {} });
+    expect(mixed.pairs).toBe(12);
+    expect(mixed.accuracy).toBeLessThan(1);
     const empty = await calibrateJudge({ db: await testDb(), router: scripted(() => 'throw'), log: () => {} });
     expect(empty).toMatchObject({ pairs: 0, accuracy: 0, consistency: 0, tooFew: true });
   });
@@ -284,5 +287,71 @@ describe('calibrateJudge variants', () => {
     };
     const top = renderJudgeReport(rep, '2026-11-11').split('\n').slice(0, 8).join('\n');
     for (const t of ['judge.v2', 'gpt-x', 'case', '2026-11-01', 'my label', 'variant']) expect(top).toContain(t);
+  });
+});
+
+describe('calibrateJudge review fixes', () => {
+  const pickK = (a: string) => ({ winner: (a.startsWith('K') ? 'A' : 'B') as 'A' | 'B' });
+  const spy = (r: ReturnType<typeof scripted>, seen: string[]) => {
+    const orig = r.structured.bind(r) as (...a: unknown[]) => Promise<unknown>;
+    r.structured = (async (s: string, req: { prompt: string }, ...rest: unknown[]) => { seen.push(req.prompt); return orig(s, req, ...rest); }) as typeof r.structured;
+    return r;
+  };
+
+  it('case context is dropped on both sides when only one idea has a case, and the pair is counted', async () => {
+    const { db, k, x } = await board(1, 1);
+    await allTest(db);
+    await db.update(cases).set({ sections: { summary: { oneLiner: 'ONLY-KEPT-CASE' } } as never }).where(eq(cases.ideaId, k[0]!.id));
+    await db.delete(cases).where(eq(cases.ideaId, x[0]!.id));
+    const seen: string[] = [];
+    const rep = await calibrateJudge({ db, router: spy(scripted(pickK), seen), context: 'case', fewshot: 0, log: () => {} });
+    expect(seen.length).toBe(2);
+    expect(seen.join('')).not.toContain('ONLY-KEPT-CASE');
+    expect(rep.contextDropped).toBe(1);
+    expect(renderJudgeReport(rep, '2026-11-11')).toContain('1 pair(s) had case text on only one side');
+  });
+
+  it('records the effective judge model (setting judge.model) and prompt in report, variants and latest', async () => {
+    const { createRouter } = await import('../../src/llm/router');
+    const { DEFAULT_MODELS } = await import('../../src/config/models');
+    const { db } = await board(3, 3);
+    await allTest(db);
+    await setSetting(db, 'judge.model', 'gemini-3.1-pro');
+    const adapter = {
+      async complete() { return { text: '', json: { winner: 'A', confidence: 2, reasons }, sources: [], usage: { inputTokens: 1, outputTokens: 1, searchRequests: 0 } }; },
+      async embed() { return { vectors: [], inputTokens: 0 }; },
+    };
+    const router = createRouter({ adapters: { anthropic: adapter, openai: adapter }, db, models: DEFAULT_MODELS, maxConcurrency: 1, judgeFromSettings: true });
+    const rep = await calibrateJudge({ db, router, log: () => {} });
+    expect(rep.settings.model).toBe('gemini-3.1-pro');
+    expect(await getSetting(db, 'audit.judge.latest')).toMatchObject({ model: 'gemini-3.1-pro', promptVersion: 'judge.v1' });
+    await calibrateJudge({ db, router, fewshot: 1, log: () => {} });
+    expect(((await getSetting(db, 'audit.judge.variants')) as { settings: { model: string } }[])[0]!.settings.model).toBe('gemini-3.1-pro');
+  });
+
+  it('a label alone makes a variant: latest untouched', async () => {
+    const { db } = await board(3, 3);
+    await allTest(db);
+    const rep = await calibrateJudge({ db, router: scripted(pickK), label: 'just a label', log: () => {} });
+    expect(rep.live).toBe(false);
+    expect(await getSetting(db, 'audit.judge.latest')).toBeNull();
+    expect(await getSetting(db, 'audit.judge.variants')).toHaveLength(1);
+  });
+
+  it('same-day same-label variant reports get different file names', async () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'judge-')), 'audit');
+    const r = { pairs: 1, accuracy: 1, consistency: 1, byConfidence: { 1: { n: 0, accuracy: 0 }, 2: { n: 1, accuracy: 1 }, 3: { n: 0, accuracy: 0 } }, reviewerAccuracy: null, spentUsd: 0, tooFew: true, examples: 0, excludedPairs: 0,
+      settings: { prompt: 'judge.v2', model: 'm', fewshot: 6, context: 'idea' as const, since: null, label: 'x' }, live: false };
+    const a = writeJudgeReport(r, dir, '2026-11-11', new Date('2026-11-11T10:00:01Z'));
+    const b = writeJudgeReport(r, dir, '2026-11-11', new Date('2026-11-11T10:00:02Z'));
+    expect(a).not.toBe(b);
+    expect(a).toMatch(/judge-2026-11-11-x-\d{6}\.md$/);
+  });
+
+  it('fails clearly when every judge call errors, and stores nothing', async () => {
+    const { db } = await board(3, 4);
+    await allTest(db);
+    await expect(calibrateJudge({ db, router: scripted(() => 'throw'), log: () => {} })).rejects.toThrow(/every judge call failed/i);
+    expect(await getSetting(db, 'audit.judge.latest')).toBeNull();
   });
 });

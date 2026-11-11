@@ -51,6 +51,8 @@ export interface ModelRouter {
   embed(texts: string[], ctx: CallCtx): Promise<number[][]>;
   /** The resolved model id for a stage. */
   modelFor(stage: ModelStage): string;
+  /** The model a call on this stage would use now (the judge stage may follow setting `judge.model`); absent on routers without such overrides. */
+  effectiveModel?(stage: ModelStage): Promise<string>;
 }
 
 export class StructuredOutputError extends Error {

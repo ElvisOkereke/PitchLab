@@ -34,6 +34,8 @@ export function createRouter(opts: {
   maxConcurrency: number;
   /** The judge stage takes its model from setting `judge.model` when set (live tournament and calibration without `--model`). */
   judgeFromSettings?: boolean;
+  /** Where a bad `judge.model` setting is reported (once per router); default console.warn. */
+  warn?: (m: string) => void;
 }): ModelRouter {
   const { adapters, db, models } = opts;
   const limit = pLimit(opts.maxConcurrency);
@@ -66,12 +68,21 @@ export function createRouter(opts: {
 
   /** Run one adapter call under the concurrency limit with retries, logging every attempt. */
   /** The model for a call: `models[stage]`, except the judge stage with a valid setting `judge.model` (a bad one is ignored). */
+  let warnedJudge = false;
   async function modelOf(stage: ModelStage): Promise<string> {
     if (stage !== 'judge' || !opts.judgeFromSettings) return models[stage];
     try {
       const v = await getSetting(db, 'judge.model');
       if (typeof v !== 'string' || v.trim() === '') return models[stage];
-      validateModelConfig({ ...models, judge: v.trim() });
+      try {
+        validateModelConfig({ ...models, judge: v.trim() });
+      } catch (err) {
+        if (!warnedJudge) {
+          warnedJudge = true;
+          (opts.warn ?? ((m: string) => console.warn(m)))(`Ignoring setting judge.model (${errorMessage(err)}); using ${models[stage]}`);
+        }
+        return models[stage];
+      }
       return v.trim();
     } catch {
       return models[stage];
@@ -114,6 +125,7 @@ export function createRouter(opts: {
 
   return {
     modelFor: (stage) => models[stage],
+    effectiveModel: modelOf,
 
     async text(stage, { system, prompt, maxTokens }, ctx) {
       const res = await complete(stage, {

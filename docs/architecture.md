@@ -241,7 +241,7 @@ flowchart TD
   `--context idea|case`, `--since`, `--label`) put the settings at the top of the report; a run whose settings differ from the live
   configuration (prompt = `judge.promptVersion`, no `--model`, few-shot 6, idea context, no `--since`) never writes
   `audit.judge.latest` but appends `{ at, label, settings, accuracy, consistency, pairs }` to `audit.judge.variants` (last 20) and
-  writes `judge-<date>-<label>.md`. `--since` filters test pairs by `judge_pairs.createdAt`. `--context case` adds the case summary
+  writes `judge-<date>-<label>-<HHMMSS>.md`; any `--label` also makes a run a variant. `audit.judge.latest` also records `model` (the effective judge model: `--model`, else a valid `judge.model`, else the static one, via the router's optional `effectiveModel`) and `promptVersion`. Case context is attached to both ideas of a pair or neither (counted as `contextDropped`). A run where every judge call errors throws and stores nothing. `--since` filters test pairs by `judge_pairs.createdAt`. `--context case` adds the case summary
   (one-liner, why it wins, why now; 1,200 characters, inside the wrapped sketch block). The tournament reads setting
   `judge.promptVersion` (default `v1`; pinned through `loadPrompt('judge', n)`, so adding `judge.v2` changes nothing until set);
   the router reads setting `judge.model` on each judge call (validated as a model config; a bad value is ignored; calibration
